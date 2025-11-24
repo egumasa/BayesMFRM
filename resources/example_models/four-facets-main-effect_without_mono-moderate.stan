@@ -17,7 +17,7 @@ data {
 
 parameters {
   vector[J] theta_raw;        // examinee ability
-  vector[I] beta_raw;         // item difficulty
+  vector[I] criteria_raw;         // item difficulty
   vector[R] rater_raw;        // rater severity
   vector[L] interlocutor_raw; // interlocutor effect
   vector[K - 1] tau_raw;      // rating-scale thresholds (unconstrained)
@@ -25,14 +25,14 @@ parameters {
 
 transformed parameters {
   vector[J] theta;
-  vector[I] beta;
+  vector[I] criteria;
   vector[R] rater;
   vector[L] interlocutor;
   vector[K - 1] tau;
 
   // sum-to-zero identification (Eckes-style)
   theta        = theta_raw;        // To mimic FACET behavior this should not be centered  - mean(theta_raw);
-  beta         = beta_raw         - mean(beta_raw);
+  criteria         = criteria_raw         - mean(criteria_raw);
   rater        = rater_raw        - mean(rater_raw);
   interlocutor = interlocutor_raw - mean(interlocutor_raw);
   tau          = tau_raw          - mean(tau_raw);
@@ -41,7 +41,7 @@ transformed parameters {
 model {
   // Priors
   theta_raw        ~ student_t(3, 0, 4);
-  beta_raw         ~ student_t(3, 0, 2);
+  criteria_raw     ~ student_t(3, 0, 2);
   rater_raw        ~ student_t(3, 0, 2);
   interlocutor_raw ~ student_t(3, 0, 2);
   tau_raw          ~ student_t(3, 0, 2);
@@ -55,7 +55,7 @@ model {
     int x = X[n];
 
     // core Rasch/MFRM equation
-    real eta = theta[j] - beta[i] - rater[r] - interlocutor[l];
+    real eta = theta[j] - criteria[i] - rater[r] - interlocutor[l];
 
     vector[K] logits;
     logits[1] = 0; // base category
@@ -84,7 +84,7 @@ generated quantities {
     int x = X[n];
 
     // ---- 1) Actual facets ----
-    real eta = theta[j] - beta[i] - rater[r] - interlocutor[l];
+    real eta = theta[j] - criteria[i] - rater[r] - interlocutor[l];
 
     vector[K] logits;
     vector[K] p;
@@ -116,7 +116,7 @@ generated quantities {
 
     // ---- 2) "Fair" expected score: rater = 0, interlocutor = 0 ----
     {
-      real eta_fair = theta[j] - beta[i];  // average rater & interlocutor = 0
+      real eta_fair = theta[j] - criteria[i];  // average rater & interlocutor = 0
       vector[K] logits_fair;
       vector[K] p_fair;
       real ex_fair;
