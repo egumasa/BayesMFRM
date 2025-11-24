@@ -1,29 +1,35 @@
-# BayesMFRM – Design Specification (v0.3)
+# BayesMFRM – Design Specification (v0.4)
 
-1. Big picture
+## 1. Big picture
 
-Goal:
+**Goal:**  
 BayesMFRM is an R package for Bayesian many-facet Rasch models using Stan (via cmdstanr).
 
 It should:
-	•	Feel as easy as brms, but specialized for MFRM.
-	•	Hide most Stan details, but still allow advanced users to inspect Stan code.
-	•	Produce FACETS-style outputs: rater severity, item difficulty, fair averages, infit/outfit, etc.
 
-We start simple:
-	•	Rating-scale Rasch model (shared thresholds).
-	•	Main facet effects (person, item, rater, etc.).
-	•	Optional 2-way bias facets (e.g., rater × item).
-	•	A clean, simple prior system.
+- Feel as easy as **brms**, but specialized for MFRM.
+- Hide most Stan details, but still allow advanced users to inspect Stan code.
+- Produce **FACETS-style** outputs: rater severity, item difficulty, fair averages, infit/outfit, etc.
 
-Later, we can extend to partial credit, centrality, drift, etc.
+We start simple (v0.1):
 
-⸻
+- Rating-scale Rasch model (shared thresholds).
+- Main facet effects (person, item, rater, etc.).
+- Optional 2-way bias facets (e.g., rater × item).
+- A clean, simple prior system.
 
-1. User-facing workflow
+Later, we can extend to:
+
+- Partial credit / GRM
+- Centrality / drift
+- Multidimensional abilities
+- More complex bias structures (rater × task, etc.)
+
+---
+
+## 2. User-facing workflow
 
 A typical user should write code like:
-
 
 ```r
 library(BayesMFRM)
@@ -37,7 +43,7 @@ priors <- c(
 )
 
 fit <- bmfrm(
-  score ~ person + item + rater + (rater:item),
+  score ~ person + item + rater + rater:item,
   data       = ratings,
   K          = 6,
   priors     = priors,
@@ -53,25 +59,28 @@ fit <- bmfrm(
 )
 
 summary(fit, facets = c("person", "rater"))
-rater_tab  <- facet_summary(fit, "rater")
+
+rater_tab   <- facet_summary(fit, "rater")
 fair_scores <- fair_scores(fit)
 
-bias    <- summarise_bias(fit) # when bias term is estimated
-resid_tbl  <- extract_residuals(fit) #return FACET like residuals
-crit_cor   <- residual_cor_criteria(resid_tbl)
-stancode(fit)  # inspect underlying Stan code
+bias      <- summarise_bias(fit)          # wrapper for bias summaries (rater:item etc.)
+resid_tbl <- extract_residuals(fit)       # FACETS-like residuals
+crit_cor  <- residual_cor_criteria(resid_tbl)
+
+stancode(fit)   # inspect underlying Stan code
+standata(fit)   # inspect underlying Stan data
 ```
 
 Key design idea:
 
-User only thinks in terms of facets & Rasch.
-The package handles: data preparation → Stan code → sampling → Rasch tables.
+The user thinks in terms of facets & Rasch.
+The package handles: data preparation → Stan code → sampling → Rasch-style tables and diagnostics.
 
 ⸻
 
-2. Core concepts explained
+## 3. Core concepts
 
-2.1 What is a “facet”?
+3.1 What is a “facet”?
 
 In MFRM, facets are “dimensions” of the assessment design:
 	•	person / examinee
@@ -88,68 +97,75 @@ Each facet is:
 In R, a facet is just a column:
 
 ```
-ratings$person     # examinee ID
-ratings$item       # item or criterion ID
-ratings$rater      # rater ID
-ratings$score      # rating 1…K
+ratings$person   # examinee ID
+ratings$item     # item or criterion ID
+ratings$rater    # rater ID
+ratings$score    # rating 1…K
 ```
 
-In Stan, we convert these into integer indices 1…J_f (e.g. 1…J_person).
 
-2.2 Main facets vs bias facets
+In Stan, we convert these into integer indices 1…J_f (e.g., 1…J_person).
+
+3.2 Main facets vs bias facets
 	•	Main facets: person, item, rater, etc.
-	•	Bias facets (interactions): combinations like rater:item that represent specific patterns (rater-item bias).
+	•	Bias facets (interactions): combinations like rater:item that represent specific patterns (rater–item bias).
 
-In model formula:
+In the model formula:
 
 ```
-score ~ person + item + rater + (rater:item)
+score ~ person + item + rater + rater:item
 ```
 
 	•	person, item, rater are main facets.
-	•	(rater:item) is an interaction facet (bias).
+	•	(rater:item) is a bias facet.
 
-We treat these differently in Stan:
+In Stan:
 	•	main facets → vectors of latent parameters.
 	•	bias facets → matrices or arrays of parameters.
 
 ⸻
 
-3. Statistical model (v0.1)
+4. Statistical model (v0.1)
 
 We start with a rating-scale Rasch bmfrm.
 
-For rating n:
-	•	Person: p_n
-	•	Item: i_n
-	•	Rater: r_n
-	•	Score: X_n \in \{1, \dots, K\}
+For rating (n):
+	•	Person: (p_n)
+	•	Item: (i_n)
+	•	Rater: (r_n)
+	•	Score: (X_n \in {1, \dots, K})
 
-Linear predictor:
+Linear predictor
 
+[
 \eta_n
 = \theta_{p_n}
-- \beta_{i_n}
-- \rho_{r_n}
-+ \text{(optional bias terms)}
+	•	\beta_{i_n}
+	•	\rho_{r_n}
 
-Rating-scale structure:
+	•	\text{(optional bias terms)}
+]
 
+Rating-scale structure
+
+[
 \log\frac{P(X_n \ge k)}{P(X_n < k)} = \eta_n - \tau_{k-1}, \quad k=2,\dots,K
-	•	\theta: person ability
-	•	\beta: item difficulty
-	•	\rho: rater severity
-	•	\tau_k: rating thresholds (shared across items/raters in v0.1)
+]
+	•	(\theta): person ability
+	•	(\beta): item difficulty
+	•	(\rho): rater severity
+	•	(\tau_k): rating thresholds (shared across items/raters in v0.1)
 
-We assume:
-	•	equal discrimination (Rasch).
-	•	Optional additional facets in the same additive way (e.g., task difficulty).
+Assumptions:
+	•	Equal discrimination (Rasch).
+	•	Optional additional facets enter additively (e.g., task difficulty).
+	•	Fair scores are derived from a version of (\eta_n) that removes selected nuisance facets (e.g., rater, bias).
 
 ⸻
 
-4. Top-level API design
+5. Top-level API design
 
-4.1 bmfrm() function
+5.1 bmfrm() function
 
 ```r
 bmfrm <- function(
@@ -160,7 +176,7 @@ bmfrm <- function(
   family      = c("rating_scale", "partial_credit"),
   model_name  = NULL,
   cache_dir   = "stan_cache",
-  save_csvs = TRUE,         # Always save CSVs for posterior access
+  save_csvs   = TRUE,         # Always save CSVs for posterior access
   refit       = c("on_change", "never", "always"),
   iter        = 2000,
   warmup      = floor(iter / 2),
@@ -173,35 +189,34 @@ bmfrm <- function(
 
 Arguments
 	•	formula
-	•	R formula specifying the model:
+R formula specifying the model, e.g.:
 
 score ~ person + item + rater + (rater:item)
 
-
 	•	LHS: score column (integer 1…K).
-	•	RHS: facet columns; interaction terms in parentheses for bias facets.
+	•	RHS: facet columns; interaction terms (optionally in parentheses) for bias facets.
 
 	•	data
-	•	Data frame with all variables named in formula.
+Data frame with all variables named in formula.
 	•	K
-	•	Number of score categories. If NULL, infer from max(score).
+Number of score categories. If NULL, infer from max(score).
 	•	priors
-	•	Vector of prior() objects (see below). If NULL, use safe defaults.
+Vector of prior() objects (see below). If NULL, use safe defaults.
 	•	family
-	•	"rating_scale" (v0.1) and later "partial_credit".
+"rating_scale" (v0.1 only). Later: "partial_credit" etc.
 	•	model_name
-	•	Optional string used to label compilation and caching.
-	•	If NULL, automatically generate something like "bmfrm_<hash>".
+Optional string used to label compilation and caching.
+If NULL, automatically generate something like "bmfrm_<hash>".
 	•	cache_dir
-	•	Directory to store compiled Stan models and optionally cached fits.
+Directory to store compiled Stan models and cached fits.
 	•	refit
 	•	"on_change": refit only if Stan code or data structure changed.
 	•	"never": never refit (just reuse existing cached fit if present).
 	•	"always": always refit.
 	•	iter, warmup, chains, cores, seed
-	•	Standard cmdstanr::sample() arguments.
+Standard cmdstanr::sample() arguments.
 
-4.2 prior() object
+5.2 prior() object
 
 We design a small, Rasch-focused prior system.
 
@@ -232,7 +247,7 @@ prior <- function(spec, class, facet = NULL) {
 }
 ```
 
-We restrict class to a small set to keep things simple:
+Allowed classes (v0.1)
 	•	"theta" – person abilities
 	•	"item" – item difficulties
 	•	"rater" – rater severities
@@ -240,151 +255,189 @@ We restrict class to a small set to keep things simple:
 	•	"bias" – interaction (bias) terms; must specify facet = "rater:item" etc.
 	•	"tau" – rating thresholds
 
-Design choice (why this is simple):
-	•	For a beginner, it’s easier to say “I want a Normal(0, 2) prior on person ability” than to think about abstract “b”/“sd”/“cor” classes.
-	•	We define a limited vocabulary that maps directly to psychometric concepts they know.
+Design choice:
+	•	For a beginner, it’s easier to say “Normal(0, 2) prior on person ability” than to reason about abstract b / sd / cor classes.
+	•	We define a limited vocabulary that maps directly to psychometric concepts.
 
-If priors = NULL, we use defaults such as:
+Defaults when priors = NULL (v0.1 idea):
 	•	theta ~ normal(0, 2)
-	•	item ~ normal(0, 1)
+	•	item  ~ normal(0, 1)
 	•	rater ~ normal(0, 1)
-	•	bias ~ normal(0, 0.5)
-	•	tau ~ normal(0, 3) on ordered thresholds (or on spacings).
+	•	bias  ~ normal(0, 0.5)
+	•	tau   ~ normal(0, 3) on ordered thresholds (or on spacings)
 
-pipeline for the bmfrm function
+⸻
+
+5.3 bmfrm() pipeline (internal)
+
+Conceptual implementation:
 
 ```r
-bmfrm <- function(formula, data, K, priors = NULL, ...) {
-  # 1. Parse formula
-  spec <- parse_bmfrm_formula(formula, data, K)
+bmfrm <- function(formula, data, K, priors = NULL, family = "rating_scale", ...) {
+  # 1. Parse formula → spec
+  spec <- parse_bmfrm_formula(formula, data, K, family = family)
   
-  # 2. Prepare data
+  # 2. Prepare data → stan_data + facet labels
   data_info <- prepare_data_bmfrm(spec, data)
   
-  # 3. Generate Stan code
+  # 3. Generate Stan code string
   stan_code <- build_stan_code(spec, priors)
   
-  # 4. Compile model
-  model <- compile_stan_model(stan_code, cache_dir)
+  # 4. Compile Stan model (with caching based on code hash)
+  comp <- compile_bmfrm(stan_code, model_name = spec$model_name, cache_dir = spec$cache_dir)
+  model <- comp$model
+  cache_file <- comp$cache_file
   
-  # 5. Fit using your existing function (see below)
+  # 5. Fit using existing fit_cmdstan_cached()
   fit <- fit_cmdstan_cached(
     model = model,
-    data = data_info$stan_data,
-    file = cache_file,
+    data  = data_info$stan_data,
+    file  = cache_file,
     ...
   )
   
-  # 6. Return bmfrm_fit object
-  structure(
-    list(
-      fit = fit,
-      spec = spec,
-      data_info = data_info,
-      stan_code = stan_code
-    ),
-    class = "bmfrm_fit"
+  # 6. Wrap as bmfrm_fit object
+  out <- postprocess_bmfrm(
+    fit          = fit,
+    spec         = spec,
+    data_info    = data_info,
+    priors       = priors,
+    stan_code    = stan_code,
+    stan_code_hash = comp$hash
   )
+  
+  out
 }
 
 ```
 
 ⸻
 
-4.5 Existing Working Components (v0.3)
+6. Existing working components (v0.3/v0.4)
 
-As of v0.3, we have robust working code for critical components:
+As of now, we have robust working code for critical components (in helper.R):
 
-### **4.5.1 fit_cmdstan_cached() - Complete caching solution**
+6.1 fit_cmdstan_cached() – complete caching solution
 
-Handles cmdstanr's CSV storage properly with:
-- Hash-based validation of model + data changes
-- Persistent CSV directory structure (`cache_dir/model_name/csv/`)
-- Smart refit logic: `"never"`, `"always"`, `"on_change"`
-- Model metadata tracking and contamination prevention
-- Automatic migration from old cache formats
+Handles cmdstanr’s CSV storage properly with:
+	•	Hash-based validation of model + data changes
+	•	Persistent CSV directory structure (cache_dir/model_name/csv/)
+	•	Smart refit logic: "never", "always", "on_change"
+	•	Model metadata tracking and contamination prevention
+	•	Automatic migration from old cache formats
 
-### **4.5.2 extract_residuals() - Comprehensive residual analysis**
+This function is reused by bmfrm() and should not be newly reimplemented, but should be reused.
+
+⸻
+
+6.2 extract_residuals() – comprehensive residual analysis
 
 Extracts observation-level information with:
-- Posterior summaries for `mu[n]` and `sigma2[n]` from generated quantities
-- Standardized residuals: `z = (x - mu_hat) / sqrt(sigma2_hat)`
-- Optional posterior draws stored as list-columns for Bayesian uncertainty
-- Automatic facet detection and attachment
-- Model comparison support
+	•	Posterior summaries for mu[n] and sigma2[n] from generated quantities
+	•	Standardized residuals: z = (x - mu_hat) / sqrt(sigma2_hat)
+	•	Optional posterior draws stored as list-columns for Bayesian uncertainty
+	•	Automatic facet detection and attachment
+	•	Support for model comparison (via model label)
 
-### **4.5.3 facet_infit_outfit() - FACETS-style fit statistics**
+bmfrm will call extract_residuals() as-is, with appropriate stan_data and facet columns.
 
-Computes fit statistics for any facet:
-- Infit and outfit mean squares per facet level
-- Supports any facet column name
-- Bayesian credible intervals via `add_fit_cri_bayes()`
-- Z-standardized fit statistics via `add_zstd()`
+⸻
 
-### **4.5.4 summarise_bias_ir() - Interaction analysis**
+6.3 facet_infit_outfit() / facet_infit_outfit_all() – FACETS-style fit statistics
 
-Analyzes rater × item bias effects:
-- Posterior summaries for bias matrices
-- Probability-based flagging of significant bias
-- Automatic label mapping from integer indices
-- Credible intervals and effect directions
+Compute fit statistics for any facet:
+	•	Infit and outfit mean squares per facet level
+	•	Works with any facet column name
+	•	Bayesian credible intervals via add_fit_cri_bayes()
+	•	Z-standardized fit statistics via add_zstd()
 
-### **4.5.5 run_ppc() - Posterior predictive checks**
+These functions will be used in S3 methods like:
+	•	fit_statistics.bmfrm_fit() (future)
+	•	or helpers such as facet_fit(fit, facet = "rater")
 
-Generates model validation plots:
-- PPC bar charts comparing observed vs replicated data
-- Distribution checks for mean and variance
-- Flexible draw sampling for computational efficiency
+⸻
 
-### **4.5.6 Revised Package Architecture**
+6.4 summarise_bias() 
 
-Given these working components, the new architecture becomes:
+Analyzes bias effects:
+	•	Posterior summaries for bias matrices
+	•	Probability-based flagging of “significant bias”
+	•	Automatic label mapping from integer indices
+	•	Credible intervals and effect directions
+
+In v0.4, the user-facing function is:
+
+summarise_bias(fit, facet = "rater:item")
+
+
+⸻
+
+6.5 run_ppc() – posterior predictive checks
+
+Generates model validation summaries/plots:
+	•	PPC bar charts comparing observed vs replicated data
+	•	Distribution checks for mean and variance
+	•	Flexible draw sampling for computational efficiency
+
+bmfrm will expose PPC via a helper (e.g., pp_check.bmfrm_fit() or ppc_bmfrm()).
+
+⸻
+
+6.6 Revised package architecture
+
+Given these working components, the package layout is:
 
 ```
 BayesMFRM/
 ├── R/
 │   ├── bmfrm.R              # Main function (NEW)
-│   ├── formula_parsing.R   # Parse formula to spec (NEW)
-│   ├── data_prep.R         # Facet to integer conversion (NEW)
-│   ├── stan_generation.R   # Build Stan code from spec (NEW)
-│   ├── prior.R             # Prior specification (NEW)
-│   ├── caching.R           # fit_cmdstan_cached() (EXISTING ✓)
-│   ├── fit_stats.R         # extract_residuals, facet_infit_outfit (EXISTING ✓)
-│   ├── bias_analysis.R     # summarise_bias_ir (EXISTING ✓)
-│   ├── ppc.R               # run_ppc (EXISTING ✓)
-│   └── methods.R           # S3 methods integrating existing functions (NEW)
-└── inst/stan/              # Stan template files (NEW)
+│   ├── formula_parsing.R    # parse_bmfrm_formula() (NEW)
+│   ├── data_prep.R          # prepare_data_bmfrm() (NEW)
+│   ├── stan_generation.R    # build_stan_code() (NEW)
+│   ├── prior.R              # prior() + validation (NEW)
+│   ├── compile.R            # compile_bmfrm() (NEW)
+│   ├── caching.R            # fit_cmdstan_cached() (EXISTING ✓)
+│   ├── fit_stats.R          # extract_residuals, facet_infit_outfit (EXISTING ✓)
+│   ├── bias_analysis.R      # summarise_bias_ir, summarise_bias() (EXISTING + NEW)
+│   ├── ppc.R                # run_ppc (EXISTING ✓)
+│   ├── residual_cor.R       # residual_cor_criteria() (NEW)
+│   └── methods.R            # S3 methods for bmfrm_fit (NEW)
+└── inst/stan/
+    ├── bmfrm_template.stan  # Base template with placeholders (NEW)
+    └── ...
 ```
 
 ⸻
 
-5. Internal architecture
+1. Internal architecture
 
 For a beginner, it’s useful to see the pipeline:
 
 ```
 bmfrm()
-  ├─ parse_bmfrm_formula()  # understand formula
-  ├─ prepare_data_bmfrm()   # build stan_data list
-  ├─ build_stan_code()     # create Stan model string
-  ├─ compile_or_reuse()    # compiled Stan model with cmdstanr
-  ├─ sample()              # run MCMC (cmdstanr::sample)
-  └─ postprocess_bmfrm()    # wrap & summarize results
+  ├─ parse_bmfrm_formula()   # understand formula → spec
+  ├─ prepare_data_bmfrm()    # build stan_data list + labels
+  ├─ build_stan_code()       # create Stan model string from spec + priors
+  ├─ compile_bmfrm()         # compiled Stan model with cmdstanr (and hash)
+  ├─ fit_cmdstan_cached()    # run MCMC with caching
+  └─ postprocess_bmfrm()     # wrap & summarize results as bmfrm_fit
 ```
 
-We’ll define each piece.
+We define each piece below.
 
 ⸻
 
-5.1 Parsing the formula
+7.1 Parsing the formula – parse_bmfrm_formula()
 
-Function: parse_bmfrm_formula(formula, data, K, family)
+Function:
+
+parse_bmfrm_formula <- function(formula, data, K = NULL, family = "rating_scale") { ... }
 
 Input:
-	•	formula like score ~ person + item + rater + (rater:item).
-	•	data data.frame.
-	•	K (optional).
-	•	family ("rating_scale" now).
+	•	formula like score ~ person + item + rater + (rater:item)
+	•	data data.frame
+	•	K (optional)
+	•	family (currently "rating_scale")
 
 Output (a “spec” object):
 
@@ -395,32 +448,42 @@ list(
   facets_bias  = c("rater:item"),
   K            = K_inferred,
   family       = "rating_scale",
-  formula      = formula
+  formula      = formula,
+  model_name   = model_name_or_default,
+  cache_dir    = cache_dir
 )
 ```
 
-How:
-	1.	Use terms() or lme4-style parsing to get RHS terms.
-	2.	Any RHS term without : becomes a main facet.
-	3.	Any RHS term with : becomes a bias facet.
-	•	We require interactions in parentheses, e.g. (rater:item) just for clarity, but technically rater:item is enough.
-	4.	We check that each variable name exists in data.
+Steps:
+	1.	Use terms() or similar to parse the formula.
+	2.	Any RHS term without : → main facet.
+	3.	Any RHS term with : → bias facet.
+	•	Parentheses are allowed but not required:
+	•	(rater:item) or rater:item are both accepted.
+	4.	Check that each variable exists in data.
 	5.	Infer K if not given:
 
 ```r
-if (is.null(K)) K <- max(data[[response]], na.rm = TRUE)
+if (is.null(K)) {
+  resp <- data[[response]]
+  if (!all(resp == floor(resp))) stop("Response must be integer for rating-scale MFRM.")
+  K <- max(resp, na.rm = TRUE)
+}
 ```
 
-
 Design choice:
-	•	We interpret every RHS variable as a facet.
-This is different from general regression (where a variable could be continuous). This makes everything conceptually simpler for MFRM.
+	•	Every RHS variable is interpreted as a facet (categorical).
+	•	This simplifies the mental model for MFRM users.
 
 ⸻
 
-5.2 Data preparation (prepare_data_bmfrm)
+7.2 Data preparation – prepare_data_bmfrm()
 
-Function: prepare_data_bmfrm(spec, data)
+Function:
+
+```r
+prepare_data_bmfrm <- function(spec, data) { ... }
+```
 
 Goal:
 	•	Convert data frame into a stan_data list with integer indices and counts.
@@ -438,21 +501,22 @@ df <- data[!is.na(data[[spec$response]]), , drop = FALSE]
 ```r
 facet_names <- spec$facets_main
 
-idx_list <- list()
-J_list   <- list()
-label_map <- list()
+idx_list   <- list()
+J_list     <- list()
+label_map  <- list()
 
 for (f in facet_names) {
-  fac_vec <- df[[f]]
-  fac_factor <- factor(fac_vec)           # ensures levels correspond to unique IDs
-  idx <- as.integer(fac_factor)          # 1...J_f
-  idx_list[[f]] <- idx
-  J_list[[f]]   <- nlevels(fac_factor)
-  label_map[[f]] <- levels(fac_factor)   # store original labels
+  fac_vec    <- df[[f]]
+  fac_factor <- factor(fac_vec)
+  idx        <- as.integer(fac_factor)          # 1...J_f
+  idx_list[[f]]   <- idx
+  J_list[[f]]     <- nlevels(fac_factor)
+  label_map[[f]]  <- levels(fac_factor)         # store original labels
 }
 ```
 
 	3.	Build stan_data:
+
 ```r
 stan_data <- list(
   N = nrow(df),
@@ -461,35 +525,30 @@ stan_data <- list(
 )
 
 for (f in facet_names) {
-  stan_data[[f]] <- idx_list[[f]]
+  stan_data[[f]]               <- idx_list[[f]]
   stan_data[[paste0("J_", f)]] <- J_list[[f]]
 }
-
 ```
-	4.	Return both stan_data and meta-information (labels):
+
+	4.	Return both stan_data and meta-information:
 
 ```r
 list(
-  stan_data = stan_data,
-  data_clean = df,
+  stan_data    = stan_data,
+  data_clean   = df,
   facet_labels = label_map
 )
 ```
 
-
-Design choice:
-	•	Using factor() + as.integer() is the simplest way to map arbitrary IDs (like "R001", "A", etc.) to consecutive integers 1…J.
-	•	We store facet_labels to re-attach human-readable IDs when summarizing.
-
 ⸻
 
-5.3 Stan template and code generation
+7.3 Stan template and code generation – build_stan_code()
 
 We keep one main Stan template with placeholders.
 
-5.3.1 Template skeleton (simplified)
+7.3.1 Template skeleton (simplified)
 
-```stan
+```
 data {
   int<lower=1> N;
   int<lower=2> K;
@@ -514,7 +573,6 @@ parameters {
 transformed parameters {
   vector[J_person] theta;
   // {{FACET_TRANSFORM}}
-
   vector[K-1] tau = tau_raw;
 }
 
@@ -587,8 +645,8 @@ generated quantities {
 ```
 
 
-5.3.2 Filling placeholders
-Given spec$facets_main = c("person", "item", "rater"), the code generator would insert:
+7.3.2 Filling placeholders
+Given spec$facets_main = c("person", "item", "rater"), the code generator inserts:
 	•	{{FACET_DATA_DECL}}:
 
 ```stan
@@ -605,10 +663,11 @@ int<lower=1> J_rater;
 
 vector[J_item]  item_raw;
 vector[J_rater] rater_raw;
+```
 
+	•	{{FACET_TRANSFORM}}: sum-to-zero constraints per facet:
 
-	•	{{FACET_TRANSFORM}}:
-
+```
 {
   real mean_theta = mean(theta_raw);
   theta = theta_raw - mean_theta;
@@ -621,458 +680,218 @@ vector[J_rater] rater_raw;
   real mean_rater = mean(rater_raw);
   rater = rater_raw - mean_rater;
 }
-
-(the actual code might declare vector[J_item] item; in transformed parameters too.)
+```
 
 	•	{{BIAS_PARAM_DECL}} (if facets_bias includes "rater:item"):
 
+```
 matrix[J_rater, J_item] bias_raw;
-
+```
+plus a centered bias matrix if desired.
 
 	•	{{INDEX_EXTRACT}}:
-
+```
 int item_n  = item[n];
 int rater_n = rater[n];
+```
 
-
-	•	{{ETA_SUM}}:
+	•	{{ETA_SUM}}
 For score ~ person + item + rater + (rater:item):
 
-- item[item_n]
-- rater[rater_n]
-- bias[rater_n, item_n]
+```
++ (- item[item_n])
++ (- rater[rater_n])
++ bias[rater_n, item_n]
+```
 
-
-	•	{{ETA_SUM_FAIR}}:
-For fair scores, remove rater & bias:
-
-- item[item_n]
-// (no rater, no bias)
-
+	•	{{ETA_SUM_FAIR}}
+For fair scores, drop rater and bias, keeping item:
+```
++ (- item[item_n])
+// no rater, no bias
+```
 
 	•	{{PRIOR_BLOCK}}:
-Use priors to generate lines like:
-
+uses priors to generate lines like:
+```
 theta_raw  ~ normal(0, 2);
 item_raw   ~ normal(0, 2);
 rater_raw  ~ student_t(3, 0, 1);
 to_vector(bias_raw) ~ normal(0, 1);
 tau_raw    ~ normal(0, 3);
-
 ```
+
 
 Design choice:
 	•	Using string templates with placeholders keeps Stan code readable and maintainable.
-	•	The generator is just replacing certain tokens—simple string gsub() or glue-style expansions.
+	•	The generator simply replaces tokens using glue or gsub.
 
 ⸻
 
-5.4 Compilation & caching
+7.4 Compilation & caching – compile_bmfrm()
 
-Function: compile_bmfrm(stan_code, model_name, cache_dir)
+Function:
+
+```r
+compile_bmfrm <- function(stan_code, model_name, cache_dir) { ... }
+```
 
 Steps:
-	1.	Compute hash of stan_code (e.g., using digest::digest()).
+	1.	Compute hash of stan_code (e.g., digest::digest(stan_code)).
 	2.	Build file names:
 
 ```r
-stan_file   <- file.path(cache_dir, paste0(model_name, "_", hash, ".stan"))
-model_rds   <- file.path(cache_dir, paste0(model_name, "_", hash, ".rds"))
+stan_file <- file.path(cache_dir, paste0(model_name, "_", hash, ".stan"))
+cache_file <- file.path(cache_dir, paste0(model_name, "_", hash, ".rds"))
 ```
 
 	3.	If stan_file does not exist, write it.
-	4.	If compiled model not yet in memory, call:
+	4.	Compile:
 
 ```r
 model <- cmdstanr::cmdstan_model(stan_file)
 ```
 
-	5.	Return compiled model and the hash.
+	5.	Return list:
+
+```r
+list(
+  model      = model,
+  hash       = hash,
+  stan_file  = stan_file,
+  cache_file = cache_file
+)
+
+```
 
 Design choice:
-	•	Hashing the full Stan code ensures we recompile only when the model structure changes (formula, family, priors, K, etc.).
-	•	This is inspired by how brms and your fit_cmdstan_cached() work.
-
-For fitting:
-
-```r
-fit_cmdstan_cached(
-  model,
-  data,
-  file,
-  refit = c("never", "always", "on_change"),
-  seed  = NULL,
-  chains = 4,
-  parallel_chains = chains,
-  ...
-)
-```
-Here is the current implementation
-
-```r
-fit_cmdstan_cached <- function(
-  model,           # compiled cmdstan_model
-  data,            # list passed to model$sample()
-  file,            # path to .rds cache file
-  refit = c("never", "always", "on_change"),
-  seed = NULL,
-  chains = 4,
-  parallel_chains = chains,
-  ...              # additional cmdstanr::sample() args
-) {
-  refit <- match.arg(refit)
-
-  # ---- helpers ----
-  compute_hash <- function(model, data) {
-    digest::digest(list(code = model$code(), data = data))
-  }
-
-  get_model_name_safe <- function(model) {
-    md <- try(model$metadata(), silent = TRUE)
-    if (inherits(md, "try-error") || is.null(md$model_name)) {
-      return(NA_character_)
-    } else {
-      return(md$model_name)
-    }
-  }
-
-  # ---- ensure parent folder exists ----
-  dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
-
-  # ---- persistent CSV directory ----
-  csv_dir <- file.path(dirname(file), "csv")
-  dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
-
-  # ---- current model signature ----
-  current_hash       <- compute_hash(model, data)
-  current_model_name <- get_model_name_safe(model)
-
-  # -------------------------------------------------------------------
-  # Case 1: Explicit refit = "always"
-  # -------------------------------------------------------------------
-  if (refit == "always") {
-    message("Refitting model (refit = 'always')...")
-    fit <- model$sample(
-      data = data,
-      seed = seed,
-      output_dir = csv_dir,
-      chains = chains,
-      parallel_chains = parallel_chains,
-      ...
-    )
-
-    meta <- list(
-      hash       = current_hash,
-      model_name = current_model_name
-    )
-
-    saveRDS(list(fit = fit, meta = meta), file = file)
-    return(fit)
-  }
-
-  # -------------------------------------------------------------------
-  # Case 2: Cached file exists → validate before reuse
-  # -------------------------------------------------------------------
-  if (file.exists(file)) {
-    obj <- readRDS(file)
-
-    # New-style object with meta
-    if (is.list(obj) && !is.null(obj$fit) && !is.null(obj$meta$hash)) {
-
-      cached_hash       <- obj$meta$hash
-      cached_model_name <- obj$meta$model_name %||% NA_character_
-
-      # --- safety check: model name mismatch ---
-      if (!is.na(current_model_name) &&
-          !is.na(cached_model_name) &&
-          !identical(current_model_name, cached_model_name)) {
-
-        stop(
-          "Cached file '", file, "' was created for model '", cached_model_name,
-          "', but current model is '", current_model_name, "'.\n",
-          "To avoid contamination, please use a different 'file' path or delete the old cache."
-        )
-      }
-
-      # --- safety check: hash mismatch ---
-      if (!identical(cached_hash, current_hash)) {
-        if (refit == "never") {
-          stop(
-            "Cached file '", file, "' does not match current model+data hash, ",
-            "but refit = 'never'.\n",
-            "Refusing to reuse potentially contaminated cache. ",
-            "Use refit = 'on_change' or 'always', or delete the file."
-          )
-        }
-
-        # refit == "on_change"
-        message("Model or data changed → refitting (refit = 'on_change').")
-        fit <- model$sample(
-          data = data,
-          seed = seed,
-          output_dir = csv_dir,
-          chains = chains,
-          parallel_chains = parallel_chains,
-          ...
-        )
-
-        meta <- list(
-          hash       = current_hash,
-          model_name = current_model_name
-        )
-
-        saveRDS(list(fit = fit, meta = meta), file = file)
-        return(fit)
-      }
-
-      # --- hashes match → safe to reuse ---
-      message("Loading cached fit (model & data unchanged).")
-      return(obj$fit)
-    }
-
-    # -----------------------------------------------------------------
-    # Old-style RDS: just a CmdStanMCMC object, no meta
-    # -----------------------------------------------------------------
-    if (refit == "never") {
-      message("Loading old-style cached fit (no meta; refit = 'never'). ",
-              "Cannot fully verify contamination, use with care.")
-      return(obj)
-    }
-
-    if (refit == "on_change") {
-      message("Migrating old cached fit (no meta) → wrapping & adding hash (no refit).")
-
-      # Ensure CSVs exist
-      missing <- !file.exists(obj$output_files())
-      if (any(missing)) {
-        stop("Old cached fit refers to missing CSV files. You must refit the model.")
-      }
-
-      meta <- list(
-        hash       = current_hash,
-        model_name = current_model_name
-      )
-
-      obj_new <- list(fit = obj, meta = meta)
-      saveRDS(obj_new, file = file)
-      return(obj_new$fit)
-    }
-  } else {
-    message("No cached file found → fitting model.")
-  }
-
-  # -------------------------------------------------------------------
-  # Case 3: Must refit (no cache, or migrated/invalid)
-  # -------------------------------------------------------------------
-  message("Refitting model...")
-  fit <- model$sample(
-    data = data,
-    seed = seed,
-    output_dir = csv_dir,
-    chains = chains,
-    parallel_chains = parallel_chains,
-    ...
-  )
-
-  meta <- list(
-    hash       = current_hash,
-    model_name = current_model_name
-  )
-
-  saveRDS(list(fit = fit, meta = meta), file = file)
-  return(fit)
-}
-
-```
+	•	Hashing the full Stan code ensures we recompile only when the model structure changes.
+	•	bmfrm() uses fit_cmdstan_cached() for sampling + reuse of fits.
 
 ⸻
 
-5.5 Post-processing
+7.5 Post-processing – postprocess_bmfrm()
 
-Function: postprocess_bmfrm(fit, spec, data_info, priors, stan_code_hash)
+Function:
 
-It should build an object, say class "bmfrm_fit":
+```r
+postprocess_bmfrm <- function(fit, spec, data_info, priors, stan_code, stan_code_hash) { ... }
+```
+
+Build a "bmfrm_fit" S3 object:
 
 ```r
 out <- list(
-  fit          = fit,              # cmdstanr fit
-  spec         = spec,             # formula, facets, family, K
-  data_info    = data_info,        # cleaned data, facet label maps
-  priors       = priors,
-  stan_code    = stan_code_string,
-  stan_hash    = stan_code_hash
+  fit           = fit,              # cmdstanr fit
+  spec          = spec,             # formula, facets, family, K
+  data_info     = data_info,        # cleaned data, facet label maps, stan_data
+  priors        = priors,
+  stan_code     = stan_code,
+  stan_hash     = stan_code_hash
 )
 
 class(out) <- "bmfrm_fit"
 out
 ```
 
-We then define methods:
+S3 methods:
 	•	print.bmfrm_fit()
 	•	summary.bmfrm_fit()
 	•	stancode.bmfrm_fit() – returns Stan code string.
 	•	standata.bmfrm_fit() – returns stan_data list.
-	•	facet_summary(fit, facet = "rater")
-	•	fair_scores(fit, newdata = NULL)
-	•	extract_residuals(fit, ...)
-
-Design choice:
-	•	For a beginner, having standard S3 methods means they can call summary(fit) and plot(fit) like in base R / brms.
-	•	Exposing stancode() and standata() makes advanced usage and debugging easier.
+	•	facet_summary() – facet-level summary.
+	•	fair_scores() – fair averages / scores.
+	•	extract_residuals() – wraps existing helper using fit + data_info$stan_data.
 
 ⸻
 
-6. Utility layers
+8. Utility layers
 
-6.1 facet_summary()
+8.1 facet_summary()
 
 Goal: FACETS-style facet tables.
 
 ```r
 facet_summary <- function(object, facet, probs = c(0.025, 0.5, 0.975)) {
-  # 1. Extract posterior draws for that facet’s parameters.
-  # 2. Summarize: mean, sd, quantiles.
-  # 3. Attach original labels from `object$data_info$facet_labels[[facet]]`.
+  # 1. Extract posterior draws for that facet's parameters from object$fit.
+  # 2. Summarise: mean, sd, quantiles.
+  # 3. Attach original labels from object$data_info$facet_labels[[facet]].
 }
 ```
 
-This gives a data frame like:
+Output:
 
 facet	label	mean	sd	q2.5	q50	q97.5
 rater	R01	…	..	…	…	…
 
-6.2 fair_scores()
 
-Uses mu_fair[n] from generated quantities:
+⸻
+
+8.2 fair_scores()
+
+Uses mu_fair[n] from generated quantities.
+
+Function:
 
 ```r
-fair_scores <- function(object, newdata = NULL, summary = TRUE) {
-  # For now, just return a data.frame with:
-  # person, item, rater, score, mu_fair, etc.
+fair_scores <- function(object, summary = TRUE) {
+  # Extract mu_fair[n] draws or summaries from object$fit
+  # Join with person/item/rater IDs from object$data_info
 }
 ```
 
-6.3 extract_residuals()
+v0.1 proposal:
+	•	If summary = FALSE: return an observation-level data.frame:
+	•	columns: person, item, rater, score, mu, mu_fair, etc.
+	•	If summary = TRUE: additionally return/attach:
+	•	person-level fair scores (e.g., mean mu_fair by person).
 
-You already have a design: use mu, sigma2 to compute standardized residuals and then add facet columns.
-Here is the current idea. 
+Exact format can evolve, but spec emphasizes:
+	•	mu_fair removes rater/bias effects, preserving examinee and item structure.
+
+⸻
+
+8.3 extract_residuals() (existing) – contract
+
+We reuse the existing implementation. The contract for the Stan model:
+	•	generated quantities must contain:
+	•	mu[N]
+	•	sigma2[N]
+	•	stan_data must contain:
+	•	X (observed scores)
+	•	facet integer indices (person, item, rater, etc.)
+
+Then:
 
 ```r
-#' Extract residual info from a cmdstanr fit (with optional posterior draws)
-#'
-#' @param fit         cmdstanr fit object (must have mu[n], sigma2[n] in GQ)
-#' @param stan_data   list with X and one or more facet columns
-#' @param facet_cols  which columns from stan_data are facets
-#' @param save_draws  if TRUE, save posterior draws of mu and sigma2 per obs
-#' @param model_name  optional model label
-#'
-#' @return tibble with:
-#'   n, x, mu_hat, sigma2_hat, resid, z, weight, model,
-#'   facet columns,
-#'   and (if save_draws=TRUE):
-#'       mu_draws[n]      list-column of length-D vectors
-#'       sigma2_draws[n]  list-column of length-D vectors
-extract_residuals <- function(
-    fit,
-    stan_data,
-    facet_cols = NULL,
-    save_draws = TRUE,
-    model_name = deparse(substitute(fit))
-) {
-  # ───────────────────────────────────────────────────────────────
-  # 1. Posterior summaries for mu and sigma2
-  # ───────────────────────────────────────────────────────────────
-  mu_summ  <- fit$summary("mu")
-  sig_summ <- fit$summary("sigma2")
-  
-  get_index <- function(x) as.integer(stringr::str_extract(x, "(?<=\\[)\\d+(?=\\])"))
-  
-  mu_df <- mu_summ %>%
-    transmute(
-      n      = get_index(variable),
-      mu_hat = mean
-    )
-  
-  sig_df <- sig_summ %>%
-    transmute(
-      n          = get_index(variable),
-      sigma2_hat = mean
-    )
-  
-  # ───────────────────────────────────────────────────────────────
-  # 2. Determine facets
-  # ───────────────────────────────────────────────────────────────
-  N <- length(stan_data$X)
-  
-  if (is.null(facet_cols)) {
-    lens <- vapply(stan_data, length, integer(1))
-    facet_cols <- names(stan_data)[lens == N & names(stan_data) != "X"]
-  }
-  
-  # ───────────────────────────────────────────────────────────────
-  # 3. Build observation-level table
-  # ───────────────────────────────────────────────────────────────
-  obs_df <- tibble(
-    n = seq_len(N),
-    x = stan_data$X
-  )
-  
-  for (nm in facet_cols) {
-    obs_df[[nm]] <- stan_data[[nm]]
-  }
-  
-  # ───────────────────────────────────────────────────────────────
-  # 4. Add point summaries
-  # ───────────────────────────────────────────────────────────────
-  out <- obs_df %>%
-    left_join(mu_df,  by = "n") %>%
-    left_join(sig_df, by = "n") %>%
-    mutate(
-      resid  = x - mu_hat,
-      weight = sigma2_hat,
-      z      = resid / sqrt(sigma2_hat),
-      model  = model_name
-    )
-  
-  # ───────────────────────────────────────────────────────────────
-  # 5. Optional: Attach posterior draws (compact list-column)
-  # ───────────────────────────────────────────────────────────────
-  if (save_draws) {
-    # raw draws (iterations x N)
-    mu_mat  <- fit$draws("mu",     format = "matrix")
-    sig_mat <- fit$draws("sigma2", format = "matrix")
-    
-    # sort columns by [n]
-    mu_mat  <- mu_mat[,  order(get_index(colnames(mu_mat))), drop=FALSE]
-    sig_mat <- sig_mat[, order(get_index(colnames(sig_mat))), drop=FALSE]
-    
-    # attach list columns
-    out$mu_draws    <- split(as.data.frame(t(mu_mat)),    seq_len(N))
-    out$sigma2_draws <- split(as.data.frame(t(sig_mat)), seq_len(N))
-    
-    # each list element will be a numeric vector of draws
-    out <- out %>%
-      mutate(
-        mu_draws    = purrr::map(mu_draws,    unlist),
-        sigma2_draws = purrr::map(sigma2_draws, unlist)
-      )
-  }
-  
-  # attach metadata: facet columns
-  attr(out, "facet_cols") <- facet_cols
-  
-  out
-}
+resid_tbl <- extract_residuals(
+  fit        = object$fit,
+  stan_data  = object$data_info$stan_data,
+  facet_cols = object$spec$facets_main,
+  save_draws = TRUE
+)
 ```
 
-6.4 fit statistics
+returns a tibble with:
+	•	n, x, mu_hat, sigma2_hat, resid, z, weight, model
+	•	facet columns (person, item, rater, …)
+	•	optional mu_draws, sigma2_draws list-columns.
+
+attr(resid_tbl, "facet_cols") lists facet columns for facet_infit_outfit_all().
+
+⸻
+
+8.4 Fit statistics – facet_infit_outfit() / facet_infit_outfit_all()
+
+We reuse existing helpers.
+
+Example in methods.R:
 
 ```r
-# In methods.R
 fit_statistics <- function(object, facet) {
   res_df <- extract_residuals(
-    fit = object$fit,
-    stan_data = object$data_info$stan_data,
+    fit        = object$fit,
+    stan_data  = object$data_info$stan_data,
     facet_cols = object$spec$facets_main
   )
   
@@ -1080,165 +899,154 @@ fit_statistics <- function(object, facet) {
 }
 ```
 
-```r
-#' Compute infit and outfit mean square for any facet
-#'
-#' @param res_df tibble from extract_residuals()
-#' @param facet  facet column to group by; can be a bare name or a string
-#'               e.g. RaterID, "RaterID", ExamineeID, "TaskID", "CriterionID", ...
-#'
-#' @return tibble with facet_value, model, n_obs, infit_msq, outfit_msq
-facet_infit_outfit <- function(res_df, facet) {
-  # allow both strings and bare names
-  facet_sym <- if (is.character(facet)) sym(facet) else enquo(facet)
-  
-  res_df %>%
-    group_by(!!facet_sym, model) %>%
-    summarise(
-      n_obs      = n(),
-      outfit_msq = mean(z^2, na.rm = TRUE),
-      infit_msq  = sum(weight * z^2, na.rm = TRUE) / sum(weight, na.rm = TRUE),
-      .groups    = "drop"
-    ) %>%
-    rename(facet_value = !!facet_sym)
-}
+facet_infit_outfit_all(res_df) computes infit/outfit across all facets.
 
+add_fit_cri_bayes() and add_zstd() add Bayesian CrIs and z-standardized fit stats.
+
+⸻
+
+8.5 Bias summaries – summarise_bias() (wrapper) + summarise_bias_ir() (existing)
+
+User-facing API:
+
+```r
+summarise_bias <- function(object, facet = NULL, ...) {
+  # If facet is NULL and spec has only one bias facet, use that.
+  # If facet == "rater:item", call summarise_bias_ir(...)
+  # Future: extend to other bias facets.
+}
 ```
 
+Internally, for "rater:item":
+
 ```r
-#' Bayesian CrIs for infit & outfit using draws stored in residuals
-add_fit_cri_bayes <- function(fit_stats,
-                              res_df,
-                              facet,
-                              prob = 0.95) {
-  facet_name <- if (is.character(facet)) facet else rlang::as_name(rlang::enquo(facet))
-  
-  prob_lo <- (1 - prob) / 2
-  prob_hi <- 1 - prob_lo
-  
-  facet_levels <- sort(unique(res_df[[facet_name]]))
-  
-  cri_df <- purrr::map_dfr(
-    facet_levels,
-    function(f_val) {
-      idx <- which(res_df[[facet_name]] == f_val)
-      
-      mu_list  <- res_df$mu_draws[idx]      # list of numeric vectors
-      sig_list <- res_df$sigma2_draws[idx]
-      
-      # matrix: draws x obs_in_facet
-      mu_mat  <- do.call(cbind, mu_list)
-      sig_mat <- do.call(cbind, sig_list)
-      
-      D <- nrow(mu_mat)
-      n_obs <- length(idx)
-      
-      X_sub <- matrix(res_df$x[idx], nrow=D, ncol=n_obs, byrow=TRUE)
-      
-      z2 <- (X_sub - mu_mat)^2 / sig_mat
-      w  <- sig_mat
-      
-      outfit <- rowMeans(z2)
-      infit  <- rowSums(w * z2) / rowSums(w)
-      
-      tibble(
-        facet_value = f_val,
-        outfit_lo = quantile(outfit, prob_lo),
-        outfit_hi = quantile(outfit, prob_hi),
-        infit_lo  = quantile(infit,  prob_lo),
-        infit_hi  = quantile(infit,  prob_hi)
-      )
-    }
+bias_rc <- summarise_bias_ir(
+  object$fit,
+  item_labels  = object$data_info$facet_labels$item,
+  rater_labels = object$data_info$facet_labels$rater,
+  prob_thresh  = 0.95
+)
+```
+
+⸻
+
+8.6 Residual correlations – residual_cor_criteria()
+
+New helper for analyzing correlations of residuals across criteria/items.
+
+Function:
+
+```r
+residual_cor_criteria <- function(resid_tbl) {
+  # 1. Pivot to wide: one row per person (or person–rater), one column per item.
+  # 2. Compute correlation matrix across item columns.
+}
+```
+
+
+Basic implementation idea:
+
+```r
+crit_wide <- resid_tbl %>%
+  dplyr::select(person, item, resid) %>%
+  dplyr::distinct() %>%
+  dplyr::mutate(item = paste0("item_", item)) %>%
+  tidyr::pivot_wider(
+    names_from  = item,
+    values_from = resid
   )
-  
-  fit_stats %>%
-    left_join(cri_df, by = "facet_value")
-}
 
+crit_cor <- stats::cor(
+  dplyr::select(crit_wide, -person),
+  use = "pairwise.complete.obs"
+)
 ```
 
-```r
-facet_infit_outfit_all <- function(res_df) {
-  facet_cols <- attr(res_df, "facet_cols")
-  
-  map_dfr(
-    facet_cols,
-    ~ facet_infit_outfit(res_df, .x) %>%
-      mutate(facet = .x),
-    .id = NULL
-  ) %>%
-    relocate(facet, facet_value)
-}
-```
+residual_cor_criteria() returns crit_cor (matrix) or a tidy form.
 
 ⸻
 
-7. Design decisions and rationale (for beginners)
+9. Design decisions and rationale (for beginners)
 	1.	Why formula syntax?
-	•	R users are familiar with y ~ x1 + x2. We reuse that mental model, but reinterpret x’s as facets, not predictors.
+R users are familiar with y ~ x1 + x2. We reuse that mental model but reinterpret RHS terms as facets, not continuous predictors.
 	2.	Why integer indices?
-	•	Stan likes integer indices for categorical things. Converting "R01" → 1, "R02" → 2 is standard practice in hierarchical models.
+Stan likes integer indices for categorical facets. Mapping "R01" → 1, "R02" → 2 is standard in hierarchical models.
 	3.	Why sum-to-zero constraints?
-	•	Rasch/MFRM parameters are only identified up to a linear shift (we can add a constant to all person abilities and subtract it from item difficulties).
-	•	Enforcing that a facet’s parameters sum to zero anchors that facet’s scale and avoids non-identifiability.
-  •	Row-wise centering for theta to retain global meaning beyond specific raters.
+Rasch/MFRM parameters are only identified up to a linear shift (we can add a constant to all person abilities and subtract it from item difficulties). We therefore:
+	•	Mean-center each main facet’s parameters (sum-to-zero across levels).
+	•	This makes scales comparable and avoids non-identifiability.
+	•	The person scale can still be interpreted relative to the centered item/rater scales.
 	4.	Why only rating-scale Rasch first?
-	•	Implementing everything (partial credit, GRM, drift, multidimensional) at once is complicated.
-	•	Starting with one clean, well-understood model lets us:
-	•	test infrastructure,
-	•	debug Stan code generation,
-	•	design a stable R API.
+Implementing everything (partial credit, GRM, drift, multidimensional) at once is complicated. Starting with one clean, well-understood model lets us:
+	•	Test infrastructure
+	•	Debug Stan code generation
+	•	Design a stable R API
 	5.	Why a small prior vocabulary?
-	•	brms supports many classes, but that’s overwhelming early on.
-	•	MFRM use cases mostly need priors on:
-	•	person ability,
-	•	item difficulty,
-	•	rater severity,
-	•	thresholds,
-	•	bias terms.
-	•	So a small, Rasch-specific dictionary is enough.
+brms supports many classes, but that’s overwhelming early on. MFRM use cases mostly need priors on:
+	•	person ability
+	•	item difficulty
+	•	rater severity
+	•	thresholds
+	•	bias terms
+So a small, Rasch-specific dictionary is enough.
 	6.	Why caching?
-	•	Compiling Stan models is expensive.
-	•	In research, you often re-run the same model with minor data changes.
-	•	Caching + hashing the Stan code saves time and frustration.
-
+Compiling Stan models is expensive. In research, you often re-run the same model with minor data changes. Caching + hashing the Stan code saves time and frustration.
+	7.	Why S3 classes (bmfrm_fit)?
+S3 is simple and familiar:
+	•	fit <- bmfrm(...)
+	•	summary(fit), plot(fit), stancode(fit), standata(fit)
+Internally, bmfrm_fit stores a cmdstanr fit (R6), but the user interacts through simple S3 generics.
 
 ⸻
 
-8. Implementation roadmap (v0.3 - leveraging existing code)
+10. Implementation roadmap (v0.4 – leveraging existing code)
 
-You (or a beginner dev) can follow this order:
+A developer can follow this order:
 	1.	Package skeleton
 	•	usethis::create_package("BayesMFRM")
-	•	Add R/, inst/stan/, DESCRIPTION with imports: cmdstanr, posterior, dplyr, tibble, rlang, glue, digest.
+	•	Add imports: cmdstanr, posterior, dplyr, tibble, rlang, glue, digest, tidyr, purrr.
 	2.	Core helpers
 	•	Implement prior() and basic validation.
-	•	Implement parse_bmfrm_formula() for simple cases.
+	•	Implement parse_bmfrm_formula() for simple cases (person + item + rater + one bias).
 	3.	Data prep
 	•	Implement prepare_data_bmfrm():
-	•	stan_data, facet_labels.
+	•	stan_data, facet_labels, data_clean.
 	4.	Stan template
-	•	Save base template as a string (or .stan file with tokens).
-	•	Implement build_stan_code(spec, priors) that fills placeholders for a 3-facet model.
+	•	Save base template as a string or .stan file with placeholders.
+	•	Implement build_stan_code(spec, priors) for a 3-facet model.
 	5.	Compile & fit
 	•	Implement compile_bmfrm().
 	•	Reuse fit_cmdstan_cached().
 	•	Implement bmfrm() itself (wire everything together).
-	6.	Post-processing
-	•	Define bmfrm_fit class.
-	•	Implement summary.bmfrm_fit(), stancode.bmfrm_fit(), standata.bmfrm_fit().
+	•	Implement postprocess_bmfrm() to construct bmfrm_fit.
+	6.	S3 methods & utilities
+	•	Define "bmfrm_fit" class.
+	•	Implement print.bmfrm_fit(), summary.bmfrm_fit(), stancode.bmfrm_fit(), standata.bmfrm_fit().
 	•	Implement facet_summary(), fair_scores().
+	•	Implement simple wrapper summarise_bias() around summarise_bias_ir().
+	•	Implement residual_cor_criteria().
 	7.	Testing
-	•	Simulate small Rasch data sets, fit the model, and verify:
+	•	Simulate small Rasch/MFRM data sets.
+	•	Fit the model with bmfrm() and verify:
 	•	Parameter recovery.
-	•	Reasonable diagnostics (Rhat, ESS).
+	•	Diagnostics (Rhat, ESS).
 	•	Reasonable fair-score behavior.
+	•	Reasonable infit/outfit.
 	8.	Documentation
 	•	Write vignettes:
 	•	“Basic 3-facet MFRM”
 	•	“Adding a rater×item bias facet”
 	•	“Inspecting Stan code and priors”
+	9.	Future extensions
+	•	Partial-credit / GRM family.
+	•	Additional facets (task, interlocutor).
+	•	Additional bias facets (rater:task, rater:interlocutor).
+	•	Multidimensional theta.
 
-9. Example usecase
+⸻
 
 
+If you’d like, next step can be:
+
+- I draft **minimal R stubs** for the new functions (`bmfrm()`, `parse_bmfrm_formula()`, `prepare_data_bmfrm()`, `compile_bmfrm()`, `postprocess_bmfrm()`, `summarise_bias()`, `residual_cor_criteria()`), so you can drop them into your `R/` folder and start iterating.
+  
