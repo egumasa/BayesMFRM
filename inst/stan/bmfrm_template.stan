@@ -22,18 +22,16 @@ parameters {
 }
 
 transformed parameters {
-  // person abilities (sum-to-zero constraint)
+  // person abilities
   vector[J_person] theta;
-  {
-    real mean_theta = mean(theta_raw);
-    theta = theta_raw - mean_theta;
-  }
+  theta = theta_raw
 
   // {{FACET_TRANSFORM}}
 
   // thresholds (already ordered)
-  vector[K-1] tau = tau_raw;
-
+  vector[K - 1] tau;
+  tau          = tau_raw;
+  
   // {{BIAS_TRANSFORM}}
 }
 

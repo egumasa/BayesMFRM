@@ -32,10 +32,10 @@ transformed parameters {
 
   // sum-to-zero identification (Eckes-style)
   theta        = theta_raw;        // To mimic FACET behavior this should not be centered  - mean(theta_raw);
-  criteria         = criteria_raw         - mean(criteria_raw);
+  criteria     = criteria_raw     - mean(criteria_raw);
   rater        = rater_raw        - mean(rater_raw);
   interlocutor = interlocutor_raw - mean(interlocutor_raw);
-  tau          = tau_raw          - mean(tau_raw);
+  tau          = tau_raw;
 }
 
 model {

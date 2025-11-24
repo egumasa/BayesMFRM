@@ -6,13 +6,16 @@ data {
   int<lower=2> K;                // number of rating categories
   array[N] int<lower=1, upper=K> X;   // observed ratings
 
-    int<lower=1> J_person;
-  array[N] int<lower=1, upper=J_person> person;
+  
+  int<lower=1> J_person;
   int<lower=1> J_criteria;
-  array[N] int<lower=1, upper=J_criteria> criteria;
   int<lower=1> J_rater;
-  array[N] int<lower=1, upper=J_rater> rater;
   int<lower=1> J_interlocutor;
+
+
+  array[N] int<lower=1, upper=J_person> person;
+  array[N] int<lower=1, upper=J_criteria> criteria;
+  array[N] int<lower=1, upper=J_rater> rater;
   array[N] int<lower=1, upper=J_interlocutor> interlocutor;
 }
 
@@ -20,7 +23,8 @@ parameters {
   // person abilities (always present)
   vector[J_person] theta_raw;
 
-    vector[J_criteria] criteria_raw;
+  
+  vector[J_criteria] criteria_raw;
   vector[J_rater] rater_raw;
   vector[J_interlocutor] interlocutor_raw;
 
@@ -31,40 +35,43 @@ parameters {
 }
 
 transformed parameters {
-  // person abilities (sum-to-zero constraint)
+  // person abilities
   vector[J_person] theta;
-  {
-    real mean_theta = mean(theta_raw);
-    theta = theta_raw - mean_theta;
-  }
+  theta = theta_raw
 
-    // criteria (sum-to-zero constraint)
+  
   vector[J_criteria] criteria;
+  vector[J_rater] rater;
+  vector[J_interlocutor] interlocutor;
+
+  // criteria (sum-to-zero constraint)
   {
     real mean_criteria = mean(criteria_raw);
     criteria = criteria_raw - mean_criteria;
   }
+
   // rater (sum-to-zero constraint)
-  vector[J_rater] rater;
   {
     real mean_rater = mean(rater_raw);
     rater = rater_raw - mean_rater;
   }
+
   // interlocutor (sum-to-zero constraint)
-  vector[J_interlocutor] interlocutor;
   {
     real mean_interlocutor = mean(interlocutor_raw);
     interlocutor = interlocutor_raw - mean_interlocutor;
   }
 
   // thresholds (already ordered)
-  vector[K-1] tau = tau_raw;
+  vector[K - 1] tau;
 
+  tau          = tau_raw          - mean(tau_raw);
   
 }
 
 model {
-    theta_raw ~ student_t(3, 0, 4);
+  
+  theta_raw ~ student_t(3, 0, 4);
   criteria_raw ~ student_t(3, 0, 2);
   rater_raw ~ student_t(3, 0, 2);
   interlocutor_raw ~ student_t(3, 0, 2);
@@ -73,11 +80,13 @@ model {
   // likelihood
   for (n in 1:N) {
     int person_n = person[n];
-        int criteria_n = criteria[n];
+    
+    int criteria_n = criteria[n];
     int rater_n = rater[n];
     int interlocutor_n = interlocutor[n];
 
     real eta = theta[person_n]
+               
                + (- criteria[criteria_n])
                + (- rater[rater_n])
                + (- interlocutor[interlocutor_n]);
@@ -101,17 +110,20 @@ generated quantities {
 
   for (n in 1:N) {
     int person_n = person[n];
-        int criteria_n = criteria[n];
+    
+    int criteria_n = criteria[n];
     int rater_n = rater[n];
     int interlocutor_n = interlocutor[n];
 
     // ---- 1) Actual facets ----
     real eta_full = theta[person_n]
-                    + (- criteria[criteria_n])
+                    
+               + (- criteria[criteria_n])
                + (- rater[rater_n])
                + (- interlocutor[interlocutor_n]);
     real eta_fair = theta[person_n]
-                    + (- criteria[criteria_n]);
+                    
+               + (- criteria[criteria_n]);
 
     vector[K] logits_full;
     vector[K] logits_fair;

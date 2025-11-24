@@ -59,25 +59,35 @@ build_stan_code <- function(spec, priors) {
 #' Generate data block declarations for facets
 #' @keywords internal
 generate_facet_data_decl <- function(spec) {
-  lines <- character(0)
-  
-  # Main facets - declare dimensions first, then arrays
+  empty_line <- character(0) 
+  # First collect all int declarations
+  int_lines <- ""
   for (facet in spec$facets_main) {
-    lines <- c(lines, 
-               paste0("  int<lower=1> J_", facet, ";"),
-               paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, ";"))
+    int_lines <- c(int_lines,
+      paste0("  int<lower=1> J_", facet, ";")
+    )
   }
   
-  # Note: Bias facets don't need separate index arrays - they reuse main facet indices
-  # The bias parameters are matrices indexed by the existing main facet arrays
+  # Then collect all array declarations
+  array_lines <- ""
+  for (facet in spec$facets_main) {
+    array_lines <- c(
+      array_lines,
+      paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, ";")
+    )
+  }
   
-  paste(lines, collapse = "\n")
+  # Combine both blocks
+  paste(
+    c(int_lines, "", array_lines),
+    collapse = "\n"
+  )
 }
 
 #' Generate parameter declarations for main facets
 #' @keywords internal  
 generate_facet_param_decl <- function(spec) {
-  lines <- character(0)
+  lines <- ""
   
   # Skip person (theta) as it's always present in template
   other_facets <- setdiff(spec$facets_main, "person")
@@ -111,28 +121,39 @@ generate_bias_param_decl <- function(spec) {
 #' Generate transformed parameters for main facets
 #' @keywords internal
 generate_facet_transform <- function(spec) {
-  lines <- character(0)
   
   # Skip person (theta) as it's handled in template
   other_facets <- setdiff(spec$facets_main, "person")
   
+  vector_lines <- ""
+  centering_lines <- character(0)
+
   for (facet in other_facets) {
-    lines <- c(lines,
+    vector_lines <- c(
+               vector_lines,
+               paste0("  vector[J_", facet, "] ", facet, ";"))
+
+    centering_lines <- c(
+               centering_lines,
+               "",
                paste0("  // ", facet, " (sum-to-zero constraint)"),
-               paste0("  vector[J_", facet, "] ", facet, ";"),
                "  {",
                paste0("    real mean_", facet, " = mean(", facet, "_raw);"),
                paste0("    ", facet, " = ", facet, "_raw - mean_", facet, ";"),
                "  }")
   }
-  
-  paste(lines, collapse = "\n")
+
+  # Combine both blocks
+  paste(
+    c(vector_lines, centering_lines),
+    collapse = "\n"
+  )
 }
 
 #' Generate transformed parameters for bias facets
 #' @keywords internal 
 generate_bias_transform <- function(spec) {
-  lines <- character(0)
+  lines <- ""
   
   if (length(spec$facets_bias) > 0) {
     for (bias_facet in spec$facets_bias) {
@@ -160,7 +181,7 @@ generate_bias_transform <- function(spec) {
 #' Generate prior statements
 #' @keywords internal
 generate_prior_block <- function(spec, priors) {
-  lines <- character(0)
+  lines <- ""
   
   for (prior_obj in priors) {
     if (prior_obj$class == "theta") {
@@ -186,7 +207,7 @@ generate_prior_block <- function(spec, priors) {
 #' Generate index extraction code
 #' @keywords internal
 generate_index_extract <- function(spec) {
-  lines <- character(0)
+  lines <- ""
   
   # Skip person as it's in template
   other_facets <- setdiff(spec$facets_main, "person")
@@ -204,7 +225,7 @@ generate_index_extract <- function(spec) {
 #' Generate eta sum (linear predictor)
 #' @keywords internal  
 generate_eta_sum <- function(spec, fair = FALSE) {
-  lines <- character(0)
+  lines <- ""
   
   # Always subtract other main facets (except person which is added)
   other_facets <- setdiff(spec$facets_main, "person")
