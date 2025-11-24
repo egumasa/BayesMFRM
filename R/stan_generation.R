@@ -61,24 +61,15 @@ build_stan_code <- function(spec, priors) {
 generate_facet_data_decl <- function(spec) {
   lines <- character(0)
   
-  # Main facets
+  # Main facets - declare dimensions first, then arrays
   for (facet in spec$facets_main) {
     lines <- c(lines, 
-               paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, ";"),
-               paste0("  int<lower=1> J_", facet, ";"))
+               paste0("  int<lower=1> J_", facet, ";"),
+               paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, ";"))
   }
   
-  # Bias facet dimensions (if any)
-  if (length(spec$facets_bias) > 0) {
-    for (bias_facet in spec$facets_bias) {
-      components <- strsplit(bias_facet, ":")[[1]]
-      f1 <- components[1]
-      f2 <- components[2]
-      lines <- c(lines,
-                 paste0("  array[N] int<lower=1, upper=J_", f1, "> ", f1, "_", gsub(":", "", bias_facet), ";"),
-                 paste0("  array[N] int<lower=1, upper=J_", f2, "> ", f2, "_", gsub(":", "", bias_facet), ";"))
-    }
-  }
+  # Note: Bias facets don't need separate index arrays - they reuse main facet indices
+  # The bias parameters are matrices indexed by the existing main facet arrays
   
   paste(lines, collapse = "\n")
 }
@@ -204,18 +195,8 @@ generate_index_extract <- function(spec) {
     lines <- c(lines, paste0("    int ", facet, "_n = ", facet, "[n];"))
   }
   
-  # Add bias indices if any
-  if (length(spec$facets_bias) > 0) {
-    for (bias_facet in spec$facets_bias) {
-      components <- strsplit(bias_facet, ":")[[1]]
-      f1 <- components[1]
-      f2 <- components[2]
-      bias_clean <- gsub(":", "", bias_facet)
-      lines <- c(lines,
-                 paste0("    int ", f1, "_", bias_clean, "_n = ", f1, "_", bias_clean, "[n];"),
-                 paste0("    int ", f2, "_", bias_clean, "_n = ", f2, "_", bias_clean, "[n];"))
-    }
-  }
+  # Note: Bias facets reuse the main facet indices (e.g., rater_n, item_n)
+  # No additional index extraction needed for bias terms
   
   paste(lines, collapse = "\n")
 }
@@ -249,7 +230,8 @@ generate_eta_sum <- function(spec, fair = FALSE) {
         next
       }
       
-      lines <- c(lines, paste0("+ ", bias_clean, "[", f1, "_", bias_clean, "_n, ", f2, "_", bias_clean, "_n]"))
+      # Use the main facet indices directly (e.g., rater_n, item_n)
+      lines <- c(lines, paste0("+ ", bias_clean, "[", f1, "_n, ", f2, "_n]"))
     }
   }
   
