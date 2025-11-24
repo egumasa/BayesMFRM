@@ -231,6 +231,6 @@ print.bmfrm_data_check <- function(x, ...) {
       cat("  *", w, "\n")
     }
   }
-  
+   
   cat("\nRecommendation:", x$recommendation, "\n")
 }
