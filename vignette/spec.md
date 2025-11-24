@@ -36,7 +36,7 @@ priors <- c(
   prior("normal(0, 3)",       class = "tau")           # thresholds
 )
 
-fit <- mfrm(
+fit <- bmfrm(
   score ~ person + item + rater + (rater:item),
   data       = ratings,
   K          = 6,
@@ -55,6 +55,10 @@ fit <- mfrm(
 summary(fit, facets = c("person", "rater"))
 rater_tab  <- facet_summary(fit, "rater")
 fair_scores <- fair_scores(fit)
+
+bias    <- summarise_bias(fit) # when bias term is estimated
+resid_tbl  <- extract_residuals(fit) #return FACET like residuals
+crit_cor   <- residual_cor_criteria(resid_tbl)
 stancode(fit)  # inspect underlying Stan code
 ```
 
@@ -113,7 +117,7 @@ We treat these differently in Stan:
 
 3. Statistical model (v0.1)
 
-We start with a rating-scale Rasch MFRM.
+We start with a rating-scale Rasch bmfrm.
 
 For rating n:
 	•	Person: p_n
@@ -145,10 +149,10 @@ We assume:
 
 4. Top-level API design
 
-4.1 mfrm() function
+4.1 bmfrm() function
 
 ```r
-mfrm <- function(
+bmfrm <- function(
   formula,
   data,
   K,
@@ -187,7 +191,7 @@ score ~ person + item + rater + (rater:item)
 	•	"rating_scale" (v0.1) and later "partial_credit".
 	•	model_name
 	•	Optional string used to label compilation and caching.
-	•	If NULL, automatically generate something like "mfrm_<hash>".
+	•	If NULL, automatically generate something like "bmfrm_<hash>".
 	•	cache_dir
 	•	Directory to store compiled Stan models and optionally cached fits.
 	•	refit
@@ -223,7 +227,7 @@ prior <- function(spec, class, facet = NULL) {
       class = class,   # e.g. "theta", "item", "rater", "bias", "tau"
       facet = facet    # e.g. "rater:item" (only for bias)
     ),
-    class = "mfrm_prior"
+    class = "bmfrm_prior"
   )
 }
 ```
@@ -247,15 +251,15 @@ If priors = NULL, we use defaults such as:
 	•	bias ~ normal(0, 0.5)
 	•	tau ~ normal(0, 3) on ordered thresholds (or on spacings).
 
-pipeline for the mfrm function
+pipeline for the bmfrm function
 
 ```r
-mfrm <- function(formula, data, K, priors = NULL, ...) {
+bmfrm <- function(formula, data, K, priors = NULL, ...) {
   # 1. Parse formula
-  spec <- parse_mfrm_formula(formula, data, K)
+  spec <- parse_bmfrm_formula(formula, data, K)
   
   # 2. Prepare data
-  data_info <- prepare_data_mfrm(spec, data)
+  data_info <- prepare_data_bmfrm(spec, data)
   
   # 3. Generate Stan code
   stan_code <- build_stan_code(spec, priors)
@@ -263,7 +267,7 @@ mfrm <- function(formula, data, K, priors = NULL, ...) {
   # 4. Compile model
   model <- compile_stan_model(stan_code, cache_dir)
   
-  # 5. Fit using your existing function
+  # 5. Fit using your existing function (see below)
   fit <- fit_cmdstan_cached(
     model = model,
     data = data_info$stan_data,
@@ -271,7 +275,7 @@ mfrm <- function(formula, data, K, priors = NULL, ...) {
     ...
   )
   
-  # 6. Return mfrm_fit object
+  # 6. Return bmfrm_fit object
   structure(
     list(
       fit = fit,
@@ -279,7 +283,7 @@ mfrm <- function(formula, data, K, priors = NULL, ...) {
       data_info = data_info,
       stan_code = stan_code
     ),
-    class = "mfrm_fit"
+    class = "bmfrm_fit"
   )
 }
 
@@ -339,7 +343,7 @@ Given these working components, the new architecture becomes:
 ```
 BayesMFRM/
 ├── R/
-│   ├── mfrm.R              # Main function (NEW)
+│   ├── bmfrm.R              # Main function (NEW)
 │   ├── formula_parsing.R   # Parse formula to spec (NEW)
 │   ├── data_prep.R         # Facet to integer conversion (NEW)
 │   ├── stan_generation.R   # Build Stan code from spec (NEW)
@@ -358,13 +362,15 @@ BayesMFRM/
 
 For a beginner, it’s useful to see the pipeline:
 
-mfrm()
-  ├─ parse_mfrm_formula()  # understand formula
-  ├─ prepare_data_mfrm()   # build stan_data list
+```
+bmfrm()
+  ├─ parse_bmfrm_formula()  # understand formula
+  ├─ prepare_data_bmfrm()   # build stan_data list
   ├─ build_stan_code()     # create Stan model string
   ├─ compile_or_reuse()    # compiled Stan model with cmdstanr
   ├─ sample()              # run MCMC (cmdstanr::sample)
-  └─ postprocess_mfrm()    # wrap & summarize results
+  └─ postprocess_bmfrm()    # wrap & summarize results
+```
 
 We’ll define each piece.
 
@@ -372,7 +378,7 @@ We’ll define each piece.
 
 5.1 Parsing the formula
 
-Function: parse_mfrm_formula(formula, data, K, family)
+Function: parse_bmfrm_formula(formula, data, K, family)
 
 Input:
 	•	formula like score ~ person + item + rater + (rater:item).
@@ -412,9 +418,9 @@ This is different from general regression (where a variable could be continuous)
 
 ⸻
 
-5.2 Data preparation (prepare_data_mfrm)
+5.2 Data preparation (prepare_data_bmfrm)
 
-Function: prepare_data_mfrm(spec, data)
+Function: prepare_data_bmfrm(spec, data)
 
 Goal:
 	•	Convert data frame into a stan_data list with integer indices and counts.
@@ -663,7 +669,7 @@ Design choice:
 
 5.4 Compilation & caching
 
-Function: compile_mfrm(stan_code, model_name, cache_dir)
+Function: compile_bmfrm(stan_code, model_name, cache_dir)
 
 Steps:
 	1.	Compute hash of stan_code (e.g., using digest::digest()).
@@ -704,7 +710,6 @@ fit_cmdstan_cached(
 Here is the current implementation
 
 ```r
-
 fit_cmdstan_cached <- function(
   model,           # compiled cmdstan_model
   data,            # list passed to model$sample()
@@ -884,9 +889,9 @@ fit_cmdstan_cached <- function(
 
 5.5 Post-processing
 
-Function: postprocess_mfrm(fit, spec, data_info, priors, stan_code_hash)
+Function: postprocess_bmfrm(fit, spec, data_info, priors, stan_code_hash)
 
-It should build an object, say class "mfrm_fit":
+It should build an object, say class "bmfrm_fit":
 
 ```r
 out <- list(
@@ -898,15 +903,15 @@ out <- list(
   stan_hash    = stan_code_hash
 )
 
-class(out) <- "mfrm_fit"
+class(out) <- "bmfrm_fit"
 out
 ```
 
 We then define methods:
-	•	print.mfrm_fit()
-	•	summary.mfrm_fit()
-	•	stancode.mfrm_fit() – returns Stan code string.
-	•	standata.mfrm_fit() – returns stan_data list.
+	•	print.bmfrm_fit()
+	•	summary.bmfrm_fit()
+	•	stancode.bmfrm_fit() – returns Stan code string.
+	•	standata.bmfrm_fit() – returns stan_data list.
 	•	facet_summary(fit, facet = "rater")
 	•	fair_scores(fit, newdata = NULL)
 	•	extract_residuals(fit, ...)
@@ -950,7 +955,7 @@ fair_scores <- function(object, newdata = NULL, summary = TRUE) {
 6.3 extract_residuals()
 
 You already have a design: use mu, sigma2 to compute standardized residuals and then add facet columns.
-
+Here is the current idea. 
 
 ```r
 #' Extract residual info from a cmdstanr fit (with optional posterior draws)
@@ -1062,7 +1067,7 @@ extract_residuals <- function(
 
 6.4 fit statistics
 
-```
+```r
 # In methods.R
 fit_statistics <- function(object, facet) {
   res_df <- extract_residuals(
@@ -1176,6 +1181,7 @@ facet_infit_outfit_all <- function(res_df) {
 	3.	Why sum-to-zero constraints?
 	•	Rasch/MFRM parameters are only identified up to a linear shift (we can add a constant to all person abilities and subtract it from item difficulties).
 	•	Enforcing that a facet’s parameters sum to zero anchors that facet’s scale and avoids non-identifiability.
+  •	Row-wise centering for theta to retain global meaning beyond specific raters.
 	4.	Why only rating-scale Rasch first?
 	•	Implementing everything (partial credit, GRM, drift, multidimensional) at once is complicated.
 	•	Starting with one clean, well-understood model lets us:
@@ -1197,8 +1203,6 @@ facet_infit_outfit_all <- function(res_df) {
 	•	Caching + hashing the Stan code saves time and frustration.
 
 
-
-
 ⸻
 
 8. Implementation roadmap (v0.3 - leveraging existing code)
@@ -1209,20 +1213,20 @@ You (or a beginner dev) can follow this order:
 	•	Add R/, inst/stan/, DESCRIPTION with imports: cmdstanr, posterior, dplyr, tibble, rlang, glue, digest.
 	2.	Core helpers
 	•	Implement prior() and basic validation.
-	•	Implement parse_mfrm_formula() for simple cases.
+	•	Implement parse_bmfrm_formula() for simple cases.
 	3.	Data prep
-	•	Implement prepare_data_mfrm():
+	•	Implement prepare_data_bmfrm():
 	•	stan_data, facet_labels.
 	4.	Stan template
 	•	Save base template as a string (or .stan file with tokens).
 	•	Implement build_stan_code(spec, priors) that fills placeholders for a 3-facet model.
 	5.	Compile & fit
-	•	Implement compile_mfrm().
-	•	Implement fit_cmdstan_cached().
-	•	Implement mfrm() itself (wire everything together).
+	•	Implement compile_bmfrm().
+	•	Reuse fit_cmdstan_cached().
+	•	Implement bmfrm() itself (wire everything together).
 	6.	Post-processing
-	•	Define mfrm_fit class.
-	•	Implement summary.mfrm_fit(), stancode.mfrm_fit(), standata.mfrm_fit().
+	•	Define bmfrm_fit class.
+	•	Implement summary.bmfrm_fit(), stancode.bmfrm_fit(), standata.bmfrm_fit().
 	•	Implement facet_summary(), fair_scores().
 	7.	Testing
 	•	Simulate small Rasch data sets, fit the model, and verify:
@@ -1234,3 +1238,7 @@ You (or a beginner dev) can follow this order:
 	•	“Basic 3-facet MFRM”
 	•	“Adding a rater×item bias facet”
 	•	“Inspecting Stan code and priors”
+
+9. Example usecase
+
+
