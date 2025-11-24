@@ -1,6 +1,6 @@
 Package: BayesMFRM
 Type: Package
-Title: What the Package Does (Title Case)
+Title: Bayesian Many-Facet Rasch Models using Stan
 Version: 0.1.0
 Authors@R: c(
     person(
@@ -9,12 +9,31 @@ Authors@R: c(
       role = c("aut", "cre")
     )
   )
-Description: More about what it does (maybe more than one line).
-    Continuation lines should be indented.
-License: What license is it under?
+Description: An R package for Bayesian many-facet Rasch models using Stan (via cmdstanr).
+    Provides an easy-to-use interface for fitting rating-scale Rasch models with multiple 
+    facets (person, item, rater, etc.) and optional bias terms. Produces FACETS-style 
+    outputs including fair averages, infit/outfit statistics, and bias analysis.
+License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports: 
-    magrittr
+    cmdstanr,
+    posterior,
+    dplyr,
+    tidyr,
+    tibble,
+    rlang,
+    glue,
+    digest,
+    stringr,
+    purrr,
+    magrittr,
+    bayesplot
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+SystemRequirements: CmdStan (https://mc-stan.org/cmdstanr/articles/cmdstanr.html)
