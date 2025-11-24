@@ -73,7 +73,7 @@ generate_facet_data_decl <- function(spec) {
   for (facet in spec$facets_main) {
     array_lines <- c(
       array_lines,
-      paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, ";")
+      paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, "_id", ";")
     )
   }
   
@@ -135,7 +135,6 @@ generate_facet_transform <- function(spec) {
 
     centering_lines <- c(
                centering_lines,
-               "",
                paste0("  // ", facet, " (sum-to-zero constraint)"),
                "  {",
                paste0("    real mean_", facet, " = mean(", facet, "_raw);"),
@@ -213,7 +212,7 @@ generate_index_extract <- function(spec) {
   other_facets <- setdiff(spec$facets_main, "person")
   
   for (facet in other_facets) {
-    lines <- c(lines, paste0("    int ", facet, "_n = ", facet, "[n];"))
+    lines <- c(lines, paste0("    int ", facet, "_n = ", facet, "_id[n];"))
   }
   
   # Note: Bias facets reuse the main facet indices (e.g., rater_n, item_n)

@@ -13,10 +13,10 @@ data {
   int<lower=1> J_interlocutor;
 
 
-  array[N] int<lower=1, upper=J_person> person;
-  array[N] int<lower=1, upper=J_criteria> criteria;
-  array[N] int<lower=1, upper=J_rater> rater;
-  array[N] int<lower=1, upper=J_interlocutor> interlocutor;
+  array[N] int<lower=1, upper=J_person> person_id;
+  array[N] int<lower=1, upper=J_criteria> criteria_id;
+  array[N] int<lower=1, upper=J_rater> rater_id;
+  array[N] int<lower=1, upper=J_interlocutor> interlocutor_id;
 }
 
 parameters {
@@ -37,25 +37,22 @@ parameters {
 transformed parameters {
   // person abilities
   vector[J_person] theta;
-  theta = theta_raw
+  theta = theta_raw;
 
   
   vector[J_criteria] criteria;
   vector[J_rater] rater;
   vector[J_interlocutor] interlocutor;
-
   // criteria (sum-to-zero constraint)
   {
     real mean_criteria = mean(criteria_raw);
     criteria = criteria_raw - mean_criteria;
   }
-
   // rater (sum-to-zero constraint)
   {
     real mean_rater = mean(rater_raw);
     rater = rater_raw - mean_rater;
   }
-
   // interlocutor (sum-to-zero constraint)
   {
     real mean_interlocutor = mean(interlocutor_raw);
@@ -64,8 +61,8 @@ transformed parameters {
 
   // thresholds (already ordered)
   vector[K - 1] tau;
+  tau          = tau_raw;
 
-  tau          = tau_raw          - mean(tau_raw);
   
 }
 

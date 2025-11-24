@@ -89,7 +89,7 @@ prepare_data_bmfrm <- function(spec, data) {
   
   # Add main facet data
   for (f in spec$facets_main) {
-    stan_data[[f]]               <- idx_list[[f]]
+    stan_data[[paste0(f, "_id")]]               <- idx_list[[f]]
     stan_data[[paste0("J_", f)]] <- J_list[[f]]
   }
   

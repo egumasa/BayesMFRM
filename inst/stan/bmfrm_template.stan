@@ -40,7 +40,7 @@ model {
 
   // likelihood
   for (n in 1:N) {
-    int person_n = person[n];
+    int person_n = person_id[n];
     // {{INDEX_EXTRACT}}
 
     real eta = theta[person_n]
@@ -64,7 +64,7 @@ generated quantities {
   vector[N] mu_fair;   // expected score with "fair" facets
 
   for (n in 1:N) {
-    int person_n = person[n];
+    int person_n = person_id[n];
     // {{INDEX_EXTRACT}}
 
     // ---- 1) Actual facets ----
