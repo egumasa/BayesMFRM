@@ -29,11 +29,74 @@ Later, we can extend to:
 
 ## 2. User-facing workflow
 
-A typical user should write code like:
+### 2.1 Data Requirements
+
+Before calling `bmfrm()`, ensure your data meets these requirements:
+
+- **Score column**: Integer values from 1 to K (not 0-indexed)
+- **Facet columns**: Any values that can be converted to factors (strings, numbers, etc.)
+- **Missing values**: 
+  - NA scores will be dropped with a message
+  - NA in facets will cause an error (clean your data first)
+  
+**Example data formats:**
+```r
+# Good data (ready for bmfrm)
+ratings$score   # 1, 2, 3, 4, 5, 6
+ratings$person  # "P001", "P002", ...
+ratings$rater   # "R01", "R02", ...
+
+# Also acceptable (will be auto-converted)
+ratings$person  # 1, 2, 3, ... (numeric IDs)
+ratings$rater   # 101, 102, 103, ... (numeric IDs)
+
+# Will cause an error - fix before calling bmfrm()
+ratings$score   # 0, 1, 2, 3, 4, 5  (0-indexed - add 1 first)
+ratings$rater   # "R01", NA, "R03"  (NA in facets not allowed)
+```
+
+### 2.2 Core Workflow
+
+The ideal user workflow follows four simple steps:
+
+1. **Load data** → 2. **Fit with `bmfrm()`** → 3. **Check model with `pp_check()`** → 4. **Analyze residuals**
 
 ```r
 library(BayesMFRM)
 
+# Step 1: Load data (ensure it meets requirements above)
+ratings <- readr::read_csv("ratings.csv")
+
+# Step 2: Fit the model (minimal specification)
+fit <- bmfrm(
+  score ~ person + item + rater + rater:item,
+  data = ratings,
+  K = 6  # Optional if max(score) = 6
+)
+
+# Step 3: Model checking
+summary(fit)
+pp_check(fit)                    # Default posterior predictive check
+pp_check(fit, type = "stat")     # Check distributional properties
+
+# Step 4: Residual analysis and facet summaries
+resid_tbl <- residuals(fit)      # Extract residuals
+rater_fit <- facet_fit(fit, "rater")   # Rater fit statistics
+item_fit  <- facet_fit(fit, "item")    # Item fit statistics
+bias_tab  <- summarise_bias(fit)       # Bias analysis
+crit_cor  <- residual_cor_criteria(resid_tbl)  # Cross-criteria correlations
+
+# Additional summaries
+facet_summary(fit, "rater")      # Detailed rater severity table
+fair_scores(fit)                 # Fair scores (rater-bias adjusted)
+```
+
+### 2.3 Advanced Options (Optional)
+
+For more control, you can specify priors, MCMC settings, and caching:
+
+```r
+# Custom priors
 priors <- c(
   prior("normal(0, 2)",       class = "theta"),        # person
   prior("normal(0, 2)",       class = "item"),         # item difficulty
@@ -58,31 +121,99 @@ fit <- bmfrm(
   seed       = 1234
 )
 
-summary(fit, facets = c("person", "rater"))
-
-rater_tab   <- facet_summary(fit, "rater")
-fair_scores <- fair_scores(fit)
-
-bias      <- summarise_bias(fit)          # wrapper for bias summaries (rater:item etc.)
-resid_tbl <- extract_residuals(fit)       # FACETS-like residuals
-crit_cor  <- residual_cor_criteria(resid_tbl)
-
-stancode(fit)   # inspect underlying Stan code
-standata(fit)   # inspect underlying Stan data
+# For debugging/inspection (advanced users)
+stancode(fit)   # Inspect generated Stan code
+standata(fit)   # Inspect Stan data structure
 ```
 
 Key design idea:
 
-The user thinks in terms of facets & Rasch.
-The package handles: data preparation → Stan code → sampling → Rasch-style tables and diagnostics.
+**The user thinks in terms of facets & Rasch. The package handles everything else:**
+- Data preparation → Stan code generation → MCMC sampling → Rasch-style diagnostics
+- Simple S3 methods hide complexity while preserving access to underlying details
 
 ⸻
 
-## 3. Core concepts
+## 3. S3 Methods Reference
 
-3.1 What is a “facet”?
+BayesMFRM provides a clean S3 interface that hides complexity while preserving access to details.
 
-In MFRM, facets are “dimensions” of the assessment design:
+### 3.1 Primary User Interface
+
+These methods support the core workflow and should be used by typical users:
+
+```r
+# Model fitting
+fit <- bmfrm(formula, data, ...)         # Main fitting function
+
+# Model summaries  
+print(fit)                               # Basic model info
+summary(fit)                             # Comprehensive summary
+facet_summary(fit, "rater")              # Facet-level summaries
+fair_scores(fit)                         # Fair score extraction
+
+# Model checking
+pp_check(fit)                            # Posterior predictive checks
+pp_check(fit, type = "stat")            # Distributional checks
+
+# Residual analysis  
+residuals(fit)                           # Extract residuals (auto-handles stan_data)
+facet_fit(fit, "rater")                  # Facet fit statistics (infit/outfit)
+summarise_bias(fit)                      # Bias analysis
+```
+
+### 3.2 Utility Functions
+
+These functions work with outputs from the primary interface:
+
+```r
+# Data processing utilities
+residual_cor_criteria(resid_tbl)         # Cross-criteria correlations
+
+# Convenience functions  
+facet_fit_all(fit)                       # Fit statistics for all facets
+```
+
+### 3.3 Advanced/Developer Interface
+
+These methods are for debugging, inspection, or advanced customization:
+
+```r
+# Stan inspection
+stancode(fit)                            # View generated Stan code
+standata(fit)                            # View Stan data structure
+
+# Low-level data processing (normally called internally)
+extract_residuals(fit, stan_data, ...)   # Direct residual extraction
+run_ppc(fit, stan_data, ...)            # Direct PPC computation
+prepare_data_bmfrm(spec, data)           # Data preparation
+parse_bmfrm_formula(formula, data, ...)  # Formula parsing
+```
+
+### 3.4 Method Signatures
+
+**Key principle**: User-facing methods should not require `stan_data` or other internal objects.
+
+```r
+# User-facing signatures (simple)
+residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...)
+pp_check.bmfrm_fit <- function(object, type = "bars", ...)  
+facet_fit.bmfrm_fit <- function(object, facet, ...)
+
+# Internal signatures (complex - for advanced users only)
+extract_residuals <- function(fit, stan_data, facet_cols, save_draws = TRUE, ...)
+run_ppc <- function(fit, stan_data, type = "bars", ...)
+```
+
+This separation ensures beginners can use simple commands while experts can access full control when needed.
+
+⸻
+
+## 4. Core concepts
+
+4.1 What is a "facet"?
+
+In MFRM, facets are "dimensions" of the assessment design:
 	•	person / examinee
 	•	item or criterion
 	•	rater
@@ -106,7 +237,7 @@ ratings$score    # rating 1…K
 
 In Stan, we convert these into integer indices 1…J_f (e.g., 1…J_person).
 
-3.2 Main facets vs bias facets
+4.2 Main facets vs bias facets
 	•	Main facets: person, item, rater, etc.
 	•	Bias facets (interactions): combinations like rater:item that represent specific patterns (rater–item bias).
 
@@ -125,7 +256,7 @@ In Stan:
 
 ⸻
 
-4. Statistical model (v0.1)
+5. Statistical model (v0.1)
 
 We start with a rating-scale Rasch bmfrm.
 
@@ -163,9 +294,9 @@ Assumptions:
 
 ⸻
 
-5. Top-level API design
+6. Top-level API design
 
-5.1 bmfrm() function
+6.1 bmfrm() function
 
 ```r
 bmfrm <- function(
@@ -1043,10 +1174,28 @@ A developer can follow this order:
 	•	Additional bias facets (rater:task, rater:interlocutor).
 	•	Multidimensional theta.
 
-⸻
 
 
-If you’d like, next step can be:
+```r
+ratings <- readr::read_csv("ratings.csv")
 
-- I draft **minimal R stubs** for the new functions (`bmfrm()`, `parse_bmfrm_formula()`, `prepare_data_bmfrm()`, `compile_bmfrm()`, `postprocess_bmfrm()`, `summarise_bias()`, `residual_cor_criteria()`), so you can drop them into your `R/` folder and start iterating.
-  
+fit <- bmfrm(
+  score ~ person + item + rater + rater:item,
+  data = ratings,
+  K    = 6
+)
+
+summary(fit)
+facet_summary(fit, "rater")
+fair_scores(fit)
+
+# ppcheck
+pp_check(fit)
+
+# residual analysis
+resid_tbl <- residuals(fit)
+rater_fit <- facet_fit(fit, "rater")
+item_fit  <- facet_fit(fit, "item")
+bias_tab  <- summarise_bias(fit)
+crit_cor  <- residual_cor_criteria(resid_tbl)
+```
