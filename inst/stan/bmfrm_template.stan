@@ -24,14 +24,14 @@ parameters {
 transformed parameters {
   // person abilities
   vector[J_person] theta;
-  theta = theta_raw
+  theta = theta_raw;
 
   // {{FACET_TRANSFORM}}
 
   // thresholds (already ordered)
   vector[K - 1] tau;
   tau          = tau_raw;
-  
+
   // {{BIAS_TRANSFORM}}
 }
 
