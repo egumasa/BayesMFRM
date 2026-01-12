@@ -8,6 +8,7 @@
 #' @param data data.frame containing all variables in the formula
 #' @param K number of rating categories (if NULL, inferred from max(score))
 #' @param priors list of prior() objects (if NULL, uses defaults)
+#' @param stan_file optional path to a hardcoded Stan file (bypasses code generation)
 #' @param family model family ("rating_scale" for v0.1)
 #' @param model_name optional name for the model (auto-generated if NULL)
 #' @param cache_dir directory for caching compiled models and fits
@@ -47,6 +48,7 @@ bmfrm <- function(
   data,
   K = NULL,
   priors = NULL,
+  stan_file = NULL,
   family = c("rating_scale", "partial_credit"),
   model_name = NULL,
   cache_dir = "stan_cache", 
@@ -92,9 +94,14 @@ bmfrm <- function(
   message("Setting up priors...")
   priors <- validate_priors(priors, spec$facets_main, spec$facets_bias)
   
-  # 4. Generate Stan code string
-  message("Generating Stan code...")
-  stan_code <- build_stan_code(spec, priors)
+  # 4. Generate or use provided Stan code
+  if (is.null(stan_file)) {
+    message("Generating Stan code...")
+    stan_code <- build_stan_code(spec, priors)
+  } else {
+    message("Using hardcoded Stan file: ", basename(stan_file))
+    stan_code <- paste(readLines(stan_file), collapse = "\n")
+  }
   
   # 5. Compile Stan model (with caching based on code hash)
   message("Compiling model...")
