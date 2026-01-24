@@ -4,7 +4,7 @@
 \alias{pp_check.bmfrm_fit}
 \title{Posterior predictive check method for bmfrm_fit objects}
 \usage{
-pp_check.bmfrm_fit(
+\method{pp_check}{bmfrm_fit}(
   object,
   type = c("bars", "stat", "all"),
   ndraws = 200,

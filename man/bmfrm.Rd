@@ -9,6 +9,7 @@ bmfrm(
   data,
   K = NULL,
   priors = NULL,
+  stan_file = NULL,
   family = c("rating_scale", "partial_credit"),
   model_name = NULL,
   cache_dir = "stan_cache",
@@ -30,6 +31,8 @@ bmfrm(
 \item{K}{number of rating categories (if NULL, inferred from max(score))}
 
 \item{priors}{list of prior() objects (if NULL, uses defaults)}
+
+\item{stan_file}{optional path to a hardcoded Stan file (bypasses code generation)}
 
 \item{family}{model family ("rating_scale" for v0.1)}
 

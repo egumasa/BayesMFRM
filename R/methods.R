@@ -123,13 +123,28 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
 #' @param ... unused
 #' @export
 residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
-  extract_residuals(
+
+  # Column names in stan_data have "_id" suffix (e.g., "person_id", "rater_id")
+  facet_cols_stan <- paste0(object$spec$facets_main, "_id")
+
+  res_df <- extract_residuals(
     fit = object$fit,
     stan_data = object$data_info$stan_data,
-    facet_cols = object$spec$facets_main,
+    facet_cols = facet_cols_stan,
     save_draws = save_draws,
     model_name = object$spec$model_name
   )
+
+  # Rename columns from "_id" suffix back to original names
+  for (i in seq_along(object$spec$facets_main)) {
+    orig_name <- object$spec$facets_main[i]
+    stan_name <- facet_cols_stan[i]
+    if (stan_name %in% names(res_df)) {
+      names(res_df)[names(res_df) == stan_name] <- orig_name
+    }
+  }
+
+  res_df
 }
 
 #' Posterior predictive check method for bmfrm_fit objects
@@ -138,7 +153,9 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
 #' @param ndraws number of posterior draws
 #' @param seed random seed
 #' @param ... unused
-#' @export
+#' @importFrom bayesplot pp_check
+#' @export pp_check.bmfrm_fit
+#' @exportS3Method bayesplot::pp_check bmfrm_fit
 pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws = 200, seed = 123, ...) {
   
   type <- match.arg(type)
@@ -280,16 +297,28 @@ facet_fit <- function(object, facet, ...) {
 
 #' @export
 facet_fit.bmfrm_fit <- function(object, facet, ...) {
-  
+
+  # Column names in stan_data have "_id" suffix (e.g., "person_id", "rater_id")
+  facet_cols_stan <- paste0(object$spec$facets_main, "_id")
+
   # Get residuals with draws for Bayesian fit stats
   res_df <- extract_residuals(
     fit = object$fit,
     stan_data = object$data_info$stan_data,
-    facet_cols = object$spec$facets_main,
+    facet_cols = facet_cols_stan,
     save_draws = TRUE,
     model_name = object$spec$model_name
   )
-  
+
+  # Rename columns from "_id" suffix back to original names for downstream processing
+  for (i in seq_along(object$spec$facets_main)) {
+    orig_name <- object$spec$facets_main[i]
+    stan_name <- facet_cols_stan[i]
+    if (stan_name %in% names(res_df)) {
+      names(res_df)[names(res_df) == stan_name] <- orig_name
+    }
+  }
+
   # Basic fit statistics
   fit_stats <- facet_infit_outfit(res_df, facet)
   
