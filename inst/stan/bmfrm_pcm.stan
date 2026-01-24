@@ -29,9 +29,11 @@ transformed parameters {
 
   // {{FACET_TRANSFORM}}
 
-  // thresholds (unordered - disordered thresholds are diagnostically meaningful)
+  // thresholds (column-wise sum-to-zero constraint for identification)
   matrix[J_{{THRESHOLD_FACET}}, K - 1] tau;
-  tau = tau_raw;
+  for (k in 1:(K-1)) {
+    tau[:, k] = tau_raw[:, k] - mean(tau_raw[:, k]);
+  }
 
   // {{BIAS_TRANSFORM}}
 }
