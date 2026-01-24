@@ -68,11 +68,13 @@ print.bmfrm_prior <- function(x, ...) {
 #'
 #' @param facets_main vector of main facet names
 #' @param facets_bias vector of bias facet names
+#' @param family model family: "rsm" or "pcm"
 #'
 #' @return list of bmfrm_prior objects
 #' @export
-get_default_priors <- function(facets_main = c("person", "item", "rater"), 
-                               facets_bias = NULL) {
+get_default_priors <- function(facets_main = c("person", "item", "rater"),
+                               facets_bias = NULL,
+                               family = "rsm") {
   priors <- list()
   
   # Default priors for main facets
@@ -110,12 +112,13 @@ get_default_priors <- function(facets_main = c("person", "item", "rater"),
 #' @param priors list of bmfrm_prior objects or NULL
 #' @param facets_main vector of main facet names
 #' @param facets_bias vector of bias facet names
+#' @param family model family: "rsm" or "pcm"
 #'
 #' @return validated list of priors
 #' @keywords internal
-validate_priors <- function(priors, facets_main, facets_bias = NULL) {
+validate_priors <- function(priors, facets_main, facets_bias = NULL, family = "rsm") {
   if (is.null(priors)) {
-    return(get_default_priors(facets_main, facets_bias))
+    return(get_default_priors(facets_main, facets_bias, family))
   }
   
   if (!is.list(priors)) {

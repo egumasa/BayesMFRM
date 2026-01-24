@@ -3,21 +3,23 @@
 #' @param formula R formula (e.g., score ~ person + item + rater + (rater:item))
 #' @param data data.frame containing variables
 #' @param K number of rating categories (if NULL, inferred from data)
-#' @param family model family (currently only "rating_scale")
+#' @param family model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)
+#' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
 #' @param model_name optional model name for caching
 #' @param cache_dir cache directory
 #'
 #' @return bmfrm_spec object with model specification
 #' @export
-parse_bmfrm_formula <- function(formula, 
-                               data, 
-                               K = NULL, 
-                               family = "rating_scale",
+parse_bmfrm_formula <- function(formula,
+                               data,
+                               K = NULL,
+                               family = "rsm",
+                               threshold_facet = NULL,
                                model_name = NULL,
                                cache_dir = "stan_cache") {
-  
+
   # Validate family
-  allowed_families <- c("rating_scale")
+  allowed_families <- c("rsm", "pcm")
   family <- match.arg(family, allowed_families)
   
   # Parse formula terms
@@ -46,7 +48,25 @@ parse_bmfrm_formula <- function(formula,
   if (length(missing_vars) > 0) {
     stop("Variables not found in data: ", paste(missing_vars, collapse = ", "))
   }
-  
+
+  # Validate threshold_facet for PCM
+
+  if (family == "pcm") {
+    if (is.null(threshold_facet)) {
+      stop("PCM family requires 'threshold_facet' to specify which facet gets ",
+           "item-specific thresholds (e.g., threshold_facet = 'item')")
+    }
+    if (!threshold_facet %in% facets_main) {
+      stop("threshold_facet '", threshold_facet, "' must be one of the main facets: ",
+           paste(facets_main, collapse = ", "))
+    }
+  } else if (family == "rsm") {
+    if (!is.null(threshold_facet)) {
+      message("Note: 'threshold_facet' is ignored for RSM family (thresholds are shared)")
+      threshold_facet <- NULL
+    }
+  }
+
   # Infer K if not provided
   if (is.null(K)) {
     resp <- data[[response_name]]
@@ -68,14 +88,15 @@ parse_bmfrm_formula <- function(formula,
   
   # Create spec object
   spec <- list(
-    response     = response_name,
-    facets_main  = facets_main,
-    facets_bias  = facets_bias,
-    K            = K,
-    family       = family,
-    formula      = formula,
-    model_name   = model_name,
-    cache_dir    = cache_dir
+    response        = response_name,
+    facets_main     = facets_main,
+    facets_bias     = facets_bias,
+    K               = K,
+    family          = family,
+    threshold_facet = threshold_facet,
+    formula         = formula,
+    model_name      = model_name,
+    cache_dir       = cache_dir
   )
   
   class(spec) <- "bmfrm_spec"
@@ -91,7 +112,15 @@ print.bmfrm_spec <- function(x, ...) {
   cat("Formula:", deparse(x$formula), "\n")
   cat("Response:", x$response, "\n")
   cat("Rating categories: 1 to", x$K, "\n")
-  cat("Family:", x$family, "\n")
+  family_desc <- switch(x$family,
+    "rsm" = "RSM (Rating Scale Model - shared thresholds)",
+    "pcm" = "PCM (Partial Credit Model - facet-specific thresholds)",
+    x$family
+  )
+  cat("Family:", family_desc, "\n")
+  if (x$family == "pcm" && !is.null(x$threshold_facet)) {
+    cat("Threshold facet:", x$threshold_facet, "\n")
+  }
   cat("Main facets:", paste(x$facets_main, collapse = ", "), "\n")
   if (length(x$facets_bias) > 0) {
     cat("Bias facets:", paste(x$facets_bias, collapse = ", "), "\n")

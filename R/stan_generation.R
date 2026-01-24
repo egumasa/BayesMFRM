@@ -6,53 +6,58 @@
 #' @return character string with complete Stan code
 #' @export
 build_stan_code <- function(spec, priors) {
-  
-  # Validate priors
-  priors <- validate_priors(priors, spec$facets_main, spec$facets_bias)
-  
-  # Load base template
-  template_path <- get_stan_template_path()
-  
+
+  # Validate priors (pass family for PCM-specific handling)
+  priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
+
+  # Load appropriate template based on family
+  template_path <- get_stan_template_path(spec$family)
+
   stan_code <- readLines(template_path, warn = FALSE)
   stan_code <- paste(stan_code, collapse = "\n")
-  
+
+  # For PCM, replace threshold facet placeholder first
+  if (spec$family == "pcm" && !is.null(spec$threshold_facet)) {
+    stan_code <- gsub("\\{\\{THRESHOLD_FACET\\}\\}", spec$threshold_facet, stan_code)
+  }
+
   # Generate replacements for each placeholder
   replacements <- list()
-  
+
   # 1. FACET_DATA_DECL
   replacements$FACET_DATA_DECL <- generate_facet_data_decl(spec)
-  
-  # 2. FACET_PARAM_DECL  
+
+  # 2. FACET_PARAM_DECL
   replacements$FACET_PARAM_DECL <- generate_facet_param_decl(spec)
-  
+
   # 3. BIAS_PARAM_DECL
   replacements$BIAS_PARAM_DECL <- generate_bias_param_decl(spec)
-  
+
   # 4. FACET_TRANSFORM
   replacements$FACET_TRANSFORM <- generate_facet_transform(spec)
-  
+
   # 5. BIAS_TRANSFORM
   replacements$BIAS_TRANSFORM <- generate_bias_transform(spec)
-  
+
   # 6. PRIOR_BLOCK
   replacements$PRIOR_BLOCK <- generate_prior_block(spec, priors)
-  
+
   # 7. INDEX_EXTRACT
   replacements$INDEX_EXTRACT <- generate_index_extract(spec)
-  
+
   # 8. ETA_SUM
   replacements$ETA_SUM <- generate_eta_sum(spec, fair = FALSE)
-  
-  # 9. ETA_SUM_FAIR  
+
+  # 9. ETA_SUM_FAIR
   replacements$ETA_SUM_FAIR <- generate_eta_sum(spec, fair = TRUE)
-  
+
   # Replace all placeholders
   for (placeholder in names(replacements)) {
     pattern <- paste0("// \\{\\{", placeholder, "\\}\\}")
     replacement <- replacements[[placeholder]]
     stan_code <- gsub(pattern, replacement, stan_code, fixed = FALSE)
   }
-  
+
   stan_code
 }
 
@@ -181,7 +186,7 @@ generate_bias_transform <- function(spec) {
 #' @keywords internal
 generate_prior_block <- function(spec, priors) {
   lines <- ""
-  
+
   for (prior_obj in priors) {
     if (prior_obj$class == "theta") {
       lines <- c(lines, paste0("  theta_raw ~ ", prior_obj$spec, ";"))
@@ -190,7 +195,12 @@ generate_prior_block <- function(spec, priors) {
     } else if (prior_obj$class == "rater") {
       lines <- c(lines, paste0("  rater_raw ~ ", prior_obj$spec, ";"))
     } else if (prior_obj$class == "tau") {
-      lines <- c(lines, paste0("  tau_raw ~ ", prior_obj$spec, ";"))
+      # For PCM, tau is a matrix so we need to_vector()
+      if (spec$family == "pcm") {
+        lines <- c(lines, paste0("  to_vector(tau_raw) ~ ", prior_obj$spec, ";"))
+      } else {
+        lines <- c(lines, paste0("  tau_raw ~ ", prior_obj$spec, ";"))
+      }
     } else if (prior_obj$class == "bias") {
       bias_name <- gsub(":", "", prior_obj$facet)
       lines <- c(lines, paste0("  to_vector(", bias_name, "_raw) ~ ", prior_obj$spec, ";"))
@@ -199,7 +209,7 @@ generate_prior_block <- function(spec, priors) {
       lines <- c(lines, paste0("  ", facet_name, "_raw ~ ", prior_obj$spec, ";"))
     }
   }
-  
+
   paste(lines, collapse = "\n")
 }
 
@@ -264,19 +274,39 @@ generate_eta_sum <- function(spec, fair = FALSE) {
 }
 
 #' Get Stan template path
+#'
+#' @param family Model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)
+#'
+#' @return Path to the Stan template file
 #' @keywords internal
-get_stan_template_path <- function() {
+get_stan_template_path <- function(family = "rsm") {
+  # Determine template filename based on family
+  template_name <- switch(family,
+    "rsm" = "bmfrm_rsm.stan",
+    "pcm" = "bmfrm_pcm.stan",
+    # Backward compatibility: treat old family names
+    "rating_scale" = "bmfrm_rsm.stan",
+    "partial_credit" = "bmfrm_pcm.stan",
+    stop("Unknown family: ", family, ". Use 'rsm' or 'pcm'.")
+  )
+
   # Try package installation location first
-  pkg_path <- system.file("stan", "bmfrm_template.stan", package = "BayesMFRM")
-  if (file.exists(pkg_path)) {
+  pkg_path <- system.file("stan", template_name, package = "BayesMFRM")
+  if (nzchar(pkg_path) && file.exists(pkg_path)) {
     return(pkg_path)
   }
-  
-  # Try inst/ directory for development
-  inst_path <- file.path("inst", "stan", "bmfrm_template.stan")
+
+  # Try inst/ directory for development (from package root)
+  inst_path <- file.path("inst", "stan", template_name)
   if (file.exists(inst_path)) {
     return(inst_path)
   }
-  
-  stop("Stan template not found. Please check BayesMFRM installation.")
+
+  # Try BayesMFRM/inst/ directory for development (from workspace root)
+  workspace_path <- file.path("BayesMFRM", "inst", "stan", template_name)
+  if (file.exists(workspace_path)) {
+    return(workspace_path)
+  }
+
+  stop("Stan template '", template_name, "' not found. Please check BayesMFRM installation.")
 }

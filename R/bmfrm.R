@@ -9,7 +9,9 @@
 #' @param K number of rating categories (if NULL, inferred from max(score))
 #' @param priors list of prior() objects (if NULL, uses defaults)
 #' @param stan_file optional path to a hardcoded Stan file (bypasses code generation)
-#' @param family model family ("rating_scale" for v0.1)
+#' @param family model family: "rsm" (Rating Scale Model with shared thresholds) or
+#'   "pcm" (Partial Credit Model with facet-specific thresholds)
+#' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
 #' @param model_name optional name for the model (auto-generated if NULL)
 #' @param cache_dir directory for caching compiled models and fits
 #' @param save_csvs whether to save MCMC output as CSV files
@@ -26,8 +28,12 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Basic 3-facet model
-#' fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6)
+#' # Basic 3-facet RSM model (shared thresholds)
+#' fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6, family = "rsm")
+#'
+#' # PCM model with item-specific thresholds
+#' fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6,
+#'              family = "pcm", threshold_facet = "item")
 #'
 #' # Model with bias term
 #' fit <- bmfrm(score ~ person + item + rater + rater:item, data = ratings)
@@ -40,7 +46,7 @@
 #'   prior("normal(0, 0.5)", class = "bias", facet = "rater:item"),
 #'   prior("normal(0, 3)", class = "tau")
 #' )
-#' fit <- bmfrm(score ~ person + item + rater + rater:item, 
+#' fit <- bmfrm(score ~ person + item + rater + rater:item,
 #'              data = ratings, priors = priors)
 #' }
 bmfrm <- function(
@@ -49,9 +55,10 @@ bmfrm <- function(
   K = NULL,
   priors = NULL,
   stan_file = NULL,
-  family = c("rating_scale", "partial_credit"),
+  family = c("rsm", "pcm"),
+  threshold_facet = NULL,
   model_name = NULL,
-  cache_dir = "stan_cache", 
+  cache_dir = "stan_cache",
   save_csvs = TRUE,
   refit = c("on_change", "never", "always"),
   iter = 2000,
@@ -61,14 +68,10 @@ bmfrm <- function(
   seed = NULL,
   ...
 ) {
-  
+
   # Argument validation
   family <- match.arg(family)
   refit <- match.arg(refit)
-  
-  if (family != "rating_scale") {
-    stop("Only 'rating_scale' family supported in v0.1")
-  }
   
   # Check cmdstan availability
   if (!check_cmdstan()) {
@@ -82,6 +85,7 @@ bmfrm <- function(
     data = data,
     K = K,
     family = family,
+    threshold_facet = threshold_facet,
     model_name = model_name,
     cache_dir = cache_dir
   )
@@ -92,7 +96,7 @@ bmfrm <- function(
   
   # 3. Validate/set priors
   message("Setting up priors...")
-  priors <- validate_priors(priors, spec$facets_main, spec$facets_bias)
+  priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
   
   # 4. Generate or use provided Stan code
   if (is.null(stan_file)) {
