@@ -15,6 +15,7 @@ BayesMFRM is an R package for fitting Bayesian Many-Facet Rasch Models (MFRM) us
 ### Key Features
 
 - 📊 **Simple formula interface** for specifying models (`score ~ person + item + rater`)
+- 🔢 **RSM and PCM model families** (Rating Scale Model and Partial Credit Model)
 - 🎯 **FACETS-style diagnostics** (infit/outfit, bias analysis, fair scores)
 - 🔄 **Smart caching system** for fast model re-runs
 - 📈 **Bayesian uncertainty quantification** for all parameters
@@ -80,6 +81,17 @@ item_fit <- facet_fit(fit1, "item")
 fair_scores_summary <- fair_scores(fit1)
 ```
 
+### Model Families
+
+```r
+# Rating Scale Model (default) - shared thresholds across items
+fit_rsm <- bmfrm(score ~ person + item + rater, data = ratings, K = 6, family = "rsm")
+
+# Partial Credit Model - item-specific thresholds
+fit_pcm <- bmfrm(score ~ person + item + rater, data = ratings, K = 6,
+                 family = "pcm", threshold_facet = "item")
+```
+
 ### Advanced Usage
 
 ```r
@@ -142,7 +154,7 @@ ratings$rater   # "R01", NA, "R03"  (NA values not allowed)
 
 ### ✅ Implemented Features
 
-- **Model Types**: Rating-scale Rasch models  
+- **Model Families**: Rating Scale Model (RSM) and Partial Credit Model (PCM)
 - **Facets**: Main facet effects (person, item, rater, etc.)
 - **Bias Terms**: 2-way bias facets (e.g., rater × item)
 - **Interface**: Complete S3 method system
@@ -153,12 +165,10 @@ ratings$rater   # "R01", NA, "R03"  (NA values not allowed)
 
 ### 🚧 Planned Features
 
-- Partial credit models  
 - Graded response models
 - Multidimensional abilities
 - Centrality/drift modeling
 - More complex bias structures (rater×task, etc.)
-- Additional model families
 
 ## System Requirements
 
@@ -198,7 +208,7 @@ This is an experimental package under active development. Contributions are welc
 
 ## License
 
-[License information to be finalized]
+This work is licensed under a [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
 ---
 
