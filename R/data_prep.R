@@ -137,13 +137,15 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL) {
 #' @return character vector of labels
 #' @export
 get_facet_labels <- function(data_info, facet) {
+  facet <- match_interaction_names(facet, names(data_info$bias_labels))
   if (facet %in% names(data_info$facet_labels)) {
     return(data_info$facet_labels[[facet]])
   } else if (facet %in% names(data_info$bias_labels)) {
     # For bias facets, return combined labels
     bias_info <- data_info$bias_labels[[facet]]
-    return(paste(bias_info$facet1$name, bias_info$facet1$labels, 
-                 bias_info$facet2$name, bias_info$facet2$labels, 
+    cells <- expand.grid(first = bias_info$facet1$labels, second = bias_info$facet2$labels, stringsAsFactors = FALSE)
+    return(paste(bias_info$facet1$name, cells$first,
+                 bias_info$facet2$name, cells$second,
                  sep = ":"))
   } else {
     stop("Facet '", facet, "' not found in data_info")

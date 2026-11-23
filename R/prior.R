@@ -4,11 +4,18 @@
 #'   value fixes that parameter (SD must be positive).
 #' @param class Parameter class: theta, item, rater, bias, tau, facet_<name>,
 #'   mean, or sd. The last two specify a hierarchical population.
-#' @param facet Target facet for mean/sd, or interaction name for bias.
+#' @param facet Target facet for mean/sd, or interaction name for bias. For a
+#'   hierarchical two-way interaction, use class = "sd" and its term name.
+#'   Supported interaction SD priors are normal(0,s), student_t(df,0,s), and
+#'   cauchy(0,s), restricted to positive values, or lognormal(m,s). A positive
+#'   numeric value fixes its SD. Population means are absent for centered interactions.
 #' @param scale Meaning of the SD for a constrained Gaussian facet or step prior:
 #'   "raw" retains the historical pre-centering SD; "marginal" specifies the
 #'   constrained level SD. Marginal scaling requires a normal(0, sd) prior and
-#'   generated additive Gaussian RSM/PCM. Singleton blocks remain identically zero.
+#'   generated Gaussian RSM/PCM. Singleton blocks remain identically zero.
+#'   For a hierarchical interaction SD, "marginal" refers to each cell's
+#'   conditional SD given that parameter; "raw" retains the double-centering
+#'   variance factor (1-1/J1)*(1-1/J2). This does not describe the hyperprior's SD.
 #'   For tau, a block comprises K-1 steps: one shared block in RSM, or one
 #'   independent block per threshold-facet level in PCM. PCM steps are centered
 #'   within that level, not across levels. For S = K-1 > 1, raw Gaussian step
@@ -28,6 +35,7 @@
 #'
 #' # Bias prior (requires facet specification)
 #' prior("normal(0, 0.5)", class = "bias", facet = "rater:item")
+#' prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal")
 prior <- function(spec, class, facet = NULL, scale = c("raw", "marginal")) {
   scale <- match.arg(scale)
   # Validate class
@@ -55,16 +63,22 @@ prior <- function(spec, class, facet = NULL, scale = c("raw", "marginal")) {
   # Validate spec format - basic check for distribution name and parentheses
   population <- class %in% c("mean", "sd")
   if (population && (!is.character(facet) || length(facet) != 1L || is.na(facet) || !nzchar(facet))) stop("Population priors require a target facet")
+  interaction_sd <- population && grepl(":", facet, fixed = TRUE)
   if (population) {
-    rsm_population_prior(spec, if (class == "mean") "normal" else "lognormal", class == "sd")
+    if (interaction_sd) {
+      if (class != "sd") stop("Centered interactions have no population mean; specify class = 'sd'")
+      interaction_sd_prior(spec)
+    } else rsm_population_prior(spec, if (class == "mean") "normal" else "lognormal", class == "sd")
   } else if (!is.character(spec) || length(spec) != 1L || is.na(spec) ||
              !grepl("^[a-zA-Z_]+\\s*\\(.*\\)$", spec)) {
     stop("Invalid prior specification '", spec, "'. Must be in format 'distribution(parameters)'")
   }
   if (scale == "marginal") {
-    if (class %in% c("theta", "bias", "mean", "sd")) stop("Marginal scaling applies only to constrained main facets and tau")
-    p <- parse_bmfrm_prior_literal(spec)
-    if (p$distribution != "normal" || length(p$args) != 2L || p$args[1L] != 0 || p$args[2L] <= 0) stop("Marginal scaling requires normal(0, positive_sd)")
+    if (class %in% c("theta", "mean") || (class == "sd" && !interaction_sd)) stop("Marginal scaling applies only to constrained main facets, interactions and tau")
+    if (!interaction_sd) {
+      p <- parse_bmfrm_prior_literal(spec)
+      if (p$distribution != "normal" || length(p$args) != 2L || p$args[1L] != 0 || p$args[2L] <= 0) stop("Marginal scaling requires normal(0, positive_sd)")
+    }
   }
   
   structure(
@@ -112,7 +126,9 @@ c.bmfrm_prior <- function(..., recursive = FALSE) {
 #' @param facets_bias vector of bias facet names
 #' @param family model family: "rsm" or "pcm"
 #' @param hierarchical Names of facets with hierarchical distributions. Currently
-#'   only "person" is supported; character(0) retains independent priors.
+#'   "person" and two-way interaction names are supported; character(0)
+#'   retains fixed-scale priors. A hierarchical interaction defaults to a
+#'   half-normal SD prior normal(0,0.5) with raw scaling.
 #'
 #' @return list of bmfrm_prior objects
 #' @export
@@ -142,8 +158,8 @@ get_default_priors <- function(facets_main = c("person", "item", "rater"),
   # Default priors for bias facets
   if (!is.null(facets_bias)) {
     for (bias_facet in facets_bias) {
-      priors[[length(priors) + 1]] <- prior("normal(0, 0.5)", 
-                                             class = "bias", 
+      priors[[length(priors) + 1]] <- prior("normal(0, 0.5)",
+                                             class = if (bias_facet %in% hierarchical) "sd" else "bias",
                                              facet = bias_facet)
     }
   }
@@ -161,7 +177,7 @@ get_default_priors <- function(facets_main = c("person", "item", "rater"),
 #' @param facets_bias vector of bias facet names
 #' @param family model family: "rsm" or "pcm"
 #' @param hierarchical Names of facets with hierarchical distributions. Currently
-#'   only "person" is supported; character(0) retains independent priors.
+#'   "person" and two-way interaction names are supported.
 #'
 #' @return validated list of priors
 #' @keywords internal
@@ -171,7 +187,8 @@ validate_priors <- function(priors, facets_main, facets_bias = NULL, family = "r
   if (!is.list(priors) || !length(priors)) stop("priors must be a list of prior() objects")
   if (!all(vapply(priors, inherits, logical(1), "bmfrm_prior"))) stop("All elements of priors must be prior() objects")
   # Revalidate edited objects and normalize saved priors without the scale field.
-  priors <- lapply(priors, function(p) prior(p$spec, p$class, p$facet, p$scale %||% "raw"))
+  priors <- lapply(priors, function(p) prior(p$spec, p$class,
+    if (is.null(p$facet)) NULL else match_interaction_names(p$facet, facets_bias), p$scale %||% "raw"))
   key <- function(p) paste(p$class, p$facet %||% "", sep = ":")
   keys <- vapply(priors, key, character(1))
   required <- vapply(defaults, key, character(1))

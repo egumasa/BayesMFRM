@@ -8,7 +8,8 @@
 #' @param model_name optional model name for caching
 #' @param cache_dir cache directory
 #' @param hierarchical Names of facets with hierarchical distributions. Currently
-#'   only "person" is implemented; other facets retain independent priors.
+#'   "person" and two-way interaction terms are implemented. Component order
+#'   in interaction names does not affect prior matching.
 #'
 #' @return bmfrm_spec object with model specification
 #' @export
@@ -44,6 +45,7 @@ parse_bmfrm_formula <- function(formula,
   
   # Remove parentheses from bias terms if present
   facets_bias <- gsub("[()]", "", facets_bias)
+  validate_interaction_terms(facets_main, facets_bias)
   
   # Check all variables exist in data
   all_vars <- unique(c(facets_main, unlist(strsplit(facets_bias, ":"))))

@@ -119,8 +119,9 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
     for (bias_facet in object$spec$facets_bias) {
       cat("  ", bias_facet, ":\n")
       bias_summ <- summarise_bias(object, bias_facet)
-      n_flagged <- sum(bias_summ$flag_bias != "no_clear_bias")
+      n_flagged <- sum(bias_summ$flag_bias %in% c("positive_bias", "negative_bias"))
       cat("    ", n_flagged, " bias effects flagged (out of ", nrow(bias_summ), ")\n")
+      cat("    ", sum(bias_summ$flag_bias == "not_likelihood_identified"), " effects lack likelihood identification\n")
     }
     cat("    Use summarise_bias(fit) for details\n\n")
   }
@@ -269,6 +270,8 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #' item mix. They do not standardize different persons to a common item design.
 #' PCM steps on an adjusted facet (rater or interlocutor) require a reference
 #' step profile, which is not implemented; this case raises an error.
+#' Interactions involving rater or interlocutor are removed; other interactions
+#' remain in the prediction.
 #' @param object bmfrm_fit object
 #' @param summary whether to return summary or observation-level scores
 #' @param ... unused
@@ -363,16 +366,28 @@ facet_fit.bmfrm_fit <- function(object, facet, ...) {
 
 #' Summarise bias effects (wrapper)
 #' @param object bmfrm_fit object  
-#' @param facet bias facet name (if NULL, uses first bias facet)
+#' @param facet Two-way interaction name in either component order (if NULL,
+#'   uses the first interaction). The generated parameter name and original
+#'   level labels are used. For legacy raw CmdStan fits named `bias[I,R]`, use
+#'   summarise_bias_ir().
 #' @param prob_thresh probability threshold for flagging bias
+#' @param delta Nonnegative practically meaningful effect on the adjacent-logit
+#'   scale. Report probabilities beyond +/-delta; flags also require the 95%
+#'   interval to exclude that region. This is not a multiplicity correction.
+#' @return A tibble with original labels, posterior summaries, directional and
+#'   practical-effect probabilities, cell observation counts and a likelihood
+#'   identification indicator when a design check is available. Unidentified
+#'   cells retain posterior summaries but receive flag not_likelihood_identified.
 #' @param ... unused
 #' @export
-summarise_bias <- function(object, facet = NULL, prob_thresh = 0.95, ...) {
+summarise_bias <- function(object, facet = NULL, prob_thresh = 0.95, delta = 0, ...) {
   UseMethod("summarise_bias")
 }
 
 #' @export
-summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, ...) {
+summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, delta = 0, ...) {
+  if (!is.numeric(delta) || length(delta) != 1L || !is.finite(delta) || delta < 0) stop("delta must be one finite nonnegative number")
+  if (!is.numeric(prob_thresh) || length(prob_thresh) != 1L || !is.finite(prob_thresh) || prob_thresh < .5 || prob_thresh > 1) stop("prob_thresh must be between .5 and 1")
   
   if (length(object$spec$facets_bias) == 0) {
     stop("No bias facets in model")
@@ -383,23 +398,48 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, .
     message("Using bias facet: ", facet)
   }
   
+  if (!is.character(facet) || length(facet) != 1L || is.na(facet)) stop("facet must identify one interaction")
+  facet <- match_interaction_names(facet, object$spec$facets_bias)
   if (!facet %in% object$spec$facets_bias) {
     stop("Bias facet '", facet, "' not found. Available: ", 
          paste(object$spec$facets_bias, collapse = ", "))
   }
   
-  # Currently only support rater:item bias
-  if (facet == "rater:item") {
-    item_labels <- object$data_info$facet_labels$item
-    rater_labels <- object$data_info$facet_labels$rater
-    
-    return(summarise_bias_ir(
-      fit = object$fit,
-      item_labels = item_labels,
-      rater_labels = rater_labels,
-      prob_thresh = prob_thresh
-    ))
-  } else {
-    stop("Bias facet '", facet, "' not yet supported. Currently only 'rater:item' is implemented.")
+  f <- strsplit(facet, ":", fixed = TRUE)[[1L]]
+  labels <- object$data_info$facet_labels[f]
+  n <- lengths(labels); name <- gsub(":", "", facet)
+  draws <- unclass(object$fit$draws(name, format = "matrix"))
+  cells <- expand.grid(index1 = seq_len(n[1L]), index2 = seq_len(n[2L]))
+  variable <- paste0(name, "[", cells$index1, ",", cells$index2, "]")
+  if (!all(variable %in% colnames(draws))) stop("Generated interaction draws are missing; summarise_bias_ir() supports legacy raw fits with a parameter named bias")
+  draws <- draws[, variable, drop = FALSE]
+  ci <- apply(draws, 2L, stats::quantile, probs = c(.025, .975))
+  result <- tibble::tibble(facet = facet, facet1 = f[1L], facet2 = f[2L],
+    level1 = labels[[1L]][cells$index1], level2 = labels[[2L]][cells$index2],
+    index1 = cells$index1, index2 = cells$index2, variable = variable,
+    bias_mean = colMeans(draws), bias_sd = apply(draws, 2L, stats::sd), lower_95 = ci[1L, ], upper_95 = ci[2L, ],
+    prob_pos = colMeans(draws > 0), prob_neg = colMeans(draws < 0), delta = delta,
+    prob_gt_delta = colMeans(draws > delta), prob_lt_neg_delta = colMeans(draws < -delta),
+    prob_outside_delta = colMeans(abs(draws) > delta))
+  result$flag_bias <- ifelse(result$lower_95 > delta & result$prob_gt_delta >= prob_thresh, "positive_bias",
+    ifelse(result$upper_95 < -delta & result$prob_lt_neg_delta >= prob_thresh, "negative_bias", "no_clear_bias"))
+  dat <- object$data_info$data_clean
+  idx1 <- match(as.character(dat[[f[1L]]]), labels[[1L]])
+  idx2 <- match(as.character(dat[[f[2L]]]), labels[[2L]])
+  result$n_observations <- tabulate(idx1 + (idx2 - 1L) * n[1L], prod(n))
+  dc <- object$design
+  result$likelihood_identified <- NA
+  if (!is.null(dc$interaction_levels[[facet]])) {
+    rows <- dc$interaction_levels[[facet]]$map_row
+    result$likelihood_identified <- rowSums(dc$effect_null_space[rows, , drop = FALSE]^2) < dc$tolerance^2
+    result$flag_bias[!result$likelihood_identified] <- "not_likelihood_identified"
   }
+  # Preserve familiar column names for the item/rater use case in either order.
+  if (setequal(f, c("item", "rater"))) {
+    result$item <- if (f[1L] == "item") result$level1 else result$level2
+    result$rater <- if (f[1L] == "rater") result$level1 else result$level2
+    result$i <- if (f[1L] == "item") result$index1 else result$index2
+    result$r <- if (f[1L] == "rater") result$index1 else result$index2
+  }
+  result
 }

@@ -16,7 +16,8 @@
 #'   the level's overall location from its category pattern.
 #' @param model_name optional name for the model (auto-generated if NULL)
 #' @param cache_dir directory for caching compiled models and fits
-#' @param design_check How to handle a rank-deficient generated additive RSM/PCM: warn, error, or none.
+#' @param design_check How to handle a rank-deficient generated RSM/PCM, including
+#'   two-way interactions: warn, error, or none.
 #' @param cpp_options Named compilation options passed to cmdstanr.
 #' @param save_csvs whether to save MCMC output as CSV files
 #' @param refit refit behavior: "never", "always", or "on_change"
@@ -27,10 +28,15 @@
 #' @param seed random seed
 #' @param hierarchical Names of facets with hierarchical distributions. The
 #'   default character(0) retains independent priors. Currently only "person"
-#'   is implemented, for generated additive Gaussian RSM/PCM: theta = mu_theta +
+#'   among main facets is implemented, for generated Gaussian RSM/PCM: theta = mu_theta +
 #'   sigma_theta * z with standard-normal z. Specify its population through
 #'   prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
 #'   included in the formula with independent priors.
+#'   Two-way interaction names may also be included, e.g. c("person","item:rater").
+#'   Their zero-centered Gaussian effects use a shared SD, specified with
+#'   prior(..., class = "sd", facet = "item:rater"). LKJ and horseshoe priors
+#'   are not implemented. Specifying a hierarchy or marginal scaling currently
+#'   requires Gaussian main/step/conditional interaction priors throughout.
 #' @param ... additional arguments passed to cmdstanr::sample()
 #'
 #' @return bmfrm_fit object containing the fitted model and metadata
@@ -116,7 +122,7 @@ bmfrm <- function(
   data_info <- prepare_data_bmfrm(spec, data)
   
   design_info <- NULL
-  if (design_check != "none" && is.null(stan_file) && !length(spec$facets_bias)) {
+  if (design_check != "none" && is.null(stan_file)) {
     design_info <- check_design_bmfrm(formula, data_info$data_clean, K = spec$K, family = family,
                                       threshold_facet = spec$threshold_facet)
     if (!design_info$identifiable) {

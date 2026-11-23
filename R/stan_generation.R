@@ -117,6 +117,11 @@ generate_bias_param_decl <- function(spec) {
       f2 <- components[2]
       # Create matrix parameter for bias
       bias_name <- gsub(":", "", bias_facet)
+      if (!is.null(spec$gaussian_model)) {
+        lines <- c(lines, paste0("  matrix[J_", f1, " - 1, J_", f2, " - 1] ", bias_name, "_raw;"),
+          paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;"))
+        next
+      }
       lines <- c(lines, paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"))
     }
   }
@@ -168,9 +173,19 @@ generate_bias_transform <- function(spec) {
   if (length(spec$facets_bias) > 0) {
     for (bias_facet in spec$facets_bias) {
       bias_name <- gsub(":", "", bias_facet) 
+      components <- strsplit(bias_facet, ":", fixed = TRUE)[[1L]]
+      dims <- paste0("J_", components, collapse = ", ")
+      if (!is.null(spec$gaussian_model)) {
+        lines <- c(lines,
+          paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
+            " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
+          paste0("  matrix[", dims, "] ", bias_name, " = sigma_", bias_name,
+            " * B_", bias_name, "_1 * ", bias_name, "_raw * B_", bias_name, "_2';"))
+        next
+      }
       lines <- c(lines,
                  paste0("  // ", bias_facet, " bias (sum-to-zero constraints)"),
-                 paste0("  matrix[rows(", bias_name, "_raw), cols(", bias_name, "_raw)] ", bias_name, ";"),
+                 paste0("  matrix[", dims, "] ", bias_name, ";"),
                  "  {",
                  paste0("    matrix[rows(", bias_name, "_raw), cols(", bias_name, "_raw)] centered;"),
                  paste0("    // Row-wise centering"),
@@ -195,7 +210,12 @@ generate_prior_block <- function(spec, priors) {
     variables <- c("theta_raw", "mu_theta_raw", "log_sigma_theta_raw",
                    if (spec$family == "pcm") "to_vector(tau_raw)" else "tau_raw",
                    if (length(spec$gaussian_model$facet_sd)) paste0(names(spec$gaussian_model$facet_sd), "_raw"))
-    return(paste0("  ", variables, " ~ std_normal();", collapse = "\n"))
+    lines <- paste0("  ", variables, " ~ std_normal();")
+    for (b in spec$gaussian_model$biases) {
+      lines <- c(lines, paste0("  to_vector(", b$name, "_raw) ~ std_normal();"))
+      if (b$sd$estimated) lines <- c(lines, paste0("  sigma_", b$name, "_raw ~ ", b$sd$spec, ";"))
+    }
+    return(paste(lines, collapse = "\n"))
   }
   lines <- ""
 
@@ -240,6 +260,10 @@ ordinal_stan_replacements <- function(spec) {
     "matrix[K - 1, K - 2] B_tau;", "real<lower=0> prior_sd_tau;")
   for (f in names(spec$gaussian_model$facet_sd)) fields <- c(fields,
     paste0("matrix[J_", f, ", J_", f, " - 1] B_", f, ";"), paste0("real<lower=0> prior_sd_", f, ";"))
+  for (b in spec$gaussian_model$biases) fields <- c(fields,
+    paste0("matrix[J_", b$facets[1L], ", J_", b$facets[1L], " - 1] B_", b$name, "_1;"),
+    paste0("matrix[J_", b$facets[2L], ", J_", b$facets[2L], " - 1] B_", b$name, "_2;"),
+    paste0("int<lower=0, upper=1> estimate_sd_", b$name, ";"), paste0("real<lower=0> fixed_sd_", b$name, ";"))
   list(MODEL_DATA = paste(fields, collapse = "\n  "),
     ABILITY_PARAM_DECL = paste(c("vector[J_person] theta_raw;", "vector[estimate_mu] mu_theta_raw;",
       "vector[estimate_sigma] log_sigma_theta_raw;"), collapse = "\n  "),
@@ -286,8 +310,8 @@ generate_eta_sum <- function(spec, fair = FALSE) {
     lines <- c(lines, paste0("+ (- ", facet, "[", facet, "_n])"))
   }
   
-  # Add bias terms (only for non-fair scores)
-  if (!fair && length(spec$facets_bias) > 0) {
+  # Keep interactions that do not involve adjusted nuisance facets.
+  if (length(spec$facets_bias) > 0) {
     for (bias_facet in spec$facets_bias) {
       components <- strsplit(bias_facet, ":")[[1]]
       f1 <- components[1]

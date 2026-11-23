@@ -17,7 +17,7 @@ prior_predict_bmfrm(
 )
 }
 \arguments{
-\item{formula}{Model formula with person and additive facet columns.}
+\item{formula}{Model formula with person, main facets and optional two-way interactions.}
 
 \item{design}{Planned rating rows. Existing responses are ignored.}
 
@@ -30,8 +30,9 @@ prior_predict_bmfrm(
 \item{seed}{Optional seed, restored on exit.}
 
 \item{hierarchical}{Names of facets with hierarchical distributions; currently
-only "person" is implemented. Its population uses prior classes mean and sd
-with facet = "person". The default character(0) retains independent priors.}
+"person" and two-way interaction names are implemented. Person uses classes
+mean and sd with facet = "person"; interactions use class sd with their
+term name. The default character(0) retains fixed-scale priors.}
 
 \item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
 

@@ -19,7 +19,9 @@ get_default_priors(
 \item{family}{model family: "rsm" or "pcm"}
 
 \item{hierarchical}{Names of facets with hierarchical distributions. Currently
-only "person" is supported; character(0) retains independent priors.}
+"person" and two-way interaction names are supported; character(0)
+retains fixed-scale priors. A hierarchical interaction defaults to a
+half-normal SD prior normal(0,0.5) with raw scaling.}
 }
 \value{
 list of bmfrm_prior objects

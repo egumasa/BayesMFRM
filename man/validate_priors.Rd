@@ -22,7 +22,7 @@ validate_priors(
 \item{family}{model family: "rsm" or "pcm"}
 
 \item{hierarchical}{Names of facets with hierarchical distributions. Currently
-only "person" is supported; character(0) retains independent priors.}
+"person" and two-way interaction names are supported.}
 }
 \value{
 validated list of priors

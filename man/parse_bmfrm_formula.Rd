@@ -31,7 +31,8 @@ parse_bmfrm_formula(
 \item{cache_dir}{cache directory}
 
 \item{hierarchical}{Names of facets with hierarchical distributions. Currently
-only "person" is implemented; other facets retain independent priors.}
+"person" and two-way interaction terms are implemented. Component order
+in interaction names does not affect prior matching.}
 }
 \value{
 bmfrm_spec object with model specification

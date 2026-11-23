@@ -16,6 +16,13 @@ Use `prior(..., class = "tau")` to set step priors and `scale = "marginal"` for
 the constrained Gaussian step SD. See [local development notes](README.dev.md)
 for equations, prior predictive checks, and current limitations.
 
+Version 0.1.0.9003 adds hierarchical Gaussian two-way interactions through the
+existing `hierarchical` and `priors` arguments, and fixes interaction-name matching
+and generated Stan dimensions. For example, select `hierarchical = "item:rater"`
+and use `prior("normal(0, 0.5)", "sd", facet = "item:rater")` for a half-normal
+scale prior. Design checks and `summarise_bias(..., delta = ...)` now include
+interactions. LKJ and horseshoe interaction priors are not implemented.
+
 ## Overview
 
 BayesMFRM is an R package for fitting Bayesian Many-Facet Rasch Models (MFRM) using Stan. It provides a user-friendly interface similar to brms but specialized for MFRM analysis, producing FACETS-style outputs including rater severity, item difficulty, fair averages, and infit/outfit statistics.

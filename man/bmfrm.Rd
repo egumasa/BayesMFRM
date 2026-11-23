@@ -51,7 +51,8 @@ the level's overall location from its category pattern.}
 
 \item{save_csvs}{whether to save MCMC output as CSV files}
 
-\item{design_check}{How to handle a rank-deficient generated additive RSM/PCM: warn, error, or none.}
+\item{design_check}{How to handle a rank-deficient generated RSM/PCM, including
+two-way interactions: warn, error, or none.}
 
 \item{cpp_options}{Named compilation options passed to cmdstanr.}
 
@@ -69,10 +70,15 @@ the level's overall location from its category pattern.}
 
 \item{hierarchical}{Names of facets with hierarchical distributions. The
 default character(0) retains independent priors. Currently only "person"
-is implemented, for generated additive Gaussian RSM/PCM: theta = mu_theta +
+among main facets is implemented, for generated Gaussian RSM/PCM: theta = mu_theta +
 sigma_theta * z with standard-normal z. Specify its population through
 prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
-included in the formula with independent priors.}
+included in the formula with independent priors.
+Two-way interaction names may also be included, e.g. c("person","item:rater").
+Their zero-centered Gaussian effects use a shared SD, specified with
+prior(..., class = "sd", facet = "item:rater"). LKJ and horseshoe priors
+are not implemented. Specifying a hierarchy or marginal scaling currently
+requires Gaussian main/step/conditional interaction priors throughout.}
 
 \item{...}{additional arguments passed to cmdstanr::sample()}
 }

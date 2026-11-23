@@ -1,23 +1,27 @@
-#' Simulate ratings from generated additive RSM or PCM
+#' Simulate ratings from generated RSM or PCM, including two-way interactions
 #'
 #' With parameters = NULL, generate parameters and ratings from the same priors
 #' and constraints used by Stan. Independent raw-scale priors support normal and
-#' student_t numeric literals. Hierarchical ability and marginal scaling use
+#' student_t and double_exponential numeric literals. Hierarchical priors and marginal scaling use
 #' Gaussian zero-sum blocks and the declared population priors.
 #' Fixed parameters must already satisfy the constraints. Unnamed vectors follow
 #' facet_labels order; named vectors are matched to the original facet labels.
 #'
-#' @param formula Model formula with person and additive facet columns.
+#' @param formula Model formula with person, main facets and optional two-way interactions.
 #' @param design Planned rating rows. Existing responses are ignored.
 #' @param K Number of categories.
 #' @param priors List of prior specifications; NULL uses package defaults.
 #' @param parameters NULL or a list with theta, each other facet, and tau.
 #'   With hierarchical ability, also supply mu_theta and sigma_theta.
+#'   Interactions use a matrix named by concatenating their formula-order facet
+#'   names (e.g. itemrater), with zero row and column sums. Dimnames match facet
+#'   labels. Hierarchical interactions also require sigma_<interaction_name>.
 #' @param nsim Number of simulated datasets.
 #' @param seed Optional seed, restored on exit.
 #' @param hierarchical Names of facets with hierarchical distributions; currently
-#'   only "person" is implemented. Its population uses prior classes mean and sd
-#'   with facet = "person". The default character(0) retains independent priors.
+#'   "person" and two-way interaction names are implemented. Person uses classes
+#'   mean and sd with facet = "person"; interactions use class sd with their
+#'   term name. The default character(0) retains fixed-scale priors.
 #' @param family "rsm" for common steps or "pcm" for steps within threshold_facet.
 #' @param threshold_facet Required for PCM. Its step deviations sum to zero within
 #'   each level. Fixed tau must be a levels-by-(K-1) matrix; optional row names
@@ -39,8 +43,9 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
     family = family, threshold_facet = threshold_facet), priors)
   model <- spec$gaussian_model
   priors <- spec$priors
-  if (length(spec$facets_bias) || !"person" %in% spec$facets_main ||
-      any(!spec$facets_main %in% names(design))) stop("Simulation currently supports additive RSM/PCM models")
+  hierarchical <- spec$hierarchical
+  if (!"person" %in% spec$facets_main ||
+      any(!spec$facets_main %in% names(design))) stop("Simulation requires person and named main facets")
   fs <- lapply(design[spec$facets_main], function(x) if (is.factor(x)) x else factor(x))
   if (any(vapply(fs, anyNA, logical(1)))) stop("Missing values in design facets")
   labels <- lapply(fs, levels)
@@ -54,12 +59,37 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
     param_names <- c(param_names, "mu_theta", "sigma_theta")
     sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
   }
+  bias_names <- gsub(":", "", spec$facets_bias)
+  bias_dims <- lapply(strsplit(spec$facets_bias, ":", fixed = TRUE), function(f) lengths(labels[f]))
+  names(bias_dims) <- bias_names
+  for (j in seq_along(bias_names)) {
+    param_names <- c(param_names, bias_names[j]); sizes <- c(sizes, stats::setNames(prod(bias_dims[[j]]), bias_names[j]))
+    if (spec$facets_bias[j] %in% hierarchical) {
+      nm <- paste0("sigma_", bias_names[j]); param_names <- c(param_names, nm); sizes <- c(sizes, stats::setNames(1L, nm))
+    }
+  }
   if (!is.null(parameters)) {
     if (!is.list(parameters) || anyDuplicated(names(parameters)) || !setequal(names(parameters), param_names)) stop("parameters must contain exactly: ", paste(param_names, collapse = ", "))
     parameters <- parameters[param_names]
     for (j in seq_along(parameters)) {
       x <- parameters[[j]]
       if (!is.numeric(x) || length(x) != sizes[j] || any(!is.finite(x))) stop("Invalid parameter vector: ", param_names[j])
+      if (param_names[j] %in% bias_names) {
+        f <- strsplit(spec$facets_bias[match(param_names[j], bias_names)], ":", fixed = TRUE)[[1L]]
+        if (!is.matrix(x) || !identical(dim(x), unname(bias_dims[[param_names[j]]]))) stop("Interaction must be a matrix with one dimension per facet: ", param_names[j])
+        for (axis in 1:2) if (!is.null(dimnames(x)[[axis]])) {
+          nm <- dimnames(x)[[axis]]
+          if (anyDuplicated(nm) || !setequal(nm, labels[[f[axis]]])) stop("Interaction matrix labels do not match facets")
+          x <- if (axis == 1L) x[labels[[f[axis]]], , drop = FALSE] else x[, labels[[f[axis]]], drop = FALSE]
+        }
+        if (any(abs(c(rowSums(x), colSums(x))) > 1e-8)) stop("Interaction rows and columns must each sum to zero")
+        parameters[[j]] <- unname(x); next
+      }
+      if (param_names[j] %in% paste0("sigma_", bias_names)) {
+        b <- model$biases[[match(sub("^sigma_", "", param_names[j]), bias_names)]]
+        if (x <= 0 || (!b$sd$estimated && x != b$sd$value)) stop("Interaction SD must be positive and match any fixed prior value")
+        parameters[[j]] <- unname(x); next
+      }
       if (param_names[j] == "tau" && family == "pcm") {
         if (!is.matrix(x) || !identical(dim(x), c(J_step, as.integer(K - 1L)))) stop("PCM tau must have threshold-facet levels as rows and K-1 steps as columns")
         if (!is.null(rownames(x))) {
@@ -92,12 +122,11 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
                      ifelse(spec$facets_main %in% c("item", "rater"), spec$facets_main,
                             paste0("facet_", spec$facets_main))), "tau")
   prior_classes <- vapply(priors, function(p) p$class, character(1))
-  if (anyDuplicated(prior_classes)) stop("Use one prior for each parameter class")
   sample_one <- function() {
     pars <- parameters
     if (is.null(pars) && !is.null(model)) pars <- sample_gaussian_model(model, labels, K)
     if (is.null(pars)) {
-      pars <- lapply(seq_along(param_names), function(j) {
+      pars <- lapply(seq_along(classes), function(j) {
         x <- sample_bmfrm_prior(priors[[match(classes[j], prior_classes)]]$spec, sizes[j])
         if (param_names[j] == "tau" && family == "pcm") {
           x <- matrix(x, J_step, K - 1L)
@@ -105,10 +134,21 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
         } else if (param_names[j] != "theta") x <- x - mean(x)
         x
       })
-      names(pars) <- param_names
+      names(pars) <- param_names[seq_along(classes)]
+      for (j in seq_along(bias_names)) {
+        p <- priors[[which(prior_classes == "bias" & vapply(priors, function(p) identical(p$facet, spec$facets_bias[j]), logical(1)))]]
+        n <- bias_dims[[j]]
+        x <- matrix(sample_bmfrm_prior(p$spec, prod(n)), n[1L], n[2L])
+        x <- sweep(x, 1L, rowMeans(x), "-")
+        pars[[bias_names[j]]] <- unname(sweep(x, 2L, colMeans(x), "-"))
+      }
     }
     eta <- pars$theta[ids$person]
     for (f in setdiff(spec$facets_main, "person")) eta <- eta - pars[[f]][ids[[f]]]
+    for (j in seq_along(bias_names)) {
+      f <- strsplit(spec$facets_bias[j], ":", fixed = TRUE)[[1L]]
+      eta <- eta + pars[[bias_names[j]]][cbind(ids[[f[1L]]], ids[[f[2L]]])]
+    }
     prob <- if (family == "pcm") pcm_probabilities(eta, pars$tau[ids[[spec$threshold_facet]], , drop = FALSE]) else rsm_probabilities(eta, pars$tau)
     cum <- t(apply(prob, 1L, cumsum))
     y <- 1L + rowSums(stats::runif(nrow(design)) > cum[, -K, drop = FALSE])
@@ -166,7 +206,10 @@ sample_bmfrm_prior <- function(spec, n) {
   args <- p$args
   if (distribution == "normal" && length(args) == 2L && args[2L] > 0) return(stats::rnorm(n, args[1L], args[2L]))
   if (distribution == "student_t" && length(args) == 3L && args[1L] > 0 && args[3L] > 0) return(args[2L] + args[3L] * stats::rt(n, args[1L]))
-  stop("Simulation supports normal(mean, sd) and student_t(df, location, scale) with positive scales")
+  if (distribution == "double_exponential" && length(args) == 2L && args[2L] > 0) {
+    return(args[1L] + stats::rexp(n, rate = 1 / args[2L]) * sample(c(-1, 1), n, replace = TRUE))
+  }
+  stop("Simulation supports normal, student_t and double_exponential numeric priors with positive scales")
 }
 
 parse_bmfrm_prior_literal <- function(spec) {

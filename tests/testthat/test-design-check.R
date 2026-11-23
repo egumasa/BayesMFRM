@@ -47,7 +47,7 @@ test_that("disconnected components and unused declared levels are reported", {
 
 test_that("unsupported models and invalid designs do not receive an identification verdict", {
   d <- expand.grid(person = 1:4, item = 1:2, rater = 1:2)
-  expect_error(check_design_bmfrm(score ~ person + item + rater:item, d, K = 6), "additive RSM")
+  expect_error(check_design_bmfrm(score ~ person + item + rater:item, d, K = 6), "main facets")
   expect_error(check_design_bmfrm(score ~ person + item, d, K = 6, family = "pcm"), "threshold_facet")
   expect_error(check_design_bmfrm(score ~ person + item, d, K = 1), "K")
   d$person[1] <- NA

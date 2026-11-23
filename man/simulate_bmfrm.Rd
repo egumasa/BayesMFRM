@@ -2,7 +2,7 @@
 % Please edit documentation in R/simulate.R
 \name{simulate_bmfrm}
 \alias{simulate_bmfrm}
-\title{Simulate ratings from generated additive RSM or PCM}
+\title{Simulate ratings from generated RSM or PCM, including two-way interactions}
 \usage{
 simulate_bmfrm(
   formula,
@@ -18,7 +18,7 @@ simulate_bmfrm(
 )
 }
 \arguments{
-\item{formula}{Model formula with person and additive facet columns.}
+\item{formula}{Model formula with person, main facets and optional two-way interactions.}
 
 \item{design}{Planned rating rows. Existing responses are ignored.}
 
@@ -27,15 +27,19 @@ simulate_bmfrm(
 \item{priors}{List of prior specifications; NULL uses package defaults.}
 
 \item{parameters}{NULL or a list with theta, each other facet, and tau.
-With hierarchical ability, also supply mu_theta and sigma_theta.}
+With hierarchical ability, also supply mu_theta and sigma_theta.
+Interactions use a matrix named by concatenating their formula-order facet
+names (e.g. itemrater), with zero row and column sums. Dimnames match facet
+labels. Hierarchical interactions also require sigma_<interaction_name>.}
 
 \item{nsim}{Number of simulated datasets.}
 
 \item{seed}{Optional seed, restored on exit.}
 
 \item{hierarchical}{Names of facets with hierarchical distributions; currently
-only "person" is implemented. Its population uses prior classes mean and sd
-with facet = "person". The default character(0) retains independent priors.}
+"person" and two-way interaction names are implemented. Person uses classes
+mean and sd with facet = "person"; interactions use class sd with their
+term name. The default character(0) retains fixed-scale priors.}
 
 \item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
 
@@ -50,7 +54,7 @@ parameters, facet_labels, specification, and data for nsim = 1.
 \description{
 With parameters = NULL, generate parameters and ratings from the same priors
 and constraints used by Stan. Independent raw-scale priors support normal and
-student_t numeric literals. Hierarchical ability and marginal scaling use
+student_t and double_exponential numeric literals. Hierarchical priors and marginal scaling use
 Gaussian zero-sum blocks and the declared population priors.
 Fixed parameters must already satisfy the constraints. Unnamed vectors follow
 facet_labels order; named vectors are matched to the original facet labels.

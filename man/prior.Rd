@@ -13,12 +13,19 @@ value fixes that parameter (SD must be positive).}
 \item{class}{Parameter class: theta, item, rater, bias, tau, facet_\if{html}{\out{<name>}},
 mean, or sd. The last two specify a hierarchical population.}
 
-\item{facet}{Target facet for mean/sd, or interaction name for bias.}
+\item{facet}{Target facet for mean/sd, or interaction name for bias. For a
+hierarchical two-way interaction, use class = "sd" and its term name.
+Supported interaction SD priors are normal(0,s), student_t(df,0,s), and
+cauchy(0,s), restricted to positive values, or lognormal(m,s). A positive
+numeric value fixes its SD. Population means are absent for centered interactions.}
 
 \item{scale}{Meaning of the SD for a constrained Gaussian facet or step prior:
 "raw" retains the historical pre-centering SD; "marginal" specifies the
 constrained level SD. Marginal scaling requires a normal(0, sd) prior and
-generated additive Gaussian RSM/PCM. Singleton blocks remain identically zero.
+generated Gaussian RSM/PCM. Singleton blocks remain identically zero.
+For a hierarchical interaction SD, "marginal" refers to each cell's
+conditional SD given that parameter; "raw" retains the double-centering
+variance factor (1-1/J1)*(1-1/J2). This does not describe the hyperprior's SD.
 For tau, a block comprises K-1 steps: one shared block in RSM, or one
 independent block per threshold-facet level in PCM. PCM steps are centered
 within that level, not across levels. For S = K-1 > 1, raw Gaussian step
@@ -41,4 +48,5 @@ prior("normal(0, 1)", class = "tau")
 
 # Bias prior (requires facet specification)
 prior("normal(0, 0.5)", class = "bias", facet = "rater:item")
+prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal")
 }

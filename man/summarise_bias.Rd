@@ -4,16 +4,29 @@
 \alias{summarise_bias}
 \title{Summarise bias effects (wrapper)}
 \usage{
-summarise_bias(object, facet = NULL, prob_thresh = 0.95, ...)
+summarise_bias(object, facet = NULL, prob_thresh = 0.95, delta = 0, ...)
 }
 \arguments{
 \item{object}{bmfrm_fit object}
 
-\item{facet}{bias facet name (if NULL, uses first bias facet)}
+\item{facet}{Two-way interaction name in either component order (if NULL,
+uses the first interaction). The generated parameter name and original
+level labels are used. For legacy raw CmdStan fits named \code{bias[I,R]}, use
+summarise_bias_ir().}
 
 \item{prob_thresh}{probability threshold for flagging bias}
 
+\item{delta}{Nonnegative practically meaningful effect on the adjacent-logit
+scale. Report probabilities beyond +/-delta; flags also require the 95\%
+interval to exclude that region. This is not a multiplicity correction.}
+
 \item{...}{unused}
+}
+\value{
+A tibble with original labels, posterior summaries, directional and
+practical-effect probabilities, cell observation counts and a likelihood
+identification indicator when a design check is available. Unidentified
+cells retain posterior summaries but receive flag not_likelihood_identified.
 }
 \description{
 Summarise bias effects (wrapper)

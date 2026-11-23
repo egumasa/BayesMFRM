@@ -2,7 +2,7 @@
 % Please edit documentation in R/design_check.R
 \name{check_design_bmfrm}
 \alias{check_design_bmfrm}
-\title{Check a planned or observed additive RSM/PCM design}
+\title{Check a planned or observed RSM/PCM design, including two-way interactions}
 \usage{
 check_design_bmfrm(
   formula,
@@ -22,7 +22,7 @@ check_design_bmfrm(
 
 \item{K}{Number of categories, at least two.}
 
-\item{family}{Additive "rsm" or "pcm".}
+\item{family}{"rsm" or "pcm".}
 
 \item{observed_only}{Drop rows with missing responses before checking.}
 
@@ -40,6 +40,9 @@ contrasts: K-2 for RSM, or K-2 for each observed threshold-facet level in PCM.
 Unobserved PCM step levels are reported separately; no large Kronecker matrix
 is constructed. This is a property of all adjacent logits, not just observed
 response categories. condition_number concerns the predictor only.
+Interaction contrasts are included in rank/null_space. interaction_levels
+retains every planned cell, its observation count and constraint-map row.
+Sum-to-zero interaction constraints are unweighted across declared levels.
 }
 \description{
 Checks the facet incidence graph and the rank of the linear predictor after
