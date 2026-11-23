@@ -23,9 +23,12 @@
 #' @param chains number of MCMC chains
 #' @param cores number of CPU cores to use
 #' @param seed random seed
-#' @param model Optional rsm_model() with explicit isometric Gaussian priors.
-#'   NULL retains historical raw-centered priors. Only generated additive RSM
-#'   is supported; do not combine with priors or stan_file.
+#' @param hierarchical Names of facets with hierarchical distributions. The
+#'   default character(0) retains independent priors. Currently only "person"
+#'   is implemented, for generated additive Gaussian RSM: theta = mu_theta +
+#'   sigma_theta * z with standard-normal z. Specify its population through
+#'   prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
+#'   included in the formula with independent priors.
 #' @param ... additional arguments passed to cmdstanr::sample()
 #'
 #' @return bmfrm_fit object containing the fitted model and metadata
@@ -73,7 +76,7 @@ bmfrm <- function(
   chains = 4,
   cores = getOption("mc.cores", 1L),
   seed = NULL,
-  model = NULL,
+  hierarchical = character(),
   ...
 ) {
 
@@ -81,7 +84,8 @@ bmfrm <- function(
   family <- match.arg(family)
   refit <- match.arg(refit)
   design_check <- match.arg(design_check)
-  if (!is.null(model) && (!is.null(priors) || !is.null(stan_file))) stop("Use model without priors or stan_file")
+  # Prevent R partially matching the removed development argument to model_name.
+  if ("model" %in% names(sys.call())) stop("The development model argument was removed; use hierarchical and priors")
   
   # Check cmdstan availability
   if (!check_cmdstan()) {
@@ -97,9 +101,12 @@ bmfrm <- function(
     family = family,
     threshold_facet = threshold_facet,
     model_name = model_name,
-    cache_dir = cache_dir
+    cache_dir = cache_dir,
+    hierarchical = hierarchical
   )
-  spec$rsm_model <- bind_rsm_model(model, spec)
+  spec <- resolve_bmfrm_spec(spec, priors)
+  priors <- spec$priors
+  if (!is.null(stan_file) && !is.null(spec$rsm_model)) stop("Hierarchical ability and marginal scaling require generated Stan code")
   
   # 2. Prepare data → stan_data + facet labels  
   message("Preparing data...")
@@ -117,7 +124,6 @@ bmfrm <- function(
 
   # 3. Validate/set priors
   message("Setting up priors...")
-  if (is.null(spec$rsm_model)) priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
   
   # 4. Generate or use provided Stan code
   if (is.null(stan_file)) {
@@ -203,7 +209,7 @@ postprocess_bmfrm <- function(fit, spec, data_info, priors, stan_code, stan_code
       
       # Priors used
       priors = priors,
-      model = spec$rsm_model,
+      hierarchical = spec$hierarchical,
       
       # Convergence diagnostics
       convergence = convergence_info,

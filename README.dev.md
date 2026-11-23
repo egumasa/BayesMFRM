@@ -56,42 +56,65 @@ residual_cor_criteria(residuals(fit), unit_facets = c("person", "rater"))
 
 ## 開発段階と今後の課題
 
-### 第2段階: 明示的な等距RSM仕様
+### 引数によるモデル指定（開発版 0.1.0.9001）
+
+公開コンストラクタ `rsm_model()` と `model` 引数を廃止し、既存の `family`・`priors` と
+ファセット名を受け取る `hierarchical` 引数に整理しました。新しい公開関数は追加しません。
+最小の指定は `bmfrm(..., family = "rsm", hierarchical = "person")` です。
+既定の `hierarchical = character(0)` は従来の独立事前分布を維持します。
 
 ```r
-model <- rsm_model(
-  ability_mean = "normal(0, 2.5)",
-  ability_sd = "lognormal(0, 0.5)",
-  facet_sd = c(item = 1, rater = 1), step_sd = 1
+priors <- c(
+  prior("normal(0, 2.5)", class = "mean", facet = "person"),
+  prior("lognormal(0, 0.5)", class = "sd", facet = "person"),
+  prior("normal(0, 1)", class = "item"),
+  prior("normal(0, 1)", class = "rater"),
+  prior("normal(0, 1)", class = "tau")
 )
 sim <- simulate_bmfrm(score ~ person + item + rater, plan, K = 6,
-                     model = model, seed = 42)
+                     hierarchical = "person", priors = priors, seed = 42)
 fit <- bmfrm(score ~ person + item + rater, sim$data, K = 6,
-             model = model, design_check = "error", seed = 43)
+             hierarchical = "person", priors = priors, design_check = "error", seed = 43)
 ```
 
-`model = NULL` は従来の生パラメータ事前分布を維持します。新しい仕様は加法的RSMのみで、
-`priors` 引数と併用しません。`ability_mean = 0, ability_sd = 2` のような数値を指定すれば
-対応する母集団パラメータを固定できます。文字列で指定すると平均は正規事前、SDは対数正規事前で推定します。
+能力は `theta = mu_theta + sigma_theta * z`、`z ~ normal(0, 1)` です。
+`prior(0, "mean", facet = "person")` や `prior(2, "sd", facet = "person")` ならその母集団
+パラメータを固定します。分布・固定値とも同じ `priors` で指定し、生成・推定が共通の内部検証を使います。
+独立能力の `theta` 事前と階層化された受験者の `mean` / `sd` を混在させるとエラーになります。
+明示的な `priors` は必要な対象をすべて指定してください。
+既存の `get_default_priors(..., hierarchical = "person")` でも完全な一覧を取得できます。
 
-新仕様では `theta = mu_theta + sigma_theta * z`、`z ~ normal(0, 1)` です。
-J水準の効果は `x = sd * sqrt(J / (J - 1)) * H * z` とし、Hは正規直交和ゼロ基底です。
-したがって全水準の周辺事前分散が `sd^2` になります。1水準の効果と2値RSMのステップは恒等的に0です。
-これは従来の `raw - mean(raw)` と同じ数値SDを代入して同じ事前分布になる変更ではありません。
-生成と推定のモデル指定を揃え、ラベル順序・共分散・固定点対数密度・勾配で検証します。
+**事前SDの意味は階層化の有無で変わりません。** `prior()` の既定値 `scale = "raw"` は
+中心化前のSDを表します。J水準の正規効果を和ゼロにすると、各水準の分散は `sd^2 * (1 - 1/J)` です。
+`scale = "marginal"` を明示した `normal(0, sd)` では、各水準の周辺分散が `sd^2` になります。
+いずれも1水準の効果と2値RSMのステップは0です。
+Gaussianブロックでは前者を `sd * H * z`、後者を `sd * sqrt(J/(J-1)) * H * z` と実装します。
+基底Hの選択は内部処理です。旧来の独立・raw指定の経路はStudent-t事前を含めて維持します。
+階層化またはmarginal指定の新経路は、現在は加法的Gaussian RSMに限定します。
 
-新仕様のMCMC診断は自由座標と復元したモデルパラメータを確認し、構造的に固定された量を除外します。
+旧 `rsm_model()` と同じ事前分布に移行するには、母集団のmean/sdを指定したうえで、
+item・rater・tauそれぞれの `prior()` に `scale = "marginal"` を明示します。
+`hierarchical = "person"` だけでは旧コンストラクタの周辺SD設定を再現しません。
+変更前コミット `b0d059c` から保存した生成値・Stan入力・生成コードと照合する回帰テストがあります。
+
+ファセットが10個に増えても、式に列名を列挙し、事前分布を既存の `facet_<name>` で指定します。
+ファセットごとの専用引数は増やしません。母集団分布の指定先は `class` と `facet` の組で識別します。
+現在の階層化対応先は受験者 `person` のみです。`hierarchical = c("person", "rater")` は
+未実装としてエラーにします。評価者などの和ゼロ制約と母集団パラメータの識別性を検証してから拡張します。
+
+MCMC診断は自由座標と復元したパラメータを確認し、構造的に固定された量を除外します。
 計画の階数検査は直接の能力・facet効果の条件付き予測子を対象とし、母集団平均・SDの
-実用的な識別や精度を保証しません。明示された未観測因子水準も生成・推定・計画検査で保持します。
+実用的な識別や精度を保証しません。明示された未観測因子水準は全工程で保持します。
 
 ```sh
 # 独立R数式とStanの対数密度差・解析勾配を固定点で比較（MCMCなし）
 Rscript --vanilla tools/check-rsm-stan.R
 ```
 
-この段階の終了条件は、(1) 既存テストを保持、(2) ラベル置換と事前共分散を確認、
-(3) 母集団の推定／固定・2値／多値・1水準の固定点パリティ、(4) 全試行を保持した小規模実推定です。
-一般的な校正や精度改善を確認したという主張には、別途十分なSBC・回復実験が必要です。
+公開APIは既存の入口と役割が重ならない最小限の引数で拡張します。
+内部の仕様共有のためだけに公開コンストラクタを追加しません。
+既存設定の意味、生成・推定の一致、固定点パリティを検証してから実推定を確認します。
+小規模な動作確認から一般的な校正や推定精度改善は主張しません。
 
 ### 続く拡充
 

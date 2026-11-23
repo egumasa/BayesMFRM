@@ -7,6 +7,8 @@
 #' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
 #' @param model_name optional model name for caching
 #' @param cache_dir cache directory
+#' @param hierarchical Names of facets with hierarchical distributions. Currently
+#'   only "person" is implemented; other facets retain independent priors.
 #'
 #' @return bmfrm_spec object with model specification
 #' @export
@@ -16,7 +18,8 @@ parse_bmfrm_formula <- function(formula,
                                family = "rsm",
                                threshold_facet = NULL,
                                model_name = NULL,
-                               cache_dir = "stan_cache") {
+                               cache_dir = "stan_cache",
+                               hierarchical = character()) {
 
   # Validate family
   allowed_families <- c("rsm", "pcm")
@@ -67,6 +70,8 @@ parse_bmfrm_formula <- function(formula,
     }
   }
 
+  hierarchical <- validate_hierarchical(hierarchical, facets_main, facets_bias, family)
+
   # Infer K if not provided
   if (is.null(K)) {
     resp <- data[[response_name]]
@@ -99,6 +104,7 @@ parse_bmfrm_formula <- function(formula,
     facets_bias     = facets_bias,
     K               = K,
     family          = family,
+    hierarchical    = hierarchical,
     threshold_facet = threshold_facet,
     formula         = formula,
     model_name      = model_name,

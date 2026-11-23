@@ -4,12 +4,15 @@
 \alias{prepare_data_bmfrm}
 \title{Prepare data for bmfrm Stan model}
 \usage{
-prepare_data_bmfrm(spec, data)
+prepare_data_bmfrm(spec, data, priors = NULL)
 }
 \arguments{
 \item{spec}{bmfrm_spec object from parse_bmfrm_formula()}
 
 \item{data}{data.frame with original data}
+
+\item{priors}{Optional prior specifications; otherwise use priors stored in
+spec, or the defaults. Use the same priors for build_stan_code().}
 }
 \value{
 list with stan_data, data_clean, and facet_labels

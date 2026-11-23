@@ -4,14 +4,21 @@
 \alias{prior}
 \title{Create a prior specification for bmfrm models}
 \usage{
-prior(spec, class, facet = NULL)
+prior(spec, class, facet = NULL, scale = c("raw", "marginal"))
 }
 \arguments{
-\item{spec}{prior specification string (e.g., "normal(0, 2)")}
+\item{spec}{Prior distribution string. For a population mean or SD, a numeric
+value fixes that parameter (SD must be positive).}
 
-\item{class}{parameter class ("theta", "item", "rater", "bias", "tau", or "facet_\if{html}{\out{<name>}}")}
+\item{class}{Parameter class: theta, item, rater, bias, tau, facet_\if{html}{\out{<name>}},
+mean, or sd. The last two specify a hierarchical population.}
 
-\item{facet}{interaction facet name (required for class = "bias")}
+\item{facet}{Target facet for mean/sd, or interaction name for bias.}
+
+\item{scale}{Meaning of the SD for a constrained Gaussian facet or step prior:
+"raw" retains the historical pre-centering SD; "marginal" specifies the
+constrained level SD. Marginal scaling requires a normal(0, sd) prior and
+generated additive Gaussian RSM. Singleton blocks remain identically zero.}
 }
 \value{
 bmfrm_prior object

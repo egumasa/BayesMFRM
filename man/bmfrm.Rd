@@ -23,7 +23,7 @@ bmfrm(
   chains = 4,
   cores = getOption("mc.cores", 1L),
   seed = NULL,
-  model = NULL,
+  hierarchical = character(),
   ...
 )
 }
@@ -65,9 +65,12 @@ bmfrm(
 
 \item{seed}{random seed}
 
-\item{model}{Optional rsm_model() with explicit isometric Gaussian priors.
-NULL retains historical raw-centered priors. Only generated additive RSM
-is supported; do not combine with priors or stan_file.}
+\item{hierarchical}{Names of facets with hierarchical distributions. The
+default character(0) retains independent priors. Currently only "person"
+is implemented, for generated additive Gaussian RSM: theta = mu_theta +
+sigma_theta * z with standard-normal z. Specify its population through
+prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
+included in the formula with independent priors.}
 
 \item{...}{additional arguments passed to cmdstanr::sample()}
 }

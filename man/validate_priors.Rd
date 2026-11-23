@@ -4,7 +4,13 @@
 \alias{validate_priors}
 \title{Validate a list of priors}
 \usage{
-validate_priors(priors, facets_main, facets_bias = NULL, family = "rsm")
+validate_priors(
+  priors,
+  facets_main,
+  facets_bias = NULL,
+  family = "rsm",
+  hierarchical = character()
+)
 }
 \arguments{
 \item{priors}{list of bmfrm_prior objects or NULL}
@@ -14,6 +20,9 @@ validate_priors(priors, facets_main, facets_bias = NULL, family = "rsm")
 \item{facets_bias}{vector of bias facet names}
 
 \item{family}{model family: "rsm" or "pcm"}
+
+\item{hierarchical}{Names of facets with hierarchical distributions. Currently
+only "person" is supported; character(0) retains independent priors.}
 }
 \value{
 validated list of priors

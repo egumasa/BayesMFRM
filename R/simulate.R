@@ -1,8 +1,9 @@
 #' Simulate ratings from the generated additive RSM
 #'
-#' With parameters = NULL, sample each raw effect from its specified prior and
-#' apply the same centering as Stan. This supports normal and student_t priors
-#' with literal numeric arguments. Other Stan prior expressions are rejected.
+#' With parameters = NULL, generate parameters and ratings from the same priors
+#' and constraints used by Stan. Independent raw-scale priors support normal and
+#' student_t numeric literals. Hierarchical ability and marginal scaling use
+#' Gaussian zero-sum blocks and the declared population priors.
 #' Fixed parameters must already satisfy the constraints. Unnamed vectors follow
 #' facet_labels order; named vectors are matched to the original facet labels.
 #'
@@ -11,36 +12,36 @@
 #' @param K Number of categories.
 #' @param priors List of prior specifications; NULL uses package defaults.
 #' @param parameters NULL or a list with theta, each other facet, and tau.
-#'   With an explicit model, also supply mu_theta and sigma_theta.
+#'   With hierarchical ability, also supply mu_theta and sigma_theta.
 #' @param nsim Number of simulated datasets.
 #' @param seed Optional seed, restored on exit.
-#' @param model Optional explicit rsm_model(); NULL retains the historical priors.
+#' @param hierarchical Names of facets with hierarchical distributions; currently
+#'   only "person" is implemented. Its population uses prior classes mean and sd
+#'   with facet = "person". The default character(0) retains independent priors.
 #' @return A bmfrm_simulation with y_rep (simulations by ratings), generating
 #'   parameters, facet_labels, specification, and data for nsim = 1.
 #' @export
 simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
-                           nsim = 1L, seed = NULL, model = NULL) {
+                           nsim = 1L, seed = NULL, hierarchical = character()) {
   validate_category_count(K)
   if (length(nsim) != 1L || !is.finite(nsim) || nsim < 1 || nsim != floor(nsim)) stop("nsim must be a positive integer")
   if (!is.data.frame(design) || !nrow(design)) stop("design must contain rating rows")
   response <- all.vars(formula)[1L]
   fake <- design
   fake[[response]] <- 1L
-  spec <- parse_bmfrm_formula(formula, fake, K = K)
-  model <- bind_rsm_model(model, spec)
-  spec$rsm_model <- model
-  if (!is.null(model) && !is.null(priors)) stop("Use model or priors, not both")
+  spec <- resolve_bmfrm_spec(parse_bmfrm_formula(formula, fake, K = K, hierarchical = hierarchical), priors)
+  model <- spec$rsm_model
+  priors <- spec$priors
   if (length(spec$facets_bias) || !"person" %in% spec$facets_main ||
       any(!spec$facets_main %in% names(design))) stop("Simulation currently supports additive RSM models")
   fs <- lapply(design[spec$facets_main], function(x) if (is.factor(x)) x else factor(x))
   if (any(vapply(fs, anyNA, logical(1)))) stop("Missing values in design facets")
   labels <- lapply(fs, levels)
   ids <- lapply(fs, as.integer)
-  if (is.null(model)) priors <- validate_priors(priors, spec$facets_main, spec$facets_bias)
   param_names <- c(ifelse(spec$facets_main == "person", "theta", spec$facets_main), "tau")
   sizes <- c(lengths(labels), K - 1L)
   names(sizes) <- param_names
-  if (!is.null(model)) {
+  if ("person" %in% hierarchical) {
     param_names <- c(param_names, "mu_theta", "sigma_theta")
     sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
   }
@@ -57,7 +58,7 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
       if (!param_names[j] %in% c("theta", "mu_theta", "sigma_theta") && abs(sum(x)) > 1e-8) stop("Fixed parameter must sum to zero: ", param_names[j])
       parameters[[j]] <- unname(x)
     }
-    if (!is.null(model)) {
+    if ("person" %in% hierarchical) {
       if (parameters$sigma_theta <= 0) stop("sigma_theta must be positive")
       if ((!model$ability_mean$estimated && parameters$mu_theta != model$ability_mean$location) ||
           (!model$ability_sd$estimated && parameters$sigma_theta != model$ability_sd$location)) stop("Fixed population parameters must match model")
@@ -92,7 +93,7 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   dat[[response]] <- yrep[1L, ]
   structure(list(y_rep = yrep, parameters = lapply(generated, `[[`, "parameters"),
                  data = if (nsim == 1L) dat else NULL, design = design,
-                 facet_labels = labels, spec = spec, priors = priors, model = model,
+                 facet_labels = labels, spec = spec, priors = priors, hierarchical = hierarchical,
                  source = if (is.null(parameters)) "prior" else "fixed", seed = seed),
             class = "bmfrm_simulation")
 }
@@ -102,8 +103,9 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
 #' @param ndraws Number of prior predictive datasets.
 #' @return A bmfrm_simulation. Inspect its y_rep before fitting observed data.
 #' @export
-prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL, model = NULL) {
-  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, model = model)
+prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL,
+                               hierarchical = character()) {
+  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, hierarchical = hierarchical)
 }
 
 with_bmfrm_seed <- function(seed, code) {

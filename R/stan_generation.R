@@ -7,10 +7,8 @@
 #' @export
 build_stan_code <- function(spec, priors = NULL) {
 
-  # Validate priors (pass family for PCM-specific handling)
-  if (is.null(spec$rsm_model)) {
-    priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
-  } else if (!is.null(priors)) stop("Use model or priors, not both")
+  spec <- resolve_bmfrm_spec(spec, priors)
+  priors <- spec$priors
 
   # Load appropriate template based on family
   template_path <- get_stan_template_path(spec$family)

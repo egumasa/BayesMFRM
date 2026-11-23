@@ -11,7 +11,7 @@ prior_predict_bmfrm(
   priors = NULL,
   ndraws = 200L,
   seed = NULL,
-  model = NULL
+  hierarchical = character()
 )
 }
 \arguments{
@@ -27,7 +27,9 @@ prior_predict_bmfrm(
 
 \item{seed}{Optional seed, restored on exit.}
 
-\item{model}{Optional explicit rsm_model(); NULL retains the historical priors.}
+\item{hierarchical}{Names of facets with hierarchical distributions; currently
+only "person" is implemented. Its population uses prior classes mean and sd
+with facet = "person". The default character(0) retains independent priors.}
 }
 \value{
 A bmfrm_simulation. Inspect its y_rep before fitting observed data.

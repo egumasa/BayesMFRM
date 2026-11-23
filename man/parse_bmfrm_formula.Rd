@@ -11,7 +11,8 @@ parse_bmfrm_formula(
   family = "rsm",
   threshold_facet = NULL,
   model_name = NULL,
-  cache_dir = "stan_cache"
+  cache_dir = "stan_cache",
+  hierarchical = character()
 )
 }
 \arguments{
@@ -28,6 +29,9 @@ parse_bmfrm_formula(
 \item{model_name}{optional model name for caching}
 
 \item{cache_dir}{cache directory}
+
+\item{hierarchical}{Names of facets with hierarchical distributions. Currently
+only "person" is implemented; other facets retain independent priors.}
 }
 \value{
 bmfrm_spec object with model specification

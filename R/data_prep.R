@@ -2,10 +2,13 @@
 #'
 #' @param spec bmfrm_spec object from parse_bmfrm_formula()
 #' @param data data.frame with original data
+#' @param priors Optional prior specifications; otherwise use priors stored in
+#'   spec, or the defaults. Use the same priors for build_stan_code().
 #'
 #' @return list with stan_data, data_clean, and facet_labels
 #' @export
-prepare_data_bmfrm <- function(spec, data) {
+prepare_data_bmfrm <- function(spec, data, priors = NULL) {
+  spec <- resolve_bmfrm_spec(spec, priors)
   
   # Validate spec
   validate_spec(spec, data)

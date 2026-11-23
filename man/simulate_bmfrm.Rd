@@ -12,7 +12,7 @@ simulate_bmfrm(
   parameters = NULL,
   nsim = 1L,
   seed = NULL,
-  model = NULL
+  hierarchical = character()
 )
 }
 \arguments{
@@ -25,22 +25,25 @@ simulate_bmfrm(
 \item{priors}{List of prior specifications; NULL uses package defaults.}
 
 \item{parameters}{NULL or a list with theta, each other facet, and tau.
-With an explicit model, also supply mu_theta and sigma_theta.}
+With hierarchical ability, also supply mu_theta and sigma_theta.}
 
 \item{nsim}{Number of simulated datasets.}
 
 \item{seed}{Optional seed, restored on exit.}
 
-\item{model}{Optional explicit rsm_model(); NULL retains the historical priors.}
+\item{hierarchical}{Names of facets with hierarchical distributions; currently
+only "person" is implemented. Its population uses prior classes mean and sd
+with facet = "person". The default character(0) retains independent priors.}
 }
 \value{
 A bmfrm_simulation with y_rep (simulations by ratings), generating
 parameters, facet_labels, specification, and data for nsim = 1.
 }
 \description{
-With parameters = NULL, sample each raw effect from its specified prior and
-apply the same centering as Stan. This supports normal and student_t priors
-with literal numeric arguments. Other Stan prior expressions are rejected.
+With parameters = NULL, generate parameters and ratings from the same priors
+and constraints used by Stan. Independent raw-scale priors support normal and
+student_t numeric literals. Hierarchical ability and marginal scaling use
+Gaussian zero-sum blocks and the declared population priors.
 Fixed parameters must already satisfy the constraints. Unnamed vectors follow
 facet_labels order; named vectors are matched to the original facet labels.
 }

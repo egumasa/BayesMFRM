@@ -7,7 +7,8 @@
 get_default_priors(
   facets_main = c("person", "item", "rater"),
   facets_bias = NULL,
-  family = "rsm"
+  family = "rsm",
+  hierarchical = character()
 )
 }
 \arguments{
@@ -16,6 +17,9 @@ get_default_priors(
 \item{facets_bias}{vector of bias facet names}
 
 \item{family}{model family: "rsm" or "pcm"}
+
+\item{hierarchical}{Names of facets with hierarchical distributions. Currently
+only "person" is supported; character(0) retains independent priors.}
 }
 \value{
 list of bmfrm_prior objects
