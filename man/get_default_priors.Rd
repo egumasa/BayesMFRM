@@ -6,13 +6,16 @@
 \usage{
 get_default_priors(
   facets_main = c("person", "item", "rater"),
-  facets_bias = NULL
+  facets_bias = NULL,
+  family = "rsm"
 )
 }
 \arguments{
 \item{facets_main}{vector of main facet names}
 
 \item{facets_bias}{vector of bias facet names}
+
+\item{family}{model family: "rsm" or "pcm"}
 }
 \value{
 list of bmfrm_prior objects

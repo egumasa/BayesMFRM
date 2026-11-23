@@ -1,64 +1,45 @@
-#' Compute residual correlations across criteria/items
+#' Compute residual correlations across items with explicit observation pairing
 #'
-#' This function analyzes correlations of residuals across criteria/items,
-#' which can help identify multidimensionality or other model violations.
-#'
-#' @param resid_tbl tibble from extract_residuals() containing residuals
-#' @param person_facet name of person facet (default: "person")
-#' @param item_facet name of item/criterion facet (default: "item")
-#'
-#' @return correlation matrix or tibble with residual correlations
+#' These are descriptive Pearson correlations, not calibrated tests of local
+#' independence. Repeated ratings require an explicit pairing or averaging rule.
+#' @param resid_tbl Residual table.
+#' @param person_facet Person column.
+#' @param item_facet Item column.
+#' @param unit_facets Columns identifying a comparable unit, e.g. person and rater.
+#' @param aggregate How to handle repeated unit-item cells: error or mean.
+#' @return A residual_cor object including pair-specific observation counts.
 #' @export
-residual_cor_criteria <- function(resid_tbl, 
-                                  person_facet = "person", 
-                                  item_facet = "item") {
-  
-  # Check required columns exist
-  required_cols <- c(person_facet, item_facet, "resid")
-  missing_cols <- setdiff(required_cols, names(resid_tbl))
-  if (length(missing_cols) > 0) {
-    stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+residual_cor_criteria <- function(resid_tbl, person_facet = "person", item_facet = "item",
+                                  unit_facets = person_facet, aggregate = c("error", "mean")) {
+  aggregate <- match.arg(aggregate)
+  needed <- unique(c(unit_facets, item_facet, "resid"))
+  if (!length(unit_facets) || item_facet %in% unit_facets) stop("unit_facets must identify units separately from items")
+  if (!all(needed %in% names(resid_tbl))) stop("Missing required columns: ", paste(setdiff(needed, names(resid_tbl)), collapse = ", "))
+  dat <- resid_tbl[, needed, drop = FALSE]
+  keys <- c(unit_facets, item_facet)
+  if (anyNA(dat[keys])) stop("Missing values in residual pairing columns")
+  if (!is.numeric(dat$resid)) stop("resid must be numeric")
+  if (anyDuplicated(dat[keys])) {
+    if (aggregate == "error") stop("Repeated unit-item ratings: specify unit_facets (e.g. person and rater) or aggregate = 'mean'")
+    dat <- dat %>% dplyr::group_by(dplyr::across(dplyr::all_of(keys))) %>%
+      dplyr::summarise(resid = mean(resid, na.rm = TRUE), .groups = "drop")
   }
-  
-  # Create wide format: one row per person, one column per item
-  crit_wide <- resid_tbl %>%
-    dplyr::select(dplyr::all_of(c(person_facet, item_facet, "resid"))) %>%
-    dplyr::distinct() %>%
-    tidyr::pivot_wider(
-      names_from = !!rlang::sym(item_facet),
-      values_from = resid,
-      names_prefix = "item_"
-    )
-  
-  # Remove person column for correlation
-  cor_data <- crit_wide %>%
-    dplyr::select(-!!rlang::sym(person_facet))
-  
-  # Compute correlation matrix
-  crit_cor <- stats::cor(cor_data, use = "pairwise.complete.obs")
-  
-  # Add item labels as row/column names
-  item_names <- gsub("item_", "", colnames(cor_data))
-  rownames(crit_cor) <- item_names
-  colnames(crit_cor) <- item_names
-  
-  # Return both matrix and tidy format
-  structure(
-    list(
-      cor_matrix = crit_cor,
-      cor_tidy = as.data.frame(crit_cor) %>%
-        tibble::rownames_to_column("item1") %>%
-        tidyr::pivot_longer(
-          cols = -item1,
-          names_to = "item2", 
-          values_to = "correlation"
-        ) %>%
-        dplyr::filter(item1 != item2),  # Remove diagonal
-      n_pairs = nrow(cor_data),
-      method = "Pearson correlation of residuals"
-    ),
-    class = "residual_cor"
-  )
+  wide <- tidyr::pivot_wider(dat, id_cols = dplyr::all_of(unit_facets),
+                            names_from = dplyr::all_of(item_facet), values_from = "resid",
+                            names_prefix = "item_")
+  values <- as.matrix(wide[, setdiff(names(wide), unit_facets), drop = FALSE])
+  if (ncol(values) < 2L || nrow(values) < 2L) stop("Residual correlations require at least two items and two units")
+  cors <- stats::cor(values, use = "pairwise.complete.obs")
+  counts <- crossprod(!is.na(values))
+  labels <- sub("^item_", "", colnames(values))
+  dimnames(cors) <- dimnames(counts) <- list(labels, labels)
+  tidy <- as.data.frame(cors) %>% tibble::rownames_to_column("item1") %>%
+    tidyr::pivot_longer(cols = -item1, names_to = "item2", values_to = "correlation") %>%
+    dplyr::filter(item1 != item2)
+  tidy$n_pairs <- counts[cbind(match(tidy$item1, labels), match(tidy$item2, labels))]
+  structure(list(cor_matrix = cors, cor_tidy = tidy, n_pairs = nrow(values),
+                 pair_counts = counts, unit_facets = unit_facets, aggregation = aggregate,
+                 method = "Descriptive Pearson correlation of residuals"), class = "residual_cor")
 }
 
 #' Print method for residual correlation results

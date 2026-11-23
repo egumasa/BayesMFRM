@@ -14,178 +14,35 @@
 #'
 #' @return cmdstanr fit object
 #' @export
-fit_cmdstan_cached <- function(
-  model,           # compiled cmdstan_model
-  data,            # list passed to model$sample()
-  file,            # path to .rds cache file
-  refit = c("never", "always", "on_change"),
-  seed = NULL,
-  chains = 4,
-  parallel_chains = chains,
-  ...              # additional cmdstanr::sample() args
-) {
+fit_cmdstan_cached <- function(model, data, file, refit = c("never", "always", "on_change"),
+                               seed = NULL, chains = 4, parallel_chains = chains, ...) {
   refit <- match.arg(refit)
-
-  # ---- helpers ----
-  compute_hash <- function(model, data) {
-    digest::digest(list(code = model$code(), data = data))
-  }
-
-  get_model_name_safe <- function(model) {
-    md <- try(model$metadata(), silent = TRUE)
-    if (inherits(md, "try-error") || is.null(md$model_name)) {
-      return(NA_character_)
-    } else {
-      return(md$model_name)
-    }
-  }
-
-  # ---- ensure parent folder exists ----
+  dots <- list(...)
+  if (length(dots) && (is.null(names(dots)) || any(names(dots) == ""))) stop("Sampling arguments must be named")
+  if (any(c("data", "seed", "chains", "parallel_chains", "output_dir") %in% names(dots))) stop("Reserved sampling argument supplied twice")
+  sampling <- c(list(seed = seed, chains = chains, parallel_chains = parallel_chains), dots[order(names(dots))])
+  signature <- list(schema = 2L, code = model$code(), data = data, sampling = sampling,
+                    cmdstan = tryCatch(as.character(cmdstanr::cmdstan_version()), error = function(e) NA_character_))
+  current_hash <- digest::digest(signature)
   dir.create(dirname(file), recursive = TRUE, showWarnings = FALSE)
-
-  # ---- persistent CSV directory ----
   csv_dir <- file.path(dirname(file), "csv")
   dir.create(csv_dir, recursive = TRUE, showWarnings = FALSE)
-
-  # ---- current model signature ----
-  current_hash       <- compute_hash(model, data)
-  current_model_name <- get_model_name_safe(model)
-
-  # -------------------------------------------------------------------
-  # Case 1: Explicit refit = "always"
-  # -------------------------------------------------------------------
-  if (refit == "always") {
-    message("Refitting model (refit = 'always')...")
-    fit <- model$sample(
-      data = data,
-      seed = seed,
-      output_dir = csv_dir,
-      chains = chains,
-      parallel_chains = parallel_chains,
-      ...
-    )
-
-    meta <- list(
-      hash       = current_hash,
-      model_name = current_model_name
-    )
-
-    saveRDS(list(fit = fit, meta = meta), file = file)
-    return(fit)
-  }
-
-  # -------------------------------------------------------------------
-  # Case 2: Cached file exists → validate before reuse
-  # -------------------------------------------------------------------
-  if (file.exists(file)) {
+  if (file.exists(file) && refit != "always") {
     obj <- readRDS(file)
-
-    # New-style object with meta
-    if (is.list(obj) && !is.null(obj$fit) && !is.null(obj$meta$hash)) {
-
-      cached_hash       <- obj$meta$hash
-      cached_model_name <- obj$meta$model_name %||% NA_character_
-
-      # --- safety check: model name mismatch ---
-      if (!is.na(current_model_name) &&
-          !is.na(cached_model_name) &&
-          !identical(current_model_name, cached_model_name)) {
-
-        stop(
-          "Cached file '", file, "' was created for model '", cached_model_name,
-          "', but current model is '", current_model_name, "'.\n",
-          "To avoid contamination, please use a different 'file' path or delete the old cache."
-        )
-      }
-
-      # --- safety check: hash mismatch ---
-      if (!identical(cached_hash, current_hash)) {
-        if (refit == "never") {
-          stop(
-            "Cached file '", file, "' does not match current model+data hash, ",
-            "but refit = 'never'.\n",
-            "Refusing to reuse potentially contaminated cache. ",
-            "Use refit = 'on_change' or 'always', or delete the file."
-          )
-        }
-
-        # refit == "on_change"
-        message("Model or data changed → refitting (refit = 'on_change').")
-        fit <- model$sample(
-          data = data,
-          seed = seed,
-          output_dir = csv_dir,
-          chains = chains,
-          parallel_chains = parallel_chains,
-          ...
-        )
-
-        meta <- list(
-          hash       = current_hash,
-          model_name = current_model_name
-        )
-
-        saveRDS(list(fit = fit, meta = meta), file = file)
-        return(fit)
-      }
-
-      # --- hashes match → safe to reuse ---
-      message("Loading cached fit (model & data unchanged).")
+    matches <- is.list(obj) && identical(obj$meta$schema, 2L) && identical(obj$meta$hash, current_hash)
+    files <- if (matches) tryCatch(obj$fit$output_files(), error = function(e) character()) else character()
+    available <- length(files) > 0L && all(file.exists(files))
+    if (matches && available) {
+      message("Loading cached fit (model, data, and sampling settings unchanged).")
       return(obj$fit)
     }
-
-    # -----------------------------------------------------------------
-    # Old-style RDS: just a CmdStanMCMC object, no meta
-    # -----------------------------------------------------------------
-    if (refit == "never") {
-      message("Loading old-style cached fit (no meta; refit = 'never'). ",
-              "Cannot fully verify contamination, use with care.")
-      return(obj)
-    }
-
-    if (refit == "on_change") {
-      message("Migrating old cached fit (no meta) → wrapping & adding hash (no refit).")
-
-      # Ensure CSVs exist
-      missing <- !file.exists(obj$output_files())
-      if (any(missing)) {
-        stop("Old cached fit refers to missing CSV files. You must refit the model.")
-      }
-
-      meta <- list(
-        hash       = current_hash,
-        model_name = current_model_name
-      )
-
-      obj_new <- list(fit = obj, meta = meta)
-      saveRDS(obj_new, file = file)
-      return(obj_new$fit)
-    }
-  } else {
-    message("No cached file found → fitting model.")
+    if (refit == "never") stop("Cached fit cannot be verified or its output files are missing; use refit = 'on_change' or 'always'")
   }
-
-  # -------------------------------------------------------------------
-  # Case 3: Must refit (no cache, or migrated/invalid)
-  # -------------------------------------------------------------------
-  message("Refitting model...")
-  fit <- model$sample(
-    data = data,
-    seed = seed,
-    output_dir = csv_dir,
-    chains = chains,
-    parallel_chains = parallel_chains,
-    ...
-  )
-
-  meta <- list(
-    hash       = current_hash,
-    model_name = current_model_name
-  )
-
+  message("Fitting model and saving verified cache...")
+  fit <- do.call(model$sample, c(list(data = data, output_dir = csv_dir), sampling))
+  meta <- list(schema = 2L, hash = current_hash, signature = signature)
   saveRDS(list(fit = fit, meta = meta), file = file)
-  return(fit)
+  fit
 }
 
-# Helper for null-coalescing operator
 `%||%` <- function(x, y) if (is.null(x)) y else x

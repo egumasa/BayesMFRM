@@ -3,16 +3,17 @@
 #' @param stan_code character string with Stan code
 #' @param model_name name for the compiled model
 #' @param cache_dir directory for caching compiled models
+#' @param cpp_options Named C++ compilation options passed to cmdstanr.
 #'
 #' @return list with model, hash, stan_file, and cache_file
 #' @export
-compile_bmfrm <- function(stan_code, model_name, cache_dir) {
+compile_bmfrm <- function(stan_code, model_name, cache_dir, cpp_options = list()) {
   
   # Ensure cache directory exists
   dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
   
   # Compute hash of Stan code
-  code_hash <- digest::digest(stan_code)
+  code_hash <- digest::digest(list(stan_code, cpp_options, cmdstanr::cmdstan_version()))
   
   # Build file paths
   stan_file <- file.path(cache_dir, paste0(model_name, "_", code_hash, ".stan"))
@@ -26,11 +27,11 @@ compile_bmfrm <- function(stan_code, model_name, cache_dir) {
   # Check if model is already compiled
   if (file.exists(paste0(stan_file, ".exe")) || file.exists(paste0(tools::file_path_sans_ext(stan_file), ".exe"))) {
     message("Loading cached compiled model...")
-    model <- cmdstanr::cmdstan_model(stan_file)
+    model <- cmdstanr::cmdstan_model(stan_file, cpp_options = cpp_options)
   } else {
     # Compile the model
     message("Compiling Stan model...")
-    model <- cmdstanr::cmdstan_model(stan_file)
+    model <- cmdstanr::cmdstan_model(stan_file, cpp_options = cpp_options)
   }
   
   list(

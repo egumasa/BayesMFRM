@@ -4,7 +4,7 @@
 \alias{run_ppc}
 \title{Run posterior predictive checks}
 \usage{
-run_ppc(fit, y_obs, ndraws = 200, seed = 123)
+run_ppc(fit, y_obs, ndraws = 200, seed = 123, group = NULL)
 }
 \arguments{
 \item{fit}{cmdstanr fit object with y_rep in generated quantities}
@@ -14,6 +14,8 @@ run_ppc(fit, y_obs, ndraws = 200, seed = 123)
 \item{ndraws}{number of draws to use for PPC}
 
 \item{seed}{random seed}
+
+\item{group}{Optional grouping vector for conditional checks.}
 }
 \value{
 list with PPC plots and y_rep subset

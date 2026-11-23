@@ -1,4 +1,9 @@
 ^renv$
 ^renv\.lock$
 ^.*\.Rproj$
+^resources$
+^test$
+^vignette$
+^tools$
+^README\.dev\.md$
 ^\.Rproj\.user$

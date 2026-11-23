@@ -4,13 +4,16 @@
 \alias{check_convergence}
 \title{Check MCMC convergence}
 \usage{
-check_convergence(fit)
+check_convergence(fit, variables = NULL)
 }
 \arguments{
-\item{fit}{cmdstanr fit object}
+\item{fit}{CmdStanMCMC object.}
+
+\item{variables}{Optional parameter names. By default monitor raw model parameters
+where available, avoiding deterministic generated quantities.}
 }
 \value{
-list with convergence information
+Individual diagnostics and a conservative status; this is not a proof of convergence.
 }
 \description{
 Check MCMC convergence

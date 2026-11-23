@@ -64,6 +64,21 @@ print.bmfrm_prior <- function(x, ...) {
   }
 }
 
+#' Combine prior specifications without flattening their fields
+#' @param ... Prior objects or lists of prior objects.
+#' @param recursive Unused; recursive concatenation is not supported.
+#' @return A list of bmfrm_prior objects.
+#' @export
+c.bmfrm_prior <- function(..., recursive = FALSE) {
+  if (recursive) stop("Recursive prior concatenation is not supported")
+  pieces <- lapply(list(...), function(x) {
+    if (inherits(x, "bmfrm_prior")) return(list(x))
+    if (is.list(x) && all(vapply(x, inherits, logical(1), "bmfrm_prior"))) return(x)
+    stop("Combine only prior objects or lists of priors")
+  })
+  unlist(pieces, recursive = FALSE, use.names = FALSE)
+}
+
 #' Get default priors for bmfrm models
 #'
 #' @param facets_main vector of main facet names

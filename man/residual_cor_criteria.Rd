@@ -2,21 +2,31 @@
 % Please edit documentation in R/residual_cor.R
 \name{residual_cor_criteria}
 \alias{residual_cor_criteria}
-\title{Compute residual correlations across criteria/items}
+\title{Compute residual correlations across items with explicit observation pairing}
 \usage{
-residual_cor_criteria(resid_tbl, person_facet = "person", item_facet = "item")
+residual_cor_criteria(
+  resid_tbl,
+  person_facet = "person",
+  item_facet = "item",
+  unit_facets = person_facet,
+  aggregate = c("error", "mean")
+)
 }
 \arguments{
-\item{resid_tbl}{tibble from extract_residuals() containing residuals}
+\item{resid_tbl}{Residual table.}
 
-\item{person_facet}{name of person facet (default: "person")}
+\item{person_facet}{Person column.}
 
-\item{item_facet}{name of item/criterion facet (default: "item")}
+\item{item_facet}{Item column.}
+
+\item{unit_facets}{Columns identifying a comparable unit, e.g. person and rater.}
+
+\item{aggregate}{How to handle repeated unit-item cells: error or mean.}
 }
 \value{
-correlation matrix or tibble with residual correlations
+A residual_cor object including pair-specific observation counts.
 }
 \description{
-This function analyzes correlations of residuals across criteria/items,
-which can help identify multidimensionality or other model violations.
+These are descriptive Pearson correlations, not calibrated tests of local
+independence. Repeated ratings require an explicit pairing or averaging rule.
 }

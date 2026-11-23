@@ -24,7 +24,7 @@ Create a prior specification for bmfrm models
 prior("normal(0, 2)", class = "theta")
 prior("normal(0, 1)", class = "item")
 prior("student_t(3, 0, 1)", class = "rater")
-prior("normal(0, 3)", class = "tau")
+prior("normal(0, 1)", class = "tau")
 
 # Bias prior (requires facet specification)
 prior("normal(0, 0.5)", class = "bias", facet = "rater:item")

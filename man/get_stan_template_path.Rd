@@ -4,7 +4,13 @@
 \alias{get_stan_template_path}
 \title{Get Stan template path}
 \usage{
-get_stan_template_path()
+get_stan_template_path(family = "rsm")
+}
+\arguments{
+\item{family}{Model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)}
+}
+\value{
+Path to the Stan template file
 }
 \description{
 Get Stan template path

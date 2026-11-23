@@ -8,7 +8,8 @@ parse_bmfrm_formula(
   formula,
   data,
   K = NULL,
-  family = "rating_scale",
+  family = "rsm",
+  threshold_facet = NULL,
   model_name = NULL,
   cache_dir = "stan_cache"
 )
@@ -20,7 +21,9 @@ parse_bmfrm_formula(
 
 \item{K}{number of rating categories (if NULL, inferred from data)}
 
-\item{family}{model family (currently only "rating_scale")}
+\item{family}{model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)}
+
+\item{threshold_facet}{for PCM only: which facet gets item-specific thresholds (e.g., "item")}
 
 \item{model_name}{optional model name for caching}
 

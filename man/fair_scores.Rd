@@ -14,5 +14,6 @@ fair_scores(object, summary = TRUE, ...)
 \item{...}{unused}
 }
 \description{
-Extract fair scores
+Person summaries average joint posterior draws over that person's observed
+item mix. They do not standardize different persons to a common item design.
 }

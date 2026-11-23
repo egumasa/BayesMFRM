@@ -1,6 +1,6 @@
 #' Summarize rater × criterion bias effects
 #'
-#' @param fit          cmdstanr fit with parameter bias[I,R]
+#' @param fit          cmdstanr fit with parameter `bias[I,R]`
 #' @param item_labels  optional character vector length I
 #' @param rater_labels optional character vector length R
 #' @param prob_thresh  posterior probability threshold for flagging (e.g., .95)

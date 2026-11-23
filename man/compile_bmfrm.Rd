@@ -4,7 +4,7 @@
 \alias{compile_bmfrm}
 \title{Compile bmfrm Stan model with caching}
 \usage{
-compile_bmfrm(stan_code, model_name, cache_dir)
+compile_bmfrm(stan_code, model_name, cache_dir, cpp_options = list())
 }
 \arguments{
 \item{stan_code}{character string with Stan code}
@@ -12,6 +12,8 @@ compile_bmfrm(stan_code, model_name, cache_dir)
 \item{model_name}{name for the compiled model}
 
 \item{cache_dir}{directory for caching compiled models}
+
+\item{cpp_options}{Named C++ compilation options passed to cmdstanr.}
 }
 \value{
 list with model, hash, stan_file, and cache_file

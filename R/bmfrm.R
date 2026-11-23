@@ -14,6 +14,8 @@
 #' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
 #' @param model_name optional name for the model (auto-generated if NULL)
 #' @param cache_dir directory for caching compiled models and fits
+#' @param design_check How to handle a rank-deficient generated additive RSM: warn, error, or none.
+#' @param cpp_options Named compilation options passed to cmdstanr.
 #' @param save_csvs whether to save MCMC output as CSV files
 #' @param refit refit behavior: "never", "always", or "on_change"
 #' @param iter number of MCMC iterations
@@ -60,6 +62,8 @@ bmfrm <- function(
   model_name = NULL,
   cache_dir = "stan_cache",
   save_csvs = TRUE,
+  design_check = c("warn", "error", "none"),
+  cpp_options = list(),
   refit = c("on_change", "never", "always"),
   iter = 2000,
   warmup = floor(iter / 2),
@@ -72,6 +76,7 @@ bmfrm <- function(
   # Argument validation
   family <- match.arg(family)
   refit <- match.arg(refit)
+  design_check <- match.arg(design_check)
   
   # Check cmdstan availability
   if (!check_cmdstan()) {
@@ -94,6 +99,16 @@ bmfrm <- function(
   message("Preparing data...")
   data_info <- prepare_data_bmfrm(spec, data)
   
+  design_info <- NULL
+  if (design_check != "none" && is.null(stan_file) && family == "rsm" && !length(spec$facets_bias)) {
+    design_info <- check_design_bmfrm(formula, data_info$data_clean, K = spec$K)
+    if (!design_info$identifiable) {
+      msg <- paste0("Rank-deficient RSM design: ", design_info$nullity,
+                    " unidentified direction(s). Proper priors do not establish likelihood identification.")
+      if (design_check == "error") stop(msg) else warning(msg, call. = FALSE)
+    }
+  }
+
   # 3. Validate/set priors
   message("Setting up priors...")
   priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
@@ -112,7 +127,8 @@ bmfrm <- function(
   comp <- compile_bmfrm(
     stan_code = stan_code,
     model_name = spec$model_name,
-    cache_dir = spec$cache_dir
+    cache_dir = spec$cache_dir,
+    cpp_options = cpp_options
   )
   
   # 6. Fit using existing fit_cmdstan_cached()
@@ -142,6 +158,7 @@ bmfrm <- function(
     stan_code_hash = comp$hash
   )
   
+  out$design <- design_info
   message("Model fitting complete!")
   out
 }
@@ -201,50 +218,40 @@ postprocess_bmfrm <- function(fit, spec, data_info, priors, stan_code, stan_code
 }
 
 #' Check MCMC convergence
-#'
-#' @param fit cmdstanr fit object
-#'
-#' @return list with convergence information
+#' @param fit CmdStanMCMC object.
+#' @param variables Optional parameter names. By default monitor raw model parameters
+#'   where available, avoiding deterministic generated quantities.
+#' @return Individual diagnostics and a conservative status; this is not a proof of convergence.
 #' @keywords internal
-check_convergence <- function(fit) {
-  
-  # Get summary for key parameters
-  summ <- fit$summary()
-  
-  # Check R-hat
-  max_rhat <- max(summ$rhat, na.rm = TRUE)
-  rhat_problems <- sum(summ$rhat > 1.01, na.rm = TRUE)
-  
-  # Check effective sample size
-  min_ess_bulk <- min(summ$ess_bulk, na.rm = TRUE)
-  min_ess_tail <- min(summ$ess_tail, na.rm = TRUE)
-  low_ess_bulk <- sum(summ$ess_bulk < 400, na.rm = TRUE)
-  low_ess_tail <- sum(summ$ess_tail < 400, na.rm = TRUE)
-  
-  # Check divergences and other diagnostics
-  diagnostics <- fit$sampler_diagnostics()
-  n_divergent <- sum(diagnostics[,,"divergent__"], na.rm = TRUE)
-  n_max_treedepth <- sum(diagnostics[,,"treedepth__"] >= 10, na.rm = TRUE)
-  
-  # Overall convergence assessment
-  converged <- (
-    max_rhat < 1.01 &&
-    rhat_problems == 0 &&
-    min_ess_bulk >= 400 &&
-    min_ess_tail >= 400 &&
-    n_divergent == 0 &&
-    n_max_treedepth < 0.01 * nrow(summ)
-  )
-  
-  list(
-    converged = converged,
-    max_rhat = max_rhat,
-    rhat_problems = rhat_problems,
-    min_ess_bulk = min_ess_bulk,
-    min_ess_tail = min_ess_tail,
-    low_ess_bulk = low_ess_bulk,
-    low_ess_tail = low_ess_tail,
-    n_divergent = n_divergent,
-    n_max_treedepth = n_max_treedepth
-  )
+check_convergence <- function(fit, variables = NULL) {
+  if (is.null(variables)) {
+    metadata <- fit$metadata()
+    parameter_names <- metadata$stan_variables %||% metadata$model_params
+    parameter_names <- unique(sub("\\[.*$", "", parameter_names))
+    raw <- parameter_names[grepl("_raw$", parameter_names)]
+    if (length(raw)) variables <- raw
+  }
+  summ <- fit$summary(variables, "mean", "sd", "rhat", "ess_bulk", "ess_tail", "mcse_mean")
+  sampler <- fit$diagnostic_summary(quiet = TRUE)
+  chains <- fit$num_chains()
+  required <- c("rhat", "ess_bulk", "ess_tail", "mcse_mean")
+  complete <- all(required %in% names(summ)) && nrow(summ) > 0L &&
+    all(vapply(summ[required], function(x) all(is.finite(x)), logical(1))) &&
+    length(sampler$ebfmi) == chains && all(is.finite(sampler$ebfmi)) &&
+    length(sampler$num_divergent) == chains && all(is.finite(sampler$num_divergent)) &&
+    length(sampler$num_max_treedepth) == chains && all(is.finite(sampler$num_max_treedepth))
+  finite_min <- function(x) if (length(x) && all(is.finite(x))) min(x) else NA_real_
+  finite_max <- function(x) if (length(x) && all(is.finite(x))) max(x) else NA_real_
+  ok <- complete && chains >= 2L && all(summ$rhat < 1.01) &&
+    all(summ$ess_bulk >= 400) && all(summ$ess_tail >= 400) &&
+    all(sampler$num_divergent == 0) && all(sampler$num_max_treedepth == 0) &&
+    all(sampler$ebfmi >= 0.3)
+  list(converged = ok, status = if (!complete || chains < 2L) "incomplete" else if (ok) "ok" else "warning",
+       n_chains = chains, parameters = summ, per_chain = sampler,
+       max_rhat = finite_max(summ$rhat), rhat_problems = sum(summ$rhat >= 1.01, na.rm = TRUE),
+       min_ess_bulk = finite_min(summ$ess_bulk), min_ess_tail = finite_min(summ$ess_tail),
+       low_ess_bulk = sum(summ$ess_bulk < 400, na.rm = TRUE),
+       low_ess_tail = sum(summ$ess_tail < 400, na.rm = TRUE),
+       n_divergent = sum(sampler$num_divergent), n_max_treedepth = sum(sampler$num_max_treedepth),
+       min_ebfmi = finite_min(sampler$ebfmi), max_mcse_mean = finite_max(summ$mcse_mean))
 }

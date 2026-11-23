@@ -30,9 +30,9 @@ print.bmfrm_fit <- function(x, ...) {
   
   cat("\nConvergence:\n")
   if (x$convergence$converged) {
-    cat("  ✓ Model appears to have converged\n")
+    cat("  OK: Model appears to have converged\n")
   } else {
-    cat("  ✗ Potential convergence issues detected\n")
+    cat("  CHECK: Potential convergence issues detected\n")
     cat("    Max R-hat:", round(x$convergence$max_rhat, 3), "\n")
     if (x$convergence$n_divergent > 0) {
       cat("    Divergent transitions:", x$convergence$n_divergent, "\n")
@@ -72,13 +72,16 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   cat("  Max R-hat:", round(object$convergence$max_rhat, 3), "\n")
   cat("  Min ESS (bulk):", object$convergence$min_ess_bulk, "\n")
   cat("  Min ESS (tail):", object$convergence$min_ess_tail, "\n")
+  cat("  Min E-BFMI:", object$convergence$min_ebfmi, "\n")
+  cat("  Max mean MCSE:", object$convergence$max_mcse_mean, "\n")
+  cat("  Maximum-depth hits:", object$convergence$n_max_treedepth, "\n")
   
   if (object$convergence$n_divergent > 0) {
     cat("  Divergent transitions:", object$convergence$n_divergent, "\n")
   }
   
   if (!object$convergence$converged) {
-    cat("  ⚠ Potential convergence issues detected!\n")
+    cat("  Warning: Potential convergence issues detected!\n")
   }
   cat("\n")
   
@@ -144,11 +147,13 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
     }
   }
 
+  attr(res_df, "facet_cols") <- object$spec$facets_main
   res_df
 }
 
 #' Posterior predictive check method for bmfrm_fit objects
 #' @param object bmfrm_fit object
+#' @param group Optional column name in the cleaned data for conditional PPC.
 #' @param type type of PPC ("bars", "stat", or "all")
 #' @param ndraws number of posterior draws
 #' @param seed random seed
@@ -156,19 +161,23 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
 #' @importFrom bayesplot pp_check
 #' @export pp_check.bmfrm_fit
 #' @exportS3Method bayesplot::pp_check bmfrm_fit
-pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws = 200, seed = 123, ...) {
+pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws = 200, seed = 123, group = NULL, ...) {
   
   type <- match.arg(type)
   
   y_obs <- object$data_info$stan_data$X
+  if (!is.null(group)) {
+    if (!is.character(group) || length(group) != 1L || !group %in% names(object$data_info$data_clean)) stop("group must name a column in the fitted data")
+    group <- object$data_info$data_clean[[group]]
+  }
   
   if (type == "all") {
-    return(run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed))
+    return(run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group))
   } else if (type == "bars") {
-    ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed)
+    ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group)
     return(ppc_result$ppc_bars)
   } else if (type == "stat") {
-    ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed)
+    ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group)
     return(list(
       ppc_mean = ppc_result$ppc_mean,
       ppc_var = ppc_result$ppc_var
@@ -220,8 +229,8 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
   }
   
   # Extract parameter summary
-  param_summary <- object$fit$summary(param_name, 
-                                     ~quantile(.x, probs = probs))
+  param_summary <- object$fit$summary(param_name, "mean", "sd",
+                                     ~stats::quantile(.x, probs = probs))
   
   # Get original labels
   labels <- object$data_info$facet_labels[[facet]]
@@ -247,6 +256,9 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 }
 
 #' Extract fair scores
+#'
+#' Person summaries average joint posterior draws over that person's observed
+#' item mix. They do not standardize different persons to a common item design.
 #' @param object bmfrm_fit object
 #' @param summary whether to return summary or observation-level scores
 #' @param ... unused
@@ -258,32 +270,27 @@ fair_scores <- function(object, summary = TRUE, ...) {
 #' @export
 fair_scores.bmfrm_fit <- function(object, summary = TRUE, ...) {
   
-  # Extract mu_fair from generated quantities
-  mu_fair_summary <- object$fit$summary("mu_fair")
-  
-  # Build observation-level data
   obs_data <- object$data_info$data_clean
-  
-  # Add fair scores
-  obs_data$mu_fair <- mu_fair_summary$mean
-  obs_data$mu_fair_sd <- mu_fair_summary$sd
-  
-  if (!summary) {
-    return(obs_data)
-  }
-  
-  # Person-level summary
-  person_summary <- obs_data %>%
-    dplyr::group_by(.data[[object$spec$facets_main[1]]]) %>%  # assumes first facet is person
-    dplyr::summarise(
-      n_obs = dplyr::n(),
-      mean_score = mean(.data[[object$spec$response]], na.rm = TRUE),
-      mean_fair_score = mean(mu_fair, na.rm = TRUE),
-      sd_fair_score = sqrt(mean(mu_fair_sd^2)),  # approximate
-      .groups = "drop"
-    )
-  
-  person_summary
+  draws <- unclass(object$fit$draws("mu_fair", format = "matrix"))
+  index <- as.integer(sub(".*\\[([0-9]+)\\]", "\\1", colnames(draws)))
+  draws <- draws[, order(index), drop = FALSE]
+  if (ncol(draws) != nrow(obs_data)) stop("mu_fair draws do not match fitted observations")
+  obs_data$mu_fair <- colMeans(draws)
+  obs_data$mu_fair_sd <- apply(draws, 2L, stats::sd)
+  if (!summary) return(obs_data)
+  labels <- object$data_info$facet_labels$person
+  rows <- lapply(labels, function(label) {
+    idx <- which(as.character(obs_data$person) == label)
+    if (!length(idx)) return(NULL)
+    aggregate_draws <- rowMeans(draws[, idx, drop = FALSE])
+    data.frame(person = label, n_obs = length(idx),
+               mean_score = mean(obs_data[[object$spec$response]][idx]),
+               mean_fair_score = mean(aggregate_draws), sd_fair_score = stats::sd(aggregate_draws),
+               lower_95 = unname(stats::quantile(aggregate_draws, .025)),
+               upper_95 = unname(stats::quantile(aggregate_draws, .975)))
+  })
+  tibble::as_tibble(do.call(rbind, rows))
+
 }
 
 #' Extract facet fit statistics
@@ -336,7 +343,7 @@ facet_fit.bmfrm_fit <- function(object, facet, ...) {
   fit_stats <- fit_stats %>%
     dplyr::select(facet_value, label, n_obs, infit_msq, outfit_msq,
                   infit_lo, infit_hi, outfit_lo, outfit_hi,
-                  infit_zstd, outfit_zstd, everything())
+                  infit_zstd, outfit_zstd, dplyr::everything())
   
   fit_stats
 }

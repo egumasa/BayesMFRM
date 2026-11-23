@@ -80,6 +80,12 @@ prepare_data_bmfrm <- function(spec, data) {
     }
   }
   
+  response <- df[[spec$response]]
+  validate_category_count(spec$K)
+  if (!is.numeric(response) || any(!is.finite(response)) || any(response != floor(response))) {
+    stop("Response must contain finite integer scores")
+  }
+
   # 5. Build stan_data list
   stan_data <- list(
     N = nrow(df),
@@ -166,7 +172,7 @@ check_data_suitability <- function(data, response, facets) {
   results$facet_info <- facet_info
   
   # Design matrix sparsity
-  design_complete <- nrow(expand.grid(lapply(facets, function(f) unique(data[[f]]))))
+  design_complete <- prod(vapply(facets, function(f) length(unique(data[[f]])), integer(1)))
   design_observed <- nrow(unique(data[facets]))
   results$design_sparsity <- 1 - (design_observed / design_complete)
   

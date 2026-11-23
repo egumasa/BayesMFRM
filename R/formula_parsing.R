@@ -79,6 +79,12 @@ parse_bmfrm_formula <- function(formula,
     }
   }
   
+  validate_category_count(K)
+  resp <- data[[response_name]]
+  if (!is.numeric(resp) || any(!is.finite(resp[!is.na(resp)])) ||
+      any(resp != floor(resp), na.rm = TRUE)) stop("Response must contain finite integer scores")
+  if (any(resp < 1 | resp > K, na.rm = TRUE)) stop("Response values must be between 1 and K")
+
   # Generate model name if not provided
   if (is.null(model_name)) {
     # Create a hash based on formula and facets

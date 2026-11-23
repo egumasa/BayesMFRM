@@ -5,3 +5,9 @@
 .httr-oauth
 .DS_Store
 .quarto
+stan_cache/
+.cache/
+*.Rcheck/
+*.tar.gz
+renv/library/
+renv/staging/

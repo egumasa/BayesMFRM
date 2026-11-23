@@ -10,10 +10,13 @@ bmfrm(
   K = NULL,
   priors = NULL,
   stan_file = NULL,
-  family = c("rating_scale", "partial_credit"),
+  family = c("rsm", "pcm"),
+  threshold_facet = NULL,
   model_name = NULL,
   cache_dir = "stan_cache",
   save_csvs = TRUE,
+  design_check = c("warn", "error", "none"),
+  cpp_options = list(),
   refit = c("on_change", "never", "always"),
   iter = 2000,
   warmup = floor(iter/2),
@@ -34,13 +37,20 @@ bmfrm(
 
 \item{stan_file}{optional path to a hardcoded Stan file (bypasses code generation)}
 
-\item{family}{model family ("rating_scale" for v0.1)}
+\item{family}{model family: "rsm" (Rating Scale Model with shared thresholds) or
+"pcm" (Partial Credit Model with facet-specific thresholds)}
+
+\item{threshold_facet}{for PCM only: which facet gets item-specific thresholds (e.g., "item")}
 
 \item{model_name}{optional name for the model (auto-generated if NULL)}
 
 \item{cache_dir}{directory for caching compiled models and fits}
 
 \item{save_csvs}{whether to save MCMC output as CSV files}
+
+\item{design_check}{How to handle a rank-deficient generated additive RSM: warn, error, or none.}
+
+\item{cpp_options}{Named compilation options passed to cmdstanr.}
 
 \item{refit}{refit behavior: "never", "always", or "on_change"}
 
@@ -66,8 +76,12 @@ and optional bias terms.
 }
 \examples{
 \dontrun{
-# Basic 3-facet model
-fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6)
+# Basic 3-facet RSM model (shared thresholds)
+fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6, family = "rsm")
+
+# PCM model with item-specific thresholds
+fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6,
+             family = "pcm", threshold_facet = "item")
 
 # Model with bias term
 fit <- bmfrm(score ~ person + item + rater + rater:item, data = ratings)
@@ -80,7 +94,7 @@ priors <- c(
   prior("normal(0, 0.5)", class = "bias", facet = "rater:item"),
   prior("normal(0, 3)", class = "tau")
 )
-fit <- bmfrm(score ~ person + item + rater + rater:item, 
+fit <- bmfrm(score ~ person + item + rater + rater:item,
              data = ratings, priors = priors)
 }
 }

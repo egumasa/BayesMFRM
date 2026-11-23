@@ -4,7 +4,7 @@
 \alias{validate_priors}
 \title{Validate a list of priors}
 \usage{
-validate_priors(priors, facets_main, facets_bias = NULL)
+validate_priors(priors, facets_main, facets_bias = NULL, family = "rsm")
 }
 \arguments{
 \item{priors}{list of bmfrm_prior objects or NULL}
@@ -12,6 +12,8 @@ validate_priors(priors, facets_main, facets_bias = NULL)
 \item{facets_main}{vector of main facet names}
 
 \item{facets_bias}{vector of bias facet names}
+
+\item{family}{model family: "rsm" or "pcm"}
 }
 \value{
 validated list of priors

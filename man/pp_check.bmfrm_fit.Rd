@@ -9,6 +9,7 @@
   type = c("bars", "stat", "all"),
   ndraws = 200,
   seed = 123,
+  group = NULL,
   ...
 )
 }
@@ -20,6 +21,8 @@
 \item{ndraws}{number of posterior draws}
 
 \item{seed}{random seed}
+
+\item{group}{Optional column name in the cleaned data for conditional PPC.}
 
 \item{...}{unused}
 }
