@@ -23,6 +23,7 @@ bmfrm(
   chains = 4,
   cores = getOption("mc.cores", 1L),
   seed = NULL,
+  model = NULL,
   ...
 )
 }
@@ -63,6 +64,10 @@ bmfrm(
 \item{cores}{number of CPU cores to use}
 
 \item{seed}{random seed}
+
+\item{model}{Optional rsm_model() with explicit isometric Gaussian priors.
+NULL retains historical raw-centered priors. Only generated additive RSM
+is supported; do not combine with priors or stan_file.}
 
 \item{...}{additional arguments passed to cmdstanr::sample()}
 }

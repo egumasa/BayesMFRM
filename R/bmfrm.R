@@ -23,6 +23,9 @@
 #' @param chains number of MCMC chains
 #' @param cores number of CPU cores to use
 #' @param seed random seed
+#' @param model Optional rsm_model() with explicit isometric Gaussian priors.
+#'   NULL retains historical raw-centered priors. Only generated additive RSM
+#'   is supported; do not combine with priors or stan_file.
 #' @param ... additional arguments passed to cmdstanr::sample()
 #'
 #' @return bmfrm_fit object containing the fitted model and metadata
@@ -70,6 +73,7 @@ bmfrm <- function(
   chains = 4,
   cores = getOption("mc.cores", 1L),
   seed = NULL,
+  model = NULL,
   ...
 ) {
 
@@ -77,6 +81,7 @@ bmfrm <- function(
   family <- match.arg(family)
   refit <- match.arg(refit)
   design_check <- match.arg(design_check)
+  if (!is.null(model) && (!is.null(priors) || !is.null(stan_file))) stop("Use model without priors or stan_file")
   
   # Check cmdstan availability
   if (!check_cmdstan()) {
@@ -94,6 +99,7 @@ bmfrm <- function(
     model_name = model_name,
     cache_dir = cache_dir
   )
+  spec$rsm_model <- bind_rsm_model(model, spec)
   
   # 2. Prepare data → stan_data + facet labels  
   message("Preparing data...")
@@ -111,7 +117,7 @@ bmfrm <- function(
 
   # 3. Validate/set priors
   message("Setting up priors...")
-  priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
+  if (is.null(spec$rsm_model)) priors <- validate_priors(priors, spec$facets_main, spec$facets_bias, spec$family)
   
   # 4. Generate or use provided Stan code
   if (is.null(stan_file)) {
@@ -177,7 +183,7 @@ bmfrm <- function(
 postprocess_bmfrm <- function(fit, spec, data_info, priors, stan_code, stan_code_hash) {
   
   # Check convergence
-  convergence_info <- check_convergence(fit)
+  convergence_info <- check_convergence(fit, variables = rsm_diagnostic_variables(spec, data_info))
   
   # Create bmfrm_fit object
   out <- structure(
@@ -197,6 +203,7 @@ postprocess_bmfrm <- function(fit, spec, data_info, priors, stan_code, stan_code
       
       # Priors used
       priors = priors,
+      model = spec$rsm_model,
       
       # Convergence diagnostics
       convergence = convergence_info,

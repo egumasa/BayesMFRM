@@ -8,6 +8,7 @@ print.bmfrm_fit <- function(x, ...) {
   
   cat("Formula:", deparse(x$spec$formula), "\n")
   cat("Family: ", x$spec$family, "\n")
+  if (!is.null(x$model)) print(x$model)
   cat("Observations:", x$data_info$stan_data$N, "\n")
   cat("Rating categories: 1 to", x$spec$K, "\n\n")
   
@@ -62,6 +63,7 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   # Model info
   cat("Formula:", deparse(object$spec$formula), "\n")
   cat("Family: ", object$spec$family, "\n") 
+  if (!is.null(object$model)) print(object$model)
   cat("Observations:", object$data_info$stan_data$N, "\n")
   cat("Rating categories: 1 to", object$spec$K, "\n\n")
   

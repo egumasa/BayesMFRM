@@ -4,7 +4,7 @@
 \alias{build_stan_code}
 \title{Build Stan code from specification and priors}
 \usage{
-build_stan_code(spec, priors)
+build_stan_code(spec, priors = NULL)
 }
 \arguments{
 \item{spec}{bmfrm_spec object from parse_bmfrm_formula()}

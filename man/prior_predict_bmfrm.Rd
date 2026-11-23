@@ -10,7 +10,8 @@ prior_predict_bmfrm(
   K,
   priors = NULL,
   ndraws = 200L,
-  seed = NULL
+  seed = NULL,
+  model = NULL
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ prior_predict_bmfrm(
 \item{ndraws}{Number of prior predictive datasets.}
 
 \item{seed}{Optional seed, restored on exit.}
+
+\item{model}{Optional explicit rsm_model(); NULL retains the historical priors.}
 }
 \value{
 A bmfrm_simulation. Inspect its y_rep before fitting observed data.

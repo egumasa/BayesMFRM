@@ -54,7 +54,46 @@ residual_cor_criteria(residuals(fit), unit_facets = c("person", "rater"))
 署名がない、設定が異なる、チェーンのCSVが失われたキャッシュは再利用しません。
 開発時の検証結果は隣接リポジトリの `reports/validation.md` に記録しています。
 
-## 今後の課題
+## 開発段階と今後の課題
+
+### 第2段階: 明示的な等距RSM仕様
+
+```r
+model <- rsm_model(
+  ability_mean = "normal(0, 2.5)",
+  ability_sd = "lognormal(0, 0.5)",
+  facet_sd = c(item = 1, rater = 1), step_sd = 1
+)
+sim <- simulate_bmfrm(score ~ person + item + rater, plan, K = 6,
+                     model = model, seed = 42)
+fit <- bmfrm(score ~ person + item + rater, sim$data, K = 6,
+             model = model, design_check = "error", seed = 43)
+```
+
+`model = NULL` は従来の生パラメータ事前分布を維持します。新しい仕様は加法的RSMのみで、
+`priors` 引数と併用しません。`ability_mean = 0, ability_sd = 2` のような数値を指定すれば
+対応する母集団パラメータを固定できます。文字列で指定すると平均は正規事前、SDは対数正規事前で推定します。
+
+新仕様では `theta = mu_theta + sigma_theta * z`、`z ~ normal(0, 1)` です。
+J水準の効果は `x = sd * sqrt(J / (J - 1)) * H * z` とし、Hは正規直交和ゼロ基底です。
+したがって全水準の周辺事前分散が `sd^2` になります。1水準の効果と2値RSMのステップは恒等的に0です。
+これは従来の `raw - mean(raw)` と同じ数値SDを代入して同じ事前分布になる変更ではありません。
+生成と推定のモデル指定を揃え、ラベル順序・共分散・固定点対数密度・勾配で検証します。
+
+新仕様のMCMC診断は自由座標と復元したモデルパラメータを確認し、構造的に固定された量を除外します。
+計画の階数検査は直接の能力・facet効果の条件付き予測子を対象とし、母集団平均・SDの
+実用的な識別や精度を保証しません。明示された未観測因子水準も生成・推定・計画検査で保持します。
+
+```sh
+# 独立R数式とStanの対数密度差・解析勾配を固定点で比較（MCMCなし）
+Rscript --vanilla tools/check-rsm-stan.R
+```
+
+この段階の終了条件は、(1) 既存テストを保持、(2) ラベル置換と事前共分散を確認、
+(3) 母集団の推定／固定・2値／多値・1水準の固定点パリティ、(4) 全試行を保持した小規模実推定です。
+一般的な校正や精度改善を確認したという主張には、別途十分なSBC・回復実験が必要です。
+
+### 続く拡充
 
 - PCMの項目効果と項目別閾値の分離を修正し、独立した識別性テストを追加する。
 - 交互作用の生成・要約で使うパラメータ名と出力の契約を統一する。

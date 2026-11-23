@@ -83,7 +83,7 @@ test_that("RSM template has correct structure", {
   rsm_code <- paste(readLines(rsm_path), collapse = "\n")
 
   # Should have vector tau (not ordered, not matrix)
-  expect_true(grepl("vector\\[K-1\\] tau_raw", rsm_code))
+  expect_true(grepl("THRESHOLD_PARAM_DECL", rsm_code))
   # Should NOT have ordered tau
   expect_false(grepl("ordered\\[K-1\\] tau_raw", rsm_code))
   # Should have shared tau indexing
@@ -145,7 +145,7 @@ test_that("build_stan_code generates correct RSM code", {
   stan_code <- build_stan_code(spec, priors)
 
   # Should have vector tau
-  expect_true(grepl("vector\\[K-1\\] tau_raw", stan_code))
+  expect_true(grepl("vector\\[K - 1\\] tau_raw", stan_code))
   # Should have shared tau indexing (no matrix access)
   expect_true(grepl("tau\\[k-1\\]", stan_code))
   expect_false(grepl("tau\\[.*_n, k-1\\]", stan_code))

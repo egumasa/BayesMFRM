@@ -7,3 +7,5 @@
 ^tools$
 ^README\.dev\.md$
 ^\.Rproj\.user$
+^\.cache$
+^stan_cache$

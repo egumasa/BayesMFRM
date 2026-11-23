@@ -11,13 +11,15 @@
 #' @param K Number of categories.
 #' @param priors List of prior specifications; NULL uses package defaults.
 #' @param parameters NULL or a list with theta, each other facet, and tau.
+#'   With an explicit model, also supply mu_theta and sigma_theta.
 #' @param nsim Number of simulated datasets.
 #' @param seed Optional seed, restored on exit.
+#' @param model Optional explicit rsm_model(); NULL retains the historical priors.
 #' @return A bmfrm_simulation with y_rep (simulations by ratings), generating
 #'   parameters, facet_labels, specification, and data for nsim = 1.
 #' @export
 simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
-                           nsim = 1L, seed = NULL) {
+                           nsim = 1L, seed = NULL, model = NULL) {
   validate_category_count(K)
   if (length(nsim) != 1L || !is.finite(nsim) || nsim < 1 || nsim != floor(nsim)) stop("nsim must be a positive integer")
   if (!is.data.frame(design) || !nrow(design)) stop("design must contain rating rows")
@@ -25,16 +27,23 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   fake <- design
   fake[[response]] <- 1L
   spec <- parse_bmfrm_formula(formula, fake, K = K)
+  model <- bind_rsm_model(model, spec)
+  spec$rsm_model <- model
+  if (!is.null(model) && !is.null(priors)) stop("Use model or priors, not both")
   if (length(spec$facets_bias) || !"person" %in% spec$facets_main ||
       any(!spec$facets_main %in% names(design))) stop("Simulation currently supports additive RSM models")
   fs <- lapply(design[spec$facets_main], function(x) if (is.factor(x)) x else factor(x))
   if (any(vapply(fs, anyNA, logical(1)))) stop("Missing values in design facets")
   labels <- lapply(fs, levels)
   ids <- lapply(fs, as.integer)
-  priors <- validate_priors(priors, spec$facets_main, spec$facets_bias)
+  if (is.null(model)) priors <- validate_priors(priors, spec$facets_main, spec$facets_bias)
   param_names <- c(ifelse(spec$facets_main == "person", "theta", spec$facets_main), "tau")
   sizes <- c(lengths(labels), K - 1L)
   names(sizes) <- param_names
+  if (!is.null(model)) {
+    param_names <- c(param_names, "mu_theta", "sigma_theta")
+    sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
+  }
   if (!is.null(parameters)) {
     if (!is.list(parameters) || anyDuplicated(names(parameters)) || !setequal(names(parameters), param_names)) stop("parameters must contain exactly: ", paste(param_names, collapse = ", "))
     parameters <- parameters[param_names]
@@ -45,8 +54,13 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
         if (anyDuplicated(names(x)) || !setequal(names(x), labels[[j]])) stop("Parameter labels do not match: ", param_names[j])
         x <- x[labels[[j]]]
       }
-      if (param_names[j] != "theta" && abs(sum(x)) > 1e-8) stop("Fixed parameter must sum to zero: ", param_names[j])
+      if (!param_names[j] %in% c("theta", "mu_theta", "sigma_theta") && abs(sum(x)) > 1e-8) stop("Fixed parameter must sum to zero: ", param_names[j])
       parameters[[j]] <- unname(x)
+    }
+    if (!is.null(model)) {
+      if (parameters$sigma_theta <= 0) stop("sigma_theta must be positive")
+      if ((!model$ability_mean$estimated && parameters$mu_theta != model$ability_mean$location) ||
+          (!model$ability_sd$estimated && parameters$sigma_theta != model$ability_sd$location)) stop("Fixed population parameters must match model")
     }
   }
   classes <- c(ifelse(spec$facets_main == "person", "theta",
@@ -56,6 +70,7 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   if (anyDuplicated(prior_classes)) stop("Use one prior for each parameter class")
   sample_one <- function() {
     pars <- parameters
+    if (is.null(pars) && !is.null(model)) pars <- sample_rsm_model(model, labels, K)
     if (is.null(pars)) {
       pars <- lapply(seq_along(param_names), function(j) {
         x <- sample_bmfrm_prior(priors[[match(classes[j], prior_classes)]]$spec, sizes[j])
@@ -77,7 +92,7 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   dat[[response]] <- yrep[1L, ]
   structure(list(y_rep = yrep, parameters = lapply(generated, `[[`, "parameters"),
                  data = if (nsim == 1L) dat else NULL, design = design,
-                 facet_labels = labels, spec = spec, priors = priors,
+                 facet_labels = labels, spec = spec, priors = priors, model = model,
                  source = if (is.null(parameters)) "prior" else "fixed", seed = seed),
             class = "bmfrm_simulation")
 }
@@ -87,8 +102,8 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
 #' @param ndraws Number of prior predictive datasets.
 #' @return A bmfrm_simulation. Inspect its y_rep before fitting observed data.
 #' @export
-prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL) {
-  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed)
+prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL, model = NULL) {
+  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, model = model)
 }
 
 with_bmfrm_seed <- function(seed, code) {
@@ -108,9 +123,19 @@ rsm_probabilities <- function(eta, tau) {
 }
 
 sample_bmfrm_prior <- function(spec, n) {
+  p <- parse_bmfrm_prior_literal(spec)
+  distribution <- p$distribution
+  args <- p$args
+  if (distribution == "normal" && length(args) == 2L && args[2L] > 0) return(stats::rnorm(n, args[1L], args[2L]))
+  if (distribution == "student_t" && length(args) == 3L && args[1L] > 0 && args[3L] > 0) return(args[2L] + args[3L] * stats::rt(n, args[1L]))
+  stop("Simulation supports normal(mean, sd) and student_t(df, location, scale) with positive scales")
+}
+
+parse_bmfrm_prior_literal <- function(spec) {
   expr <- tryCatch(str2lang(spec), error = function(e) NULL)
   if (!is.call(expr) || !is.symbol(expr[[1L]])) stop("Unsupported simulation prior: ", spec)
   distribution <- as.character(expr[[1L]])
+  if (any(nzchar(names(as.list(expr)[-1L])))) stop("Prior arguments must be positional numeric literals")
   literal <- function(x) {
     if (is.numeric(x) && length(x) == 1L && is.finite(x)) return(x)
     if (is.call(x) && length(x) == 2L && is.symbol(x[[1L]]) &&
@@ -121,7 +146,5 @@ sample_bmfrm_prior <- function(spec, n) {
     stop("Simulation priors require literal numeric arguments")
   }
   args <- vapply(as.list(expr)[-1L], literal, numeric(1))
-  if (distribution == "normal" && length(args) == 2L && args[2L] > 0) return(stats::rnorm(n, args[1L], args[2L]))
-  if (distribution == "student_t" && length(args) == 3L && args[1L] > 0 && args[3L] > 0) return(args[2L] + args[3L] * stats::rt(n, args[1L]))
-  stop("Simulation supports normal(mean, sd) and student_t(df, location, scale) with positive scales")
+  list(distribution = distribution, args = args)
 }

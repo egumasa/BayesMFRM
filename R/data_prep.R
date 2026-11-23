@@ -40,7 +40,7 @@ prepare_data_bmfrm <- function(spec, data) {
   
   for (f in spec$facets_main) {
     fac_vec    <- df[[f]]
-    fac_factor <- factor(fac_vec)
+    fac_factor <- if (is.factor(fac_vec)) fac_vec else factor(fac_vec)
     idx        <- as.integer(fac_factor)          # 1...J_f
     idx_list[[f]]   <- idx
     J_list[[f]]     <- nlevels(fac_factor)
@@ -97,6 +97,9 @@ prepare_data_bmfrm <- function(spec, data) {
   for (f in spec$facets_main) {
     stan_data[[paste0(f, "_id")]]               <- idx_list[[f]]
     stan_data[[paste0("J_", f)]] <- J_list[[f]]
+  }
+  if (!is.null(spec$rsm_model)) {
+    stan_data <- c(stan_data, rsm_model_data(spec$rsm_model, label_map, spec$K))
   }
   
   # Add bias facet data

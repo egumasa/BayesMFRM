@@ -7,30 +7,29 @@ data {
   array[N] int<lower=1, upper=K> X;   // observed ratings
 
   // {{FACET_DATA_DECL}}
+  // {{RSM_MODEL_DATA}}
 }
 
 parameters {
   // person abilities (always present)
-  vector[J_person] theta_raw;
+  // {{ABILITY_PARAM_DECL}}
 
   // {{FACET_PARAM_DECL}}
 
   // thresholds (shared across all observations, unordered for diagnostic purposes)
-  vector[K-1] tau_raw;
+  // {{THRESHOLD_PARAM_DECL}}
 
   // {{BIAS_PARAM_DECL}}
 }
 
 transformed parameters {
   // person abilities
-  vector[J_person] theta;
-  theta = theta_raw;
+  // {{ABILITY_TRANSFORM}}
 
   // {{FACET_TRANSFORM}}
 
   // thresholds (sum-to-zero constraint for identification)
-  vector[K - 1] tau;
-  tau = tau_raw - mean(tau_raw);
+  // {{THRESHOLD_TRANSFORM}}
 
   // {{BIAS_TRANSFORM}}
 }

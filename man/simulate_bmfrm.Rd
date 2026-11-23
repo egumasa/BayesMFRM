@@ -11,7 +11,8 @@ simulate_bmfrm(
   priors = NULL,
   parameters = NULL,
   nsim = 1L,
-  seed = NULL
+  seed = NULL,
+  model = NULL
 )
 }
 \arguments{
@@ -23,11 +24,14 @@ simulate_bmfrm(
 
 \item{priors}{List of prior specifications; NULL uses package defaults.}
 
-\item{parameters}{NULL or a list with theta, each other facet, and tau.}
+\item{parameters}{NULL or a list with theta, each other facet, and tau.
+With an explicit model, also supply mu_theta and sigma_theta.}
 
 \item{nsim}{Number of simulated datasets.}
 
 \item{seed}{Optional seed, restored on exit.}
+
+\item{model}{Optional explicit rsm_model(); NULL retains the historical priors.}
 }
 \value{
 A bmfrm_simulation with y_rep (simulations by ratings), generating
