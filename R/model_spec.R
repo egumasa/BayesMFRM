@@ -5,7 +5,7 @@ validate_hierarchical <- function(hierarchical, facets_main, facets_bias, family
     stop("hierarchical must be a character vector of unique facet names")
   }
   if (any(!hierarchical %in% facets_main)) stop("hierarchical contains a facet absent from the formula")
-  if (length(hierarchical) && (family != "rsm" || length(facets_bias))) stop("Hierarchical priors support additive RSM only")
+  if (length(hierarchical) && (!family %in% c("rsm", "pcm") || length(facets_bias))) stop("Hierarchical priors support additive RSM/PCM only")
   if (any(hierarchical != "person")) stop("Hierarchical priors currently support only person; other facets are not implemented")
   unname(hierarchical)
 }
@@ -16,11 +16,15 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   spec$hierarchical <- validate_hierarchical(spec$hierarchical %||% character(), spec$facets_main, spec$facets_bias, spec$family)
   priors <- validate_priors(priors %||% spec$priors, spec$facets_main, spec$facets_bias, spec$family, spec$hierarchical)
   spec$priors <- priors
-  spec$rsm_model <- NULL
+  spec$gaussian_model <- NULL
   marginal <- any(vapply(priors, function(p) p$scale == "marginal", logical(1)))
-  if (!length(spec$hierarchical) && !marginal) return(spec)
-  if (spec$family != "rsm" || length(spec$facets_bias) || !"person" %in% spec$facets_main) {
-    stop("Hierarchical priors and marginal scaling support generated additive RSM only")
+  gaussian_pcm <- spec$family == "pcm" && !isTRUE(spec$custom_stan) && !length(spec$facets_bias) && all(vapply(priors, function(p) {
+    x <- tryCatch(parse_bmfrm_prior_literal(p$spec), error = function(e) NULL)
+    !is.null(x) && x$distribution == "normal" && length(x$args) == 2L && x$args[2L] > 0
+  }, logical(1)))
+  if (!length(spec$hierarchical) && !marginal && !gaussian_pcm) return(spec)
+  if (!spec$family %in% c("rsm", "pcm") || length(spec$facets_bias) || !"person" %in% spec$facets_main) {
+    stop("Hierarchical priors and marginal scaling support generated additive RSM/PCM only")
   }
   facets <- setdiff(spec$facets_main, "person")
   reserved <- c("theta", "tau", "mu_theta", "sigma_theta", "N", "K", "X", "log_lik", "y_rep", "mu", "sigma2", "mu_fair")
@@ -46,7 +50,8 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   blocks <- lapply(facets, function(f) get_prior(if (f %in% c("item", "rater")) f else paste0("facet_", f)))
   names(blocks) <- facets
   tau <- get_prior("tau")
-  spec$rsm_model <- list(schema = "bayesmfrm.gaussian_rsm.v2", hierarchical = spec$hierarchical,
+  spec$gaussian_model <- list(schema = "bayesmfrm.gaussian_ordinal.v3", family = spec$family,
+    threshold_facet = spec$threshold_facet, hierarchical = spec$hierarchical,
     ability_mean = mu, ability_sd = sd,
     facet_sd = vapply(blocks, function(p) normal(p)[2L], numeric(1)),
     facet_scale = vapply(blocks, `[[`, character(1), "scale"),
@@ -75,7 +80,7 @@ rsm_prior_basis <- function(n, scale) {
   if (scale == "marginal") isometric_rsm_basis(n) else unname(sum_zero_basis(n))
 }
 
-rsm_model_data <- function(model, labels, K) {
+gaussian_model_data <- function(model, labels, K) {
   mu <- model$ability_mean
   sd <- model$ability_sd
   out <- list(estimate_mu = as.integer(mu$estimated), estimate_sigma = as.integer(sd$estimated),
@@ -89,7 +94,7 @@ rsm_model_data <- function(model, labels, K) {
   out
 }
 
-sample_rsm_model <- function(model, labels, K) {
+sample_gaussian_model <- function(model, labels, K) {
   mu <- model$ability_mean
   sd <- model$ability_sd
   mu <- if (mu$estimated) stats::rnorm(1L, mu$location, mu$scale) else mu$location
@@ -99,7 +104,12 @@ sample_rsm_model <- function(model, labels, K) {
     n <- length(labels[[f]])
     out[[f]] <- as.vector(model$facet_sd[f] * rsm_prior_basis(n, model$facet_scale[[f]]) %*% stats::rnorm(n - 1L))
   }
-  out$tau <- as.vector(model$step_sd * rsm_prior_basis(K - 1L, model$step_scale) %*% stats::rnorm(K - 2L))
+  B <- rsm_prior_basis(K - 1L, model$step_scale)
+  if (model$family == "pcm") {
+    J <- length(labels[[model$threshold_facet]])
+    z <- matrix(stats::rnorm(J * (K - 2L)), J, K - 2L)
+    out$tau <- unname(model$step_sd * z %*% t(B))
+  } else out$tau <- as.vector(model$step_sd * B %*% stats::rnorm(K - 2L))
   if ("person" %in% model$hierarchical) {
     out$mu_theta <- mu
     out$sigma_theta <- sd
@@ -107,8 +117,8 @@ sample_rsm_model <- function(model, labels, K) {
   out
 }
 
-rsm_diagnostic_variables <- function(spec, data_info) {
-  model <- spec$rsm_model
+model_diagnostic_variables <- function(spec, data_info) {
+  model <- spec$gaussian_model
   if (is.null(model)) return(NULL)
   facets <- names(model$facet_sd)[lengths(data_info$facet_labels[names(model$facet_sd)]) > 1L]
   variable <- c("theta", facets, if (spec$K > 2L) "tau",

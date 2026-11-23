@@ -8,6 +8,14 @@
 
 **This is an experimental early version of BayesMFRM. The API may change, and some features may not be fully stable. Use with caution in production environments.**
 
+Development version 0.1.0.9002 corrects PCM identification: step deviations now
+sum to zero **within each threshold-facet level**, separating them from the
+level's overall difficulty. This changes the previous PCM model and its priors;
+old and new PCM estimates should not be combined as results of the same model.
+Use `prior(..., class = "tau")` to set step priors and `scale = "marginal"` for
+the constrained Gaussian step SD. See [local development notes](README.dev.md)
+for equations, prior predictive checks, and current limitations.
+
 ## Overview
 
 BayesMFRM is an R package for fitting Bayesian Many-Facet Rasch Models (MFRM) using Stan. It provides a user-friendly interface similar to brms but specialized for MFRM analysis, producing FACETS-style outputs including rater severity, item difficulty, fair averages, and infit/outfit statistics.

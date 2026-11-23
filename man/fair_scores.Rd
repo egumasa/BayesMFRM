@@ -16,4 +16,6 @@ fair_scores(object, summary = TRUE, ...)
 \description{
 Person summaries average joint posterior draws over that person's observed
 item mix. They do not standardize different persons to a common item design.
+PCM steps on an adjusted facet (rater or interlocutor) require a reference
+step profile, which is not implemented; this case raises an error.
 }

@@ -88,14 +88,20 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   cat("\n")
   
   # Threshold parameters
-  cat("Threshold Parameters:\n")
-  tau_summary <- object$fit$summary("tau")
+  cat("Centered step deviations (tau):\n")
+  tau_summary <- object$fit$summary("tau", "mean", ~stats::quantile(.x, probs = range(probs)))
   for (i in seq_len(nrow(tau_summary))) {
-    cat(sprintf("  tau[%d]: %6.2f [%6.2f, %6.2f]\n",
-                i, 
+    label <- tau_summary$variable[i]
+    if (identical(object$spec$family, "pcm")) {
+      idx <- as.integer(strsplit(gsub("^tau\\[|\\]$", "", label), ",")[[1L]])
+      label <- paste0(label, " (", object$spec$threshold_facet, "=",
+        object$data_info$facet_labels[[object$spec$threshold_facet]][idx[1L]], ", step=", idx[2L], ")")
+    }
+    cat(sprintf("  %s: %6.2f [%6.2f, %6.2f]\n",
+                label,
                 tau_summary$mean[i],
-                tau_summary$q5[i],
-                tau_summary$q95[i]))
+                tau_summary[[3L]][i],
+                tau_summary[[ncol(tau_summary)]][i]))
   }
   cat("\n")
   
@@ -261,6 +267,8 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #'
 #' Person summaries average joint posterior draws over that person's observed
 #' item mix. They do not standardize different persons to a common item design.
+#' PCM steps on an adjusted facet (rater or interlocutor) require a reference
+#' step profile, which is not implemented; this case raises an error.
 #' @param object bmfrm_fit object
 #' @param summary whether to return summary or observation-level scores
 #' @param ... unused
@@ -271,6 +279,9 @@ fair_scores <- function(object, summary = TRUE, ...) {
 
 #' @export
 fair_scores.bmfrm_fit <- function(object, summary = TRUE, ...) {
+  if (identical(object$spec$family, "pcm") && object$spec$threshold_facet %in% c("rater", "interlocutor")) {
+    stop("Fair scores are not defined for PCM steps on an adjusted facet; a reference step profile must be specified first")
+  }
   
   obs_data <- object$data_info$data_clean
   draws <- unclass(object$fit$draws("mu_fair", format = "matrix"))

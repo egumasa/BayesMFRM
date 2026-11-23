@@ -2,7 +2,7 @@
 % Please edit documentation in R/simulate.R
 \name{simulate_bmfrm}
 \alias{simulate_bmfrm}
-\title{Simulate ratings from the generated additive RSM}
+\title{Simulate ratings from generated additive RSM or PCM}
 \usage{
 simulate_bmfrm(
   formula,
@@ -12,7 +12,9 @@ simulate_bmfrm(
   parameters = NULL,
   nsim = 1L,
   seed = NULL,
-  hierarchical = character()
+  hierarchical = character(),
+  family = c("rsm", "pcm"),
+  threshold_facet = NULL
 )
 }
 \arguments{
@@ -34,6 +36,12 @@ With hierarchical ability, also supply mu_theta and sigma_theta.}
 \item{hierarchical}{Names of facets with hierarchical distributions; currently
 only "person" is implemented. Its population uses prior classes mean and sd
 with facet = "person". The default character(0) retains independent priors.}
+
+\item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
+
+\item{threshold_facet}{Required for PCM. Its step deviations sum to zero within
+each level. Fixed tau must be a levels-by-(K-1) matrix; optional row names
+match facet labels and column names match step numbers 1,...,K-1.}
 }
 \value{
 A bmfrm_simulation with y_rep (simulations by ratings), generating

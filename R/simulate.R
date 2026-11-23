@@ -1,4 +1,4 @@
-#' Simulate ratings from the generated additive RSM
+#' Simulate ratings from generated additive RSM or PCM
 #'
 #' With parameters = NULL, generate parameters and ratings from the same priors
 #' and constraints used by Stan. Independent raw-scale priors support normal and
@@ -18,22 +18,29 @@
 #' @param hierarchical Names of facets with hierarchical distributions; currently
 #'   only "person" is implemented. Its population uses prior classes mean and sd
 #'   with facet = "person". The default character(0) retains independent priors.
+#' @param family "rsm" for common steps or "pcm" for steps within threshold_facet.
+#' @param threshold_facet Required for PCM. Its step deviations sum to zero within
+#'   each level. Fixed tau must be a levels-by-(K-1) matrix; optional row names
+#'   match facet labels and column names match step numbers 1,...,K-1.
 #' @return A bmfrm_simulation with y_rep (simulations by ratings), generating
 #'   parameters, facet_labels, specification, and data for nsim = 1.
 #' @export
 simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
-                           nsim = 1L, seed = NULL, hierarchical = character()) {
+                           nsim = 1L, seed = NULL, hierarchical = character(),
+                           family = c("rsm", "pcm"), threshold_facet = NULL) {
+  family <- match.arg(family)
   validate_category_count(K)
   if (length(nsim) != 1L || !is.finite(nsim) || nsim < 1 || nsim != floor(nsim)) stop("nsim must be a positive integer")
   if (!is.data.frame(design) || !nrow(design)) stop("design must contain rating rows")
   response <- all.vars(formula)[1L]
   fake <- design
   fake[[response]] <- 1L
-  spec <- resolve_bmfrm_spec(parse_bmfrm_formula(formula, fake, K = K, hierarchical = hierarchical), priors)
-  model <- spec$rsm_model
+  spec <- resolve_bmfrm_spec(parse_bmfrm_formula(formula, fake, K = K, hierarchical = hierarchical,
+    family = family, threshold_facet = threshold_facet), priors)
+  model <- spec$gaussian_model
   priors <- spec$priors
   if (length(spec$facets_bias) || !"person" %in% spec$facets_main ||
-      any(!spec$facets_main %in% names(design))) stop("Simulation currently supports additive RSM models")
+      any(!spec$facets_main %in% names(design))) stop("Simulation currently supports additive RSM/PCM models")
   fs <- lapply(design[spec$facets_main], function(x) if (is.factor(x)) x else factor(x))
   if (any(vapply(fs, anyNA, logical(1)))) stop("Missing values in design facets")
   labels <- lapply(fs, levels)
@@ -41,6 +48,8 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   param_names <- c(ifelse(spec$facets_main == "person", "theta", spec$facets_main), "tau")
   sizes <- c(lengths(labels), K - 1L)
   names(sizes) <- param_names
+  J_step <- if (family == "pcm") length(labels[[spec$threshold_facet]]) else 1L
+  sizes["tau"] <- J_step * (K - 1L)
   if ("person" %in% hierarchical) {
     param_names <- c(param_names, "mu_theta", "sigma_theta")
     sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
@@ -51,6 +60,21 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
     for (j in seq_along(parameters)) {
       x <- parameters[[j]]
       if (!is.numeric(x) || length(x) != sizes[j] || any(!is.finite(x))) stop("Invalid parameter vector: ", param_names[j])
+      if (param_names[j] == "tau" && family == "pcm") {
+        if (!is.matrix(x) || !identical(dim(x), c(J_step, as.integer(K - 1L)))) stop("PCM tau must have threshold-facet levels as rows and K-1 steps as columns")
+        if (!is.null(rownames(x))) {
+          if (anyDuplicated(rownames(x)) || !setequal(rownames(x), labels[[spec$threshold_facet]])) stop("PCM tau row labels do not match threshold_facet")
+          x <- x[labels[[spec$threshold_facet]], , drop = FALSE]
+        }
+        if (!is.null(colnames(x))) {
+          if (anyDuplicated(colnames(x)) || !setequal(colnames(x), as.character(seq_len(K - 1L)))) stop("PCM tau column names must be step numbers")
+          x <- x[, as.character(seq_len(K - 1L)), drop = FALSE]
+        }
+        if (any(abs(rowSums(x)) > 1e-8)) stop("PCM tau must sum to zero within every threshold-facet level")
+        parameters[[j]] <- unname(x)
+        next
+      }
+      if (!is.null(dim(x))) stop("Non-PCM parameter must be a vector: ", param_names[j])
       if (j <= length(labels) && !is.null(names(x))) {
         if (anyDuplicated(names(x)) || !setequal(names(x), labels[[j]])) stop("Parameter labels do not match: ", param_names[j])
         x <- x[labels[[j]]]
@@ -71,18 +95,21 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   if (anyDuplicated(prior_classes)) stop("Use one prior for each parameter class")
   sample_one <- function() {
     pars <- parameters
-    if (is.null(pars) && !is.null(model)) pars <- sample_rsm_model(model, labels, K)
+    if (is.null(pars) && !is.null(model)) pars <- sample_gaussian_model(model, labels, K)
     if (is.null(pars)) {
       pars <- lapply(seq_along(param_names), function(j) {
         x <- sample_bmfrm_prior(priors[[match(classes[j], prior_classes)]]$spec, sizes[j])
-        if (param_names[j] != "theta") x <- x - mean(x)
+        if (param_names[j] == "tau" && family == "pcm") {
+          x <- matrix(x, J_step, K - 1L)
+          x <- x - rowMeans(x)
+        } else if (param_names[j] != "theta") x <- x - mean(x)
         x
       })
       names(pars) <- param_names
     }
     eta <- pars$theta[ids$person]
     for (f in setdiff(spec$facets_main, "person")) eta <- eta - pars[[f]][ids[[f]]]
-    prob <- rsm_probabilities(eta, pars$tau)
+    prob <- if (family == "pcm") pcm_probabilities(eta, pars$tau[ids[[spec$threshold_facet]], , drop = FALSE]) else rsm_probabilities(eta, pars$tau)
     cum <- t(apply(prob, 1L, cumsum))
     y <- 1L + rowSums(stats::runif(nrow(design)) > cum[, -K, drop = FALSE])
     list(parameters = pars, y = as.integer(y))
@@ -98,14 +125,15 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
             class = "bmfrm_simulation")
 }
 
-#' Generate prior predictive ratings on a planned RSM design
+#' Generate prior predictive ratings on a planned RSM/PCM design
 #' @inheritParams simulate_bmfrm
 #' @param ndraws Number of prior predictive datasets.
 #' @return A bmfrm_simulation. Inspect its y_rep before fitting observed data.
 #' @export
 prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL,
-                               hierarchical = character()) {
-  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, hierarchical = hierarchical)
+                               hierarchical = character(), family = c("rsm", "pcm"), threshold_facet = NULL) {
+  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, hierarchical = hierarchical,
+    family = match.arg(family), threshold_facet = threshold_facet)
 }
 
 with_bmfrm_seed <- function(seed, code) {
@@ -120,6 +148,14 @@ with_bmfrm_seed <- function(seed, code) {
 
 rsm_probabilities <- function(eta, tau) {
   logits <- sweep(outer(eta, 0:length(tau)), 2L, c(0, cumsum(tau)), "-")
+  z <- exp(logits - apply(logits, 1L, max))
+  z / rowSums(z)
+}
+
+pcm_probabilities <- function(eta, tau) {
+  steps <- tau
+  if (ncol(steps) > 1L) for (j in 2:ncol(steps)) steps[, j] <- steps[, j] + steps[, j - 1L]
+  logits <- outer(eta, 0:ncol(steps)) - cbind(0, steps)
   z <- exp(logits - apply(logits, 1L, max))
   z / rowSums(z)
 }

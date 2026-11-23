@@ -95,7 +95,7 @@ test_that("PCM template has correct structure", {
   pcm_code <- paste(readLines(pcm_path), collapse = "\n")
 
   # Should have matrix tau with threshold facet placeholder
-  expect_true(grepl("matrix\\[J_\\{\\{THRESHOLD_FACET\\}\\}, K-1\\] tau_raw", pcm_code))
+  expect_true(grepl("THRESHOLD_PARAM_DECL", pcm_code))
   # Should have facet-specific tau indexing
   expect_true(grepl("tau\\[threshold_n, k-1\\]", pcm_code))
 })
@@ -169,7 +169,7 @@ test_that("build_stan_code generates correct PCM code", {
   stan_code <- build_stan_code(spec, priors)
 
   # Should have matrix tau with item dimension
-  expect_true(grepl("matrix\\[J_item, K-1\\] tau_raw", stan_code))
+  expect_true(grepl("matrix\\[J_item, K - 2\\] tau_raw", stan_code))
   # Should have facet-specific tau indexing
   expect_true(grepl("tau\\[threshold_n, k-1\\]", stan_code))
   # Should have threshold_n extraction

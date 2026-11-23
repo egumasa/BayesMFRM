@@ -8,32 +8,30 @@ data {
   array[N] int<lower=1, upper=K> X;   // observed ratings
 
   // {{FACET_DATA_DECL}}
+  // {{MODEL_DATA}}
 }
 
 parameters {
   // person abilities (always present)
-  vector[J_person] theta_raw;
+  // {{ABILITY_PARAM_DECL}}
 
   // {{FACET_PARAM_DECL}}
 
   // thresholds (facet-specific, unordered for diagnostic purposes)
-  matrix[J_{{THRESHOLD_FACET}}, K-1] tau_raw;
+  // {{THRESHOLD_PARAM_DECL}}
 
   // {{BIAS_PARAM_DECL}}
 }
 
 transformed parameters {
   // person abilities
-  vector[J_person] theta;
-  theta = theta_raw;
+  // {{ABILITY_TRANSFORM}}
 
   // {{FACET_TRANSFORM}}
 
-  // thresholds (column-wise sum-to-zero constraint for identification)
-  matrix[J_{{THRESHOLD_FACET}}, K - 1] tau;
-  for (k in 1:(K-1)) {
-    tau[:, k] = tau_raw[:, k] - mean(tau_raw[:, k]);
-  }
+  // Step deviations sum to zero within each threshold-facet level.
+  // No across-level centering: common category patterns remain estimable.
+  // {{THRESHOLD_TRANSFORM}}
 
   // {{BIAS_TRANSFORM}}
 }
@@ -65,7 +63,9 @@ generated quantities {
   array[N] int<lower=1, upper=K> y_rep;
   vector[N] mu;        // expected score E[Y_n] under actual facets
   vector[N] sigma2;    // model variance Var(Y_n) under actual facets
-  vector[N] mu_fair;   // expected score with "fair" facets
+  // Adjusts nuisance main effects only; observed step profiles remain in place.
+  // The R fair_scores method rejects steps on an adjusted nuisance facet.
+  vector[N] mu_fair;
 
   for (n in 1:N) {
     int person_n = person_id[n];

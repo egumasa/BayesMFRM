@@ -101,8 +101,8 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL) {
     stan_data[[paste0(f, "_id")]]               <- idx_list[[f]]
     stan_data[[paste0("J_", f)]] <- J_list[[f]]
   }
-  if (!is.null(spec$rsm_model)) {
-    stan_data <- c(stan_data, rsm_model_data(spec$rsm_model, label_map, spec$K))
+  if (!is.null(spec$gaussian_model)) {
+    stan_data <- c(stan_data, gaussian_model_data(spec$gaussian_model, label_map, spec$K))
   }
   
   # Add bias facet data

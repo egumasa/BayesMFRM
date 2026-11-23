@@ -2,7 +2,7 @@
 % Please edit documentation in R/simulate.R
 \name{prior_predict_bmfrm}
 \alias{prior_predict_bmfrm}
-\title{Generate prior predictive ratings on a planned RSM design}
+\title{Generate prior predictive ratings on a planned RSM/PCM design}
 \usage{
 prior_predict_bmfrm(
   formula,
@@ -11,7 +11,9 @@ prior_predict_bmfrm(
   priors = NULL,
   ndraws = 200L,
   seed = NULL,
-  hierarchical = character()
+  hierarchical = character(),
+  family = c("rsm", "pcm"),
+  threshold_facet = NULL
 )
 }
 \arguments{
@@ -30,10 +32,16 @@ prior_predict_bmfrm(
 \item{hierarchical}{Names of facets with hierarchical distributions; currently
 only "person" is implemented. Its population uses prior classes mean and sd
 with facet = "person". The default character(0) retains independent priors.}
+
+\item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
+
+\item{threshold_facet}{Required for PCM. Its step deviations sum to zero within
+each level. Fixed tau must be a levels-by-(K-1) matrix; optional row names
+match facet labels and column names match step numbers 1,...,K-1.}
 }
 \value{
 A bmfrm_simulation. Inspect its y_rep before fitting observed data.
 }
 \description{
-Generate prior predictive ratings on a planned RSM design
+Generate prior predictive ratings on a planned RSM/PCM design
 }

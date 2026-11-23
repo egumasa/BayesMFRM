@@ -2,7 +2,7 @@
 % Please edit documentation in R/design_check.R
 \name{check_design_bmfrm}
 \alias{check_design_bmfrm}
-\title{Check a planned or observed additive RSM design}
+\title{Check a planned or observed additive RSM/PCM design}
 \usage{
 check_design_bmfrm(
   formula,
@@ -11,7 +11,8 @@ check_design_bmfrm(
   family = "rsm",
   observed_only = FALSE,
   tol = 1e-10,
-  max_cells = 2e+06
+  max_cells = 2e+06,
+  threshold_facet = NULL
 )
 }
 \arguments{
@@ -21,22 +22,28 @@ check_design_bmfrm(
 
 \item{K}{Number of categories, at least two.}
 
-\item{family}{Currently only additive "rsm" is supported.}
+\item{family}{Additive "rsm" or "pcm".}
 
 \item{observed_only}{Drop rows with missing responses before checking.}
 
 \item{tol}{Relative singular-value tolerance.}
 
 \item{max_cells}{Limit for the dense matrix used by this initial implementation.}
+
+\item{threshold_facet}{Required for PCM: the facet with within-level centered steps.}
 }
 \value{
 A bmfrm_design_check with component membership, rank, null spaces,
-the constraint map, and observation counts. Adjacent-logit rank includes
-the K - 2 free common threshold coordinates.
+the constraint map, and observation counts. rank/null_space describe the
+category-independent predictor. Adjacent-logit rank also includes step
+contrasts: K-2 for RSM, or K-2 for each observed threshold-facet level in PCM.
+Unobserved PCM step levels are reported separately; no large Kronecker matrix
+is constructed. This is a property of all adjacent logits, not just observed
+response categories. condition_number concerns the predictor only.
 }
 \description{
 Checks the facet incidence graph and the rank of the linear predictor after
-imposing the same sum-to-zero constraints as the generated RSM. Connectivity
+imposing the same sum-to-zero constraints as the generated model. Connectivity
 alone does not establish identification. This is a numerical structural rank
 check, not a test for separation, practical precision, or adequate categories.
 Unused levels of factor columns are retained as planned levels.

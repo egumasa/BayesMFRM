@@ -1,7 +1,7 @@
-#' Check a planned or observed additive RSM design
+#' Check a planned or observed additive RSM/PCM design
 #'
 #' Checks the facet incidence graph and the rank of the linear predictor after
-#' imposing the same sum-to-zero constraints as the generated RSM. Connectivity
+#' imposing the same sum-to-zero constraints as the generated model. Connectivity
 #' alone does not establish identification. This is a numerical structural rank
 #' check, not a test for separation, practical precision, or adequate categories.
 #' Unused levels of factor columns are retained as planned levels.
@@ -9,17 +9,23 @@
 #' @param formula Model formula, e.g. score ~ person + item + rater.
 #' @param data Planned rating rows; the response column is optional.
 #' @param K Number of categories, at least two.
-#' @param family Currently only additive "rsm" is supported.
+#' @param family Additive "rsm" or "pcm".
 #' @param observed_only Drop rows with missing responses before checking.
 #' @param tol Relative singular-value tolerance.
 #' @param max_cells Limit for the dense matrix used by this initial implementation.
+#' @param threshold_facet Required for PCM: the facet with within-level centered steps.
 #' @return A bmfrm_design_check with component membership, rank, null spaces,
-#'   the constraint map, and observation counts. Adjacent-logit rank includes
-#'   the K - 2 free common threshold coordinates.
+#'   the constraint map, and observation counts. rank/null_space describe the
+#'   category-independent predictor. Adjacent-logit rank also includes step
+#'   contrasts: K-2 for RSM, or K-2 for each observed threshold-facet level in PCM.
+#'   Unobserved PCM step levels are reported separately; no large Kronecker matrix
+#'   is constructed. This is a property of all adjacent logits, not just observed
+#'   response categories. condition_number concerns the predictor only.
 #' @export
 check_design_bmfrm <- function(formula, data, K, family = "rsm",
                                observed_only = FALSE, tol = 1e-10,
-                               max_cells = 2e6) {
+                               max_cells = 2e6, threshold_facet = NULL) {
+  family <- match.arg(family, c("rsm", "pcm"))
   validate_category_count(K)
   if (!is.data.frame(data) || !nrow(data)) stop("data must contain planned rating rows")
   if (length(tol) != 1L || !is.finite(tol) || tol <= 0) stop("tol must be positive")
@@ -27,10 +33,12 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
   vars <- all.vars(formula)
   response <- vars[1L]
   facets <- attr(stats::terms(formula), "term.labels")
-  if (family != "rsm" || any(!facets %in% names(data)) ||
+  if (any(!facets %in% names(data)) ||
       any(grepl(":", facets)) || !"person" %in% facets) {
-    stop("Design checking currently supports additive RSM formulas with person and named facet columns")
+    stop("Design checking currently supports additive RSM/PCM formulas with person and named facet columns")
   }
+  if (family == "pcm" && (!is.character(threshold_facet) || length(threshold_facet) != 1L ||
+      is.na(threshold_facet) || !threshold_facet %in% facets)) stop("PCM requires threshold_facet among the main facets")
   n_planned <- nrow(data)
   # Keep explicit factor levels even when observed-only filtering removes a level.
   fs <- lapply(data[facets], function(x) if (is.factor(x)) x else factor(x))
@@ -92,12 +100,18 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
     if (q) effect_map[offset[j] + seq_len(sizes[j]), start + seq_len(q)] <- bases[[j]]
     start <- start + q
   }
+  step_levels <- if (family == "pcm") labels[[threshold_facet]] else "shared"
+  step_observed <- if (family == "pcm") tabulate(ids[[threshold_facet]], length(step_levels)) > 0L else TRUE
+  step_parameters <- length(step_levels) * (K - 2L)
+  step_rank <- sum(step_observed) * (K - 2L)
   structure(list(
-    formula = formula, family = family, K = K, observed_only = observed_only,
+    formula = formula, family = family, K = K, threshold_facet = threshold_facet, observed_only = observed_only,
     n_observations = n, n_dropped = n_planned - n,
     levels = nodes, n_components = length(unique(roots)), connected = length(unique(roots)) == 1L,
-    rank = rank, n_parameters = p, nullity = p - rank, identifiable = rank == p,
-    adjacent_logit_rank = rank + K - 2L, adjacent_logit_parameters = p + K - 2L,
+    rank = rank, n_parameters = p, nullity = p - rank, identifiable = rank == p && step_rank == step_parameters,
+    step_rank = step_rank, step_parameters = step_parameters, step_nullity = step_parameters - step_rank,
+    unobserved_step_levels = step_levels[!step_observed],
+    adjacent_logit_rank = rank + step_rank, adjacent_logit_parameters = p + step_parameters,
     condition_number = if (rank == p) max(s$d) / min(s$d) else Inf,
     singular_values = s$d, tolerance = tol, design_matrix = X,
     constraint_map = effect_map, null_space = null, effect_null_space = effect_map %*% null
@@ -119,11 +133,12 @@ validate_category_count <- function(K) {
 
 #' @export
 print.bmfrm_design_check <- function(x, ...) {
-  cat("Additive RSM design check\n")
+  cat("Additive", toupper(x$family), "design check\n")
   cat("Rows:", x$n_observations, "  Dropped:", x$n_dropped, "\n")
   cat("Incidence components:", x$n_components, "\n")
   cat("Constrained predictor rank:", x$rank, "/", x$n_parameters, "\n")
   cat("Unidentified directions:", x$nullity, "\n")
+  cat("Adjacent-logit rank including steps:", x$adjacent_logit_rank, "/", x$adjacent_logit_parameters, "\n")
   cat("Likelihood identification:", if (x$identifiable) "full structural rank" else "rank deficient", "\n")
   cat("This does not certify practical precision or finite maximum-likelihood estimates.\n")
   invisible(x)

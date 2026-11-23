@@ -8,7 +8,13 @@
 #' @param scale Meaning of the SD for a constrained Gaussian facet or step prior:
 #'   "raw" retains the historical pre-centering SD; "marginal" specifies the
 #'   constrained level SD. Marginal scaling requires a normal(0, sd) prior and
-#'   generated additive Gaussian RSM. Singleton blocks remain identically zero.
+#'   generated additive Gaussian RSM/PCM. Singleton blocks remain identically zero.
+#'   For tau, a block comprises K-1 steps: one shared block in RSM, or one
+#'   independent block per threshold-facet level in PCM. PCM steps are centered
+#'   within that level, not across levels. For S = K-1 > 1, raw Gaussian step
+#'   variance is sd^2 * (1-1/S); marginal scaling makes it sd^2. Binary steps are
+#'   identically zero. These priors shrink deviations toward zero, without
+#'   imposing step order or hierarchical pooling toward a common step profile.
 #'
 #' @return bmfrm_prior object
 #' @export

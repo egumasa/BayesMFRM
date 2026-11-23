@@ -11,10 +11,12 @@
 #' @param stan_file optional path to a hardcoded Stan file (bypasses code generation)
 #' @param family model family: "rsm" (Rating Scale Model with shared thresholds) or
 #'   "pcm" (Partial Credit Model with facet-specific thresholds)
-#' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
+#' @param threshold_facet For PCM only: which facet gets level-specific steps
+#'   (e.g., "item"). Step deviations sum to zero within each level, separating
+#'   the level's overall location from its category pattern.
 #' @param model_name optional name for the model (auto-generated if NULL)
 #' @param cache_dir directory for caching compiled models and fits
-#' @param design_check How to handle a rank-deficient generated additive RSM: warn, error, or none.
+#' @param design_check How to handle a rank-deficient generated additive RSM/PCM: warn, error, or none.
 #' @param cpp_options Named compilation options passed to cmdstanr.
 #' @param save_csvs whether to save MCMC output as CSV files
 #' @param refit refit behavior: "never", "always", or "on_change"
@@ -25,7 +27,7 @@
 #' @param seed random seed
 #' @param hierarchical Names of facets with hierarchical distributions. The
 #'   default character(0) retains independent priors. Currently only "person"
-#'   is implemented, for generated additive Gaussian RSM: theta = mu_theta +
+#'   is implemented, for generated additive Gaussian RSM/PCM: theta = mu_theta +
 #'   sigma_theta * z with standard-normal z. Specify its population through
 #'   prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
 #'   included in the formula with independent priors.
@@ -104,19 +106,21 @@ bmfrm <- function(
     cache_dir = cache_dir,
     hierarchical = hierarchical
   )
+  spec$custom_stan <- !is.null(stan_file)
   spec <- resolve_bmfrm_spec(spec, priors)
   priors <- spec$priors
-  if (!is.null(stan_file) && !is.null(spec$rsm_model)) stop("Hierarchical ability and marginal scaling require generated Stan code")
+  if (!is.null(stan_file) && !is.null(spec$gaussian_model)) stop("Hierarchical ability and marginal scaling require generated Stan code")
   
   # 2. Prepare data → stan_data + facet labels  
   message("Preparing data...")
   data_info <- prepare_data_bmfrm(spec, data)
   
   design_info <- NULL
-  if (design_check != "none" && is.null(stan_file) && family == "rsm" && !length(spec$facets_bias)) {
-    design_info <- check_design_bmfrm(formula, data_info$data_clean, K = spec$K)
+  if (design_check != "none" && is.null(stan_file) && !length(spec$facets_bias)) {
+    design_info <- check_design_bmfrm(formula, data_info$data_clean, K = spec$K, family = family,
+                                      threshold_facet = spec$threshold_facet)
     if (!design_info$identifiable) {
-      msg <- paste0("Rank-deficient RSM design: ", design_info$nullity,
+      msg <- paste0("Rank-deficient ", toupper(family), " design: ", design_info$adjacent_logit_parameters - design_info$adjacent_logit_rank,
                     " unidentified direction(s). Proper priors do not establish likelihood identification.")
       if (design_check == "error") stop(msg) else warning(msg, call. = FALSE)
     }
@@ -189,7 +193,7 @@ bmfrm <- function(
 postprocess_bmfrm <- function(fit, spec, data_info, priors, stan_code, stan_code_hash) {
   
   # Check convergence
-  convergence_info <- check_convergence(fit, variables = rsm_diagnostic_variables(spec, data_info))
+  convergence_info <- check_convergence(fit, variables = model_diagnostic_variables(spec, data_info))
   
   # Create bmfrm_fit object
   out <- structure(

@@ -41,7 +41,9 @@ bmfrm(
 \item{family}{model family: "rsm" (Rating Scale Model with shared thresholds) or
 "pcm" (Partial Credit Model with facet-specific thresholds)}
 
-\item{threshold_facet}{for PCM only: which facet gets item-specific thresholds (e.g., "item")}
+\item{threshold_facet}{For PCM only: which facet gets level-specific steps
+(e.g., "item"). Step deviations sum to zero within each level, separating
+the level's overall location from its category pattern.}
 
 \item{model_name}{optional name for the model (auto-generated if NULL)}
 
@@ -49,7 +51,7 @@ bmfrm(
 
 \item{save_csvs}{whether to save MCMC output as CSV files}
 
-\item{design_check}{How to handle a rank-deficient generated additive RSM: warn, error, or none.}
+\item{design_check}{How to handle a rank-deficient generated additive RSM/PCM: warn, error, or none.}
 
 \item{cpp_options}{Named compilation options passed to cmdstanr.}
 
@@ -67,7 +69,7 @@ bmfrm(
 
 \item{hierarchical}{Names of facets with hierarchical distributions. The
 default character(0) retains independent priors. Currently only "person"
-is implemented, for generated additive Gaussian RSM: theta = mu_theta +
+is implemented, for generated additive Gaussian RSM/PCM: theta = mu_theta +
 sigma_theta * z with standard-normal z. Specify its population through
 prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
 included in the formula with independent priors.}

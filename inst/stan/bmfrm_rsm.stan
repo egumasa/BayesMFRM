@@ -7,7 +7,7 @@ data {
   array[N] int<lower=1, upper=K> X;   // observed ratings
 
   // {{FACET_DATA_DECL}}
-  // {{RSM_MODEL_DATA}}
+  // {{MODEL_DATA}}
 }
 
 parameters {

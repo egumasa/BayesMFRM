@@ -22,10 +22,7 @@ build_stan_code <- function(spec, priors = NULL) {
   }
 
   # Generate replacements for each placeholder
-  replacements <- list()
-  if (spec$family == "rsm") {
-    replacements <- rsm_stan_replacements(spec)
-  }
+  replacements <- ordinal_stan_replacements(spec)
 
   # 1. FACET_DATA_DECL
   replacements$FACET_DATA_DECL <- generate_facet_data_decl(spec)
@@ -101,7 +98,7 @@ generate_facet_param_decl <- function(spec) {
   other_facets <- setdiff(spec$facets_main, "person")
   
   for (facet in other_facets) {
-    dim <- if (is.null(spec$rsm_model)) paste0("J_", facet) else paste0("J_", facet, " - 1")
+    dim <- if (is.null(spec$gaussian_model)) paste0("J_", facet) else paste0("J_", facet, " - 1")
     lines <- c(lines, paste0("  vector[", dim, "] ", facet, "_raw;"))
   }
   
@@ -138,7 +135,7 @@ generate_facet_transform <- function(spec) {
   centering_lines <- character(0)
 
   for (facet in other_facets) {
-    if (!is.null(spec$rsm_model)) {
+    if (!is.null(spec$gaussian_model)) {
       vector_lines <- c(vector_lines, paste0("  vector[J_", facet, "] ", facet,
         " = prior_sd_", facet, " * B_", facet, " * ", facet, "_raw;"))
       next
@@ -194,9 +191,10 @@ generate_bias_transform <- function(spec) {
 #' Generate prior statements
 #' @keywords internal
 generate_prior_block <- function(spec, priors) {
-  if (!is.null(spec$rsm_model)) {
-    variables <- c("theta_raw", "mu_theta_raw", "log_sigma_theta_raw", "tau_raw",
-                   if (length(spec$rsm_model$facet_sd)) paste0(names(spec$rsm_model$facet_sd), "_raw"))
+  if (!is.null(spec$gaussian_model)) {
+    variables <- c("theta_raw", "mu_theta_raw", "log_sigma_theta_raw",
+                   if (spec$family == "pcm") "to_vector(tau_raw)" else "tau_raw",
+                   if (length(spec$gaussian_model$facet_sd)) paste0(names(spec$gaussian_model$facet_sd), "_raw"))
     return(paste0("  ", variables, " ~ std_normal();", collapse = "\n"))
   }
   lines <- ""
@@ -227,28 +225,31 @@ generate_prior_block <- function(spec, priors) {
   paste(lines, collapse = "\n")
 }
 
-rsm_stan_replacements <- function(spec) {
-  if (is.null(spec$rsm_model)) return(list(
-    RSM_MODEL_DATA = "",
+ordinal_stan_replacements <- function(spec) {
+  J <- paste0("J_", spec$threshold_facet)
+  if (is.null(spec$gaussian_model)) return(list(
+    MODEL_DATA = "",
     ABILITY_PARAM_DECL = "vector[J_person] theta_raw;",
     ABILITY_TRANSFORM = "vector[J_person] theta = theta_raw;",
-    THRESHOLD_PARAM_DECL = "vector[K - 1] tau_raw;",
-    THRESHOLD_TRANSFORM = "vector[K - 1] tau = tau_raw - mean(tau_raw);"))
+    THRESHOLD_PARAM_DECL = if (spec$family == "pcm") paste0("matrix[", J, ", K-1] tau_raw;") else "vector[K - 1] tau_raw;",
+    THRESHOLD_TRANSFORM = if (spec$family == "pcm") paste0("matrix[", J, ", K - 1] tau;\n  for (j in 1:", J,
+      ") tau[j] = tau_raw[j] - mean(tau_raw[j]);") else "vector[K - 1] tau = tau_raw - mean(tau_raw);"))
   fields <- c("int<lower=0, upper=1> estimate_mu;", "int<lower=0, upper=1> estimate_sigma;",
     "real ability_mean_location;", "real<lower=0> ability_mean_scale;",
     "real ability_sd_location;", "real<lower=0> ability_sd_scale;",
     "matrix[K - 1, K - 2] B_tau;", "real<lower=0> prior_sd_tau;")
-  for (f in names(spec$rsm_model$facet_sd)) fields <- c(fields,
+  for (f in names(spec$gaussian_model$facet_sd)) fields <- c(fields,
     paste0("matrix[J_", f, ", J_", f, " - 1] B_", f, ";"), paste0("real<lower=0> prior_sd_", f, ";"))
-  list(RSM_MODEL_DATA = paste(fields, collapse = "\n  "),
+  list(MODEL_DATA = paste(fields, collapse = "\n  "),
     ABILITY_PARAM_DECL = paste(c("vector[J_person] theta_raw;", "vector[estimate_mu] mu_theta_raw;",
       "vector[estimate_sigma] log_sigma_theta_raw;"), collapse = "\n  "),
     ABILITY_TRANSFORM = paste(c(
       "real mu_theta = estimate_mu ? ability_mean_location + ability_mean_scale * mu_theta_raw[1] : ability_mean_location;",
       "real<lower=0> sigma_theta = estimate_sigma ? exp(ability_sd_location + ability_sd_scale * log_sigma_theta_raw[1]) : ability_sd_location;",
       "vector[J_person] theta = mu_theta + sigma_theta * theta_raw;"), collapse = "\n  "),
-    THRESHOLD_PARAM_DECL = "vector[K - 2] tau_raw;",
-    THRESHOLD_TRANSFORM = "vector[K - 1] tau = prior_sd_tau * B_tau * tau_raw;")
+    THRESHOLD_PARAM_DECL = if (spec$family == "pcm") paste0("matrix[", J, ", K - 2] tau_raw;") else "vector[K - 2] tau_raw;",
+    THRESHOLD_TRANSFORM = if (spec$family == "pcm") paste0("matrix[", J,
+      ", K - 1] tau = prior_sd_tau * tau_raw * B_tau';") else "vector[K - 1] tau = prior_sd_tau * B_tau * tau_raw;")
 }
 
 #' Generate index extraction code

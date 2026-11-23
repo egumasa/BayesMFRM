@@ -40,10 +40,10 @@ test_that("population priors and facet declarations share the existing prior API
   d$score <- 1L
   s <- parse_bmfrm_formula(score ~ person + item + rater, d, K = 4, hierarchical = "person")
   resolved <- resolve_bmfrm_spec(s, rsm_test_priors(item = 1.2, rater = .6))
-  m <- resolved$rsm_model
+  m <- resolved$gaussian_model
   expect_identical(names(m$facet_sd), c("item", "rater"))
   expect_true(m$ability_mean$estimated && m$ability_sd$estimated)
-  expect_false(resolve_bmfrm_spec(s, rsm_test_priors(mean = 2, sd = .7))$rsm_model$ability_mean$estimated)
+  expect_false(resolve_bmfrm_spec(s, rsm_test_priors(mean = 2, sd = .7))$gaussian_model$ability_mean$estimated)
   expect_error(prior(0, "sd", facet = "person"), "Invalid")
   expect_error(prior("normal(0, 1)", "sd", facet = "person"), "lognormal")
   expect_error(prior("normal(0, sqrt(2))", "mean", facet = "person"), "literal")
@@ -54,8 +54,8 @@ test_that("population priors and facet declarations share the existing prior API
   expect_error(resolve_bmfrm_spec(s, rsm_test_priors()[-3]), "Missing")
   expect_error(resolve_bmfrm_spec(s, c(rsm_test_priors(), list(prior(0, "mean", facet = "person")))), "Duplicate")
   expect_error(resolve_bmfrm_spec(s, c(rsm_test_priors(), list(prior("normal(0, 2)", "theta")))), "not used")
-  pcm <- s; pcm$family <- "pcm"
-  expect_error(resolve_bmfrm_spec(pcm, rsm_test_priors()), "additive RSM")
+  pcm <- s; pcm$family <- "pcm"; pcm$threshold_facet <- "item"
+  expect_no_error(resolve_bmfrm_spec(pcm, rsm_test_priors()))
   indep <- s; indep$hierarchical <- character()
   expect_error(resolve_bmfrm_spec(indep, rsm_test_priors()), "not used")
 })
@@ -91,7 +91,7 @@ test_that("binary and singleton blocks stay fixed and are excluded from MCMC dia
   expect_equal(s$parameters[[1]]$mu_theta, 1)
   expect_equal(s$parameters[[1]]$sigma_theta, .7)
   di <- prepare_data_bmfrm(s$spec, s$data)
-  expect_identical(rsm_diagnostic_variables(s$spec, di), c("theta_raw", "theta"))
+  expect_identical(model_diagnostic_variables(s$spec, di), c("theta_raw", "theta"))
   expect_equal(dim(di$stan_data$B_tau), c(1L, 0L))
   expect_error(simulate_bmfrm(s$spec$formula, d, 2, hierarchical = s$hierarchical, priors = s$priors,
     parameters = within(s$parameters[[1]], sigma_theta <- -1)), "positive")

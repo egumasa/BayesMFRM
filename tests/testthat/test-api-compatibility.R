@@ -25,8 +25,8 @@ test_that("marginal Gaussian priors do not require hierarchical abilities", {
   expect_equal(diag(tcrossprod(std$B_item) * std$prior_sd_item^2), rep(.8^2, 4))
   expect_equal(diag(tcrossprod(std$B_rater) * std$prior_sd_rater^2), rep(.6^2 * 2/3, 3))
   pcm <- spec; pcm$family <- "pcm"; pcm$threshold_facet <- "item"
-  expect_error(build_stan_code(pcm, ps), "additive RSM")
-  expect_error(prepare_data_bmfrm(pcm, sim$data, ps), "additive RSM")
+  expect_no_error(build_stan_code(pcm, ps))
+  expect_no_error(prepare_data_bmfrm(pcm, sim$data, ps))
 })
 
 test_that("hierarchical defaults retain pre-centering facet and step SDs", {
