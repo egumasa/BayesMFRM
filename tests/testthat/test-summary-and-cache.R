@@ -47,6 +47,13 @@ test_that("cache keys include settings and missing CSVs invalidate a fit", {
   expect_error(fit_cmdstan_cached(model, list(N = 1), file, "never", seed = 1, iter_sampling = 200), "missing")
   w <- fit_cmdstan_cached(model, list(N = 1), file, "on_change", seed = 1, iter_sampling = 200)
   expect_equal(w$id, 3L)
+
+  # Minimal call with no extra ... sampling arguments must succeed and reuse cache
+  file_min <- file.path(directory, "fit_minimal_dots.rds")
+  m1 <- fit_cmdstan_cached(model, list(N = 1), file_min, "on_change")
+  m2 <- fit_cmdstan_cached(model, list(N = 1), file_min, "on_change")
+  expect_equal(m1$id, 4L)
+  expect_equal(m2$id, 4L)
 })
 
 test_that("PPC supports groups, small posterior samples, and reproducible selection", {

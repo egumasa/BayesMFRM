@@ -2,18 +2,25 @@
 % Please edit documentation in R/fit_stats.R
 \name{add_zstd}
 \alias{add_zstd}
-\title{Add approximate z-standardized infit/outfit
-(Wright & Masters cube-root transformation, approximate df = n_obs - 1)}
+\title{Add approximate Wilson-Hilferty / Wright & Masters z-standardized infit/outfit (ZSTD)}
 \usage{
 add_zstd(fit_stats)
 }
 \arguments{
-\item{fit_stats}{tibble from facet_infit_outfit()}
+\item{fit_stats}{tibble from facet_infit_outfit() or facet_fit_from_matrices()}
 }
 \value{
-fit_stats tibble with added z-standardized columns
+fit_stats tibble with added approximate z-standardized columns
 }
 \description{
-Add approximate z-standardized infit/outfit
-(Wright & Masters cube-root transformation, approximate df = n_obs - 1)
+Applies the Wright & Masters (1982) Wilson-Hilferty cube-root approximation:
+\code{ZSTD = (MSQ^(1/3) - 1) * (3 / q) + q / 3}.
+When \code{outfit_q} / \code{infit_q} are already present, uses them; otherwise falls
+back to the chi-square approximation \code{q = sqrt(2 / df)} (\code{df = max(n_obs - 1, 1)}).
+}
+\details{
+Note: Wilson-Hilferty ZSTD is an asymptotic approximation whose calibration
+degrades for small \code{n_obs} or sparse designs with high posterior uncertainty;
+it should be treated as a descriptive flag alongside conditional posterior
+predictive checks (\code{bayesplot::pp_check(..., group = ...)}) rather than an exact test.
 }

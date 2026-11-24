@@ -1,5 +1,6 @@
 ^renv$
 ^renv\.lock$
+^\.Rprofile$
 ^.*\.Rproj$
 ^resources$
 ^test$
@@ -8,4 +9,12 @@
 ^README\.dev\.md$
 ^\.Rproj\.user$
 ^\.cache$
-^stan_cache$
+(^|/)stan_cache$
+^docs$
+^example_usage\.R$
+^BayesMFRM\.Rcheck$
+^BayesMFRM_.*\.tar\.gz$
+^local-work$
+^simulations$
+^\.playwright-mcp$
+^\.DS_Store$

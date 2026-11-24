@@ -15,6 +15,7 @@ bmfrm(
   model_name = NULL,
   cache_dir = "stan_cache",
   save_csvs = TRUE,
+  save_gq = c("full", "minimal"),
   design_check = c("warn", "error", "none"),
   cpp_options = list(),
   refit = c("on_change", "never", "always"),
@@ -24,6 +25,7 @@ bmfrm(
   cores = getOption("mc.cores", 1L),
   seed = NULL,
   hierarchical = character(),
+  obs_id = NULL,
   ...
 )
 }
@@ -51,6 +53,11 @@ the level's overall location from its category pattern.}
 
 \item{save_csvs}{whether to save MCMC output as CSV files}
 
+\item{save_gq}{Either \code{"full"} (default; saves observation-level \code{log_lik},
+\code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan \verb{generated quantities}) or
+\code{"minimal"} (omits observation-level \verb{generated quantities} for scalability
+on large datasets; downstream S3 methods compute quantities on demand in R).}
+
 \item{design_check}{How to handle a rank-deficient generated RSM/PCM, including
 two-way interactions: warn, error, or none.}
 
@@ -68,17 +75,18 @@ two-way interactions: warn, error, or none.}
 
 \item{seed}{random seed}
 
-\item{hierarchical}{Names of facets with hierarchical distributions. The
-default character(0) retains independent priors. Currently only "person"
-among main facets is implemented, for generated Gaussian RSM/PCM: theta = mu_theta +
-sigma_theta * z with standard-normal z. Specify its population through
-prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
-included in the formula with independent priors.
-Two-way interaction names may also be included, e.g. c("person","item:rater").
-Their zero-centered Gaussian effects use a shared SD, specified with
-prior(..., class = "sd", facet = "item:rater"). LKJ and horseshoe priors
-are not implemented. Specifying a hierarchy or marginal scaling currently
-requires Gaussian main/step/conditional interaction priors throughout.}
+\item{hierarchical}{Names of facets or terms with hierarchical distributions.
+The default \code{character(0)} retains fixed-scale priors. Supports any main
+facet (\code{"person"} with \code{mean}/\code{sd}, or centered facets such as \code{"rater"} /
+\code{"item"} with \code{class = "sd"}), two-way interaction names (e.g.
+\code{"item:rater"} with \code{class = "sd"} and optional \code{local_shrinkage} =
+\code{"horseshoe"} or \code{"student_t"}), and \code{"tau"} for hierarchical PCM partial
+pooling toward common steps.}
+
+\item{obs_id}{Optional observation identifier passed to
+\code{\link{prepare_data_bmfrm}} (either a column name in \code{data} or a unique vector
+of length \code{nrow(data)}) used by \code{\link{compare_bmfrm}} to verify observation
+alignment across models.}
 
 \item{...}{additional arguments passed to cmdstanr::sample()}
 }

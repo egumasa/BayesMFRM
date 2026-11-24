@@ -47,29 +47,29 @@ residual_cor_criteria <- function(resid_tbl, person_facet = "person", item_facet
 #' @param ... unused
 #' @export
 print.residual_cor <- function(x, ...) {
-  cat("Residual Correlations Across Criteria\\n")
-  cat("====================================\\n\\n")
+  cat("Residual Correlations Across Criteria\n")
+  cat("====================================\n\n")
   
-  cat("Method:", x$method, "\\n")
-  cat("Number of person-level observations:", x$n_pairs, "\\n\\n")
+  cat("Method:", x$method, "\n")
+  cat("Number of unit-level observations:", x$n_pairs, "\n\n")
   
-  cat("Correlation Matrix:\\n")
+  cat("Correlation Matrix:\n")
   print(round(x$cor_matrix, 3))
   
-  cat("\\nSummary of correlations:\\n")
+  cat("\nSummary of correlations:\n")
   cors <- x$cor_tidy$correlation
   cors <- cors[!is.na(cors)]
   
   if (length(cors) > 0) {
-    cat("  Mean absolute correlation:", round(mean(abs(cors)), 3), "\\n")
-    cat("  Range:", round(range(cors), 3), "\\n")
-    cat("  SD:", round(sd(cors), 3), "\\n")
+    cat("  Mean absolute correlation:", round(mean(abs(cors)), 3), "\n")
+    cat("  Range:", round(range(cors), 3), "\n")
+    cat("  SD:", round(stats::sd(cors), 3), "\n")
     
     # Flag high correlations
     high_cors <- cors[abs(cors) > 0.3]
     if (length(high_cors) > 0) {
-      cat("\\n  Note:", length(high_cors), "correlations > |0.3| detected\\n")
-      cat("  This may indicate multidimensionality or local dependence\\n")
+      cat("\n  Note:", length(high_cors), "correlations > |0.3| detected\n")
+      cat("  This may indicate multidimensionality or local dependence\n")
     }
   }
 }
@@ -125,7 +125,7 @@ diagnose_residual_cors <- function(resid_cor, threshold = 0.3) {
   summary_stats <- list(
     n_cors = length(cors),
     mean_abs_cor = mean(abs(cors)),
-    sd_cor = sd(cors),
+    sd_cor = stats::sd(cors),
     max_abs_cor = max(abs(cors)),
     n_high_cors = nrow(high_cors),
     prop_high_cors = nrow(high_cors) / length(cors)

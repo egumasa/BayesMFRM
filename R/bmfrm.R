@@ -20,23 +20,30 @@
 #'   two-way interactions: warn, error, or none.
 #' @param cpp_options Named compilation options passed to cmdstanr.
 #' @param save_csvs whether to save MCMC output as CSV files
+#' @param save_gq Either `"full"` (default; saves observation-level `log_lik`,
+#'   `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan `generated quantities`) or
+#'   `"minimal"` (omits observation-level `generated quantities` for scalability
+#'   on large datasets; downstream S3 methods compute quantities on demand in R).
+#' @param design_check How to handle a rank-deficient generated RSM/PCM, including
+#'   two-way interactions: warn, error, or none.
+#' @param cpp_options Named compilation options passed to cmdstanr.
 #' @param refit refit behavior: "never", "always", or "on_change"
 #' @param iter number of MCMC iterations
 #' @param warmup number of warmup iterations
 #' @param chains number of MCMC chains
 #' @param cores number of CPU cores to use
 #' @param seed random seed
-#' @param hierarchical Names of facets with hierarchical distributions. The
-#'   default character(0) retains independent priors. Currently only "person"
-#'   among main facets is implemented, for generated Gaussian RSM/PCM: theta = mu_theta +
-#'   sigma_theta * z with standard-normal z. Specify its population through
-#'   prior(..., class = "mean" or "sd", facet = "person"). Other facets may be
-#'   included in the formula with independent priors.
-#'   Two-way interaction names may also be included, e.g. c("person","item:rater").
-#'   Their zero-centered Gaussian effects use a shared SD, specified with
-#'   prior(..., class = "sd", facet = "item:rater"). LKJ and horseshoe priors
-#'   are not implemented. Specifying a hierarchy or marginal scaling currently
-#'   requires Gaussian main/step/conditional interaction priors throughout.
+#' @param hierarchical Names of facets or terms with hierarchical distributions.
+#'   The default `character(0)` retains fixed-scale priors. Supports any main
+#'   facet (`"person"` with `mean`/`sd`, or centered facets such as `"rater"` /
+#'   `"item"` with `class = "sd"`), two-way interaction names (e.g.
+#'   `"item:rater"` with `class = "sd"` and optional `local_shrinkage` =
+#'   `"horseshoe"` or `"student_t"`), and `"tau"` for hierarchical PCM partial
+#'   pooling toward common steps.
+#' @param obs_id Optional observation identifier passed to
+#'   [prepare_data_bmfrm()] (either a column name in `data` or a unique vector
+#'   of length `nrow(data)`) used by [compare_bmfrm()] to verify observation
+#'   alignment across models.
 #' @param ... additional arguments passed to cmdstanr::sample()
 #'
 #' @return bmfrm_fit object containing the fitted model and metadata
@@ -76,6 +83,7 @@ bmfrm <- function(
   model_name = NULL,
   cache_dir = "stan_cache",
   save_csvs = TRUE,
+  save_gq = c("full", "minimal"),
   design_check = c("warn", "error", "none"),
   cpp_options = list(),
   refit = c("on_change", "never", "always"),
@@ -85,12 +93,14 @@ bmfrm <- function(
   cores = getOption("mc.cores", 1L),
   seed = NULL,
   hierarchical = character(),
+  obs_id = NULL,
   ...
 ) {
 
   # Argument validation
   family <- match.arg(family)
   refit <- match.arg(refit)
+  save_gq <- match.arg(save_gq)
   design_check <- match.arg(design_check)
   # Prevent R partially matching the removed development argument to model_name.
   if ("model" %in% names(sys.call())) stop("The development model argument was removed; use hierarchical and priors")
@@ -110,7 +120,8 @@ bmfrm <- function(
     threshold_facet = threshold_facet,
     model_name = model_name,
     cache_dir = cache_dir,
-    hierarchical = hierarchical
+    hierarchical = hierarchical,
+    save_gq = save_gq
   )
   spec$custom_stan <- !is.null(stan_file)
   spec <- resolve_bmfrm_spec(spec, priors)
@@ -119,7 +130,7 @@ bmfrm <- function(
   
   # 2. Prepare data → stan_data + facet labels  
   message("Preparing data...")
-  data_info <- prepare_data_bmfrm(spec, data)
+  data_info <- prepare_data_bmfrm(spec, data, obs_id = obs_id)
   
   design_info <- NULL
   if (design_check != "none" && is.null(stan_file)) {
@@ -143,6 +154,7 @@ bmfrm <- function(
     message("Using hardcoded Stan file: ", basename(stan_file))
     stan_code <- paste(readLines(stan_file), collapse = "\n")
   }
+  spec$eval_contract <- resolve_eval_contract(spec, stan_code)
   
   # 5. Compile Stan model (with caching based on code hash)
   message("Compiling model...")
@@ -181,6 +193,25 @@ bmfrm <- function(
   )
   
   out$design <- design_info
+  out$fit_args <- list(
+    formula = formula,
+    K = spec$K,
+    priors = priors,
+    stan_file = stan_file,
+    family = family,
+    threshold_facet = spec$threshold_facet,
+    hierarchical = spec$hierarchical,
+    save_gq = spec$save_gq,
+    cache_dir = cache_dir,
+    cpp_options = cpp_options,
+    iter = iter,
+    warmup = warmup,
+    chains = chains,
+    cores = cores,
+    seed = seed,
+    obs_id = obs_id,
+    sampler_args = list(...)
+  )
   message("Model fitting complete!")
   out
 }

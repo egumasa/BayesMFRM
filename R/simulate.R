@@ -59,6 +59,16 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
     param_names <- c(param_names, "mu_theta", "sigma_theta")
     sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
   }
+  hier_main <- setdiff(intersect(hierarchical, spec$facets_main), "person")
+  for (hf in hier_main) {
+    nm <- paste0("sigma_", hf)
+    param_names <- c(param_names, nm)
+    sizes <- c(sizes, stats::setNames(1L, nm))
+  }
+  if ("tau" %in% hierarchical) {
+    param_names <- c(param_names, "tau_common", "sigma_tau")
+    sizes <- c(sizes, tau_common = K - 1L, sigma_tau = 1L)
+  }
   bias_names <- gsub(":", "", spec$facets_bias)
   bias_dims <- lapply(strsplit(spec$facets_bias, ":", fixed = TRUE), function(f) lengths(labels[f]))
   names(bias_dims) <- bias_names
@@ -88,6 +98,20 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
       if (param_names[j] %in% paste0("sigma_", bias_names)) {
         b <- model$biases[[match(sub("^sigma_", "", param_names[j]), bias_names)]]
         if (x <= 0 || (!b$sd$estimated && x != b$sd$value)) stop("Interaction SD must be positive and match any fixed prior value")
+        parameters[[j]] <- unname(x); next
+      }
+      if (param_names[j] %in% paste0("sigma_", hier_main)) {
+        fs <- model$facet_specs[[sub("^sigma_", "", param_names[j])]]
+        if (x <= 0 || (!fs$sd$estimated && x != fs$sd$value)) stop("Hierarchical facet SD must be positive and match any fixed prior value")
+        parameters[[j]] <- unname(x); next
+      }
+      if (param_names[j] == "sigma_tau") {
+        if (x <= 0 || (!model$step$dev_sd$estimated && x != model$step$dev_sd$value)) stop("Hierarchical step SD must be positive and match any fixed prior value")
+        parameters[[j]] <- unname(x); next
+      }
+      if (param_names[j] == "tau_common") {
+        if (!is.null(dim(x))) stop("tau_common must be a vector")
+        if (abs(sum(x)) > 1e-8) stop("Fixed tau_common must sum to zero")
         parameters[[j]] <- unname(x); next
       }
       if (param_names[j] == "tau" && family == "pcm") {

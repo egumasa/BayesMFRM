@@ -4,7 +4,7 @@
 \alias{prepare_data_bmfrm}
 \title{Prepare data for bmfrm Stan model}
 \usage{
-prepare_data_bmfrm(spec, data, priors = NULL)
+prepare_data_bmfrm(spec, data, priors = NULL, obs_id = NULL)
 }
 \arguments{
 \item{spec}{bmfrm_spec object from parse_bmfrm_formula()}
@@ -13,9 +13,17 @@ prepare_data_bmfrm(spec, data, priors = NULL)
 
 \item{priors}{Optional prior specifications; otherwise use priors stored in
 spec, or the defaults. Use the same priors for build_stan_code().}
+
+\item{obs_id}{Optional observation identifier preserved from before missing-score
+filtering for model-comparison alignment: either a single column name in
+\code{data} or a character/integer vector of length \code{nrow(data)} with unique
+non-missing values on retained rows. When \code{NULL} (default), preserves
+non-default unique \code{rownames(data)} or original pre-filtering row indices.}
 }
 \value{
-list with stan_data, data_clean, and facet_labels
+list with stan_data, data_clean, facet_labels, bias_labels, and
+pre-preprocessing observation identity metadata (\code{obs_id}, \code{obs_id_source},
+\code{orig_row_index})
 }
 \description{
 Prepare data for bmfrm Stan model

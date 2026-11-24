@@ -4,18 +4,69 @@
 #' @param data data.frame with original data
 #' @param priors Optional prior specifications; otherwise use priors stored in
 #'   spec, or the defaults. Use the same priors for build_stan_code().
+#' @param obs_id Optional observation identifier preserved from before missing-score
+#'   filtering for model-comparison alignment: either a single column name in
+#'   `data` or a character/integer vector of length `nrow(data)` with unique
+#'   non-missing values on retained rows. When `NULL` (default), preserves
+#'   non-default unique `rownames(data)` or original pre-filtering row indices.
 #'
-#' @return list with stan_data, data_clean, and facet_labels
+#' @return list with stan_data, data_clean, facet_labels, bias_labels, and
+#'   pre-preprocessing observation identity metadata (`obs_id`, `obs_id_source`,
+#'   `orig_row_index`)
 #' @export
-prepare_data_bmfrm <- function(spec, data, priors = NULL) {
+prepare_data_bmfrm <- function(spec, data, priors = NULL, obs_id = NULL) {
   spec <- resolve_bmfrm_spec(spec, priors)
   
   # Validate spec
   validate_spec(spec, data)
   
-  # 1. Drop missing scores with message
+  # 1. Capture pre-preprocessing observation identity BEFORE dropping missing scores
   n_before <- nrow(data)
-  df <- data[!is.na(data[[spec$response]]), , drop = FALSE]
+  keep_mask <- !is.na(data[[spec$response]])
+  orig_row_index <- which(keep_mask)
+
+  if (!is.null(obs_id)) {
+    if (is.character(obs_id) && length(obs_id) == 1L && obs_id %in% names(data)) {
+      raw_obs_id <- as.character(data[[obs_id]])
+      obs_id_source <- "explicit_column"
+    } else if (length(obs_id) == n_before) {
+      raw_obs_id <- as.character(obs_id)
+      obs_id_source <- "explicit_vector"
+    } else {
+      stop("obs_id must be either a column name in data or a vector of length nrow(data)")
+    }
+    obs_id_clean <- raw_obs_id[keep_mask]
+    if (anyNA(obs_id_clean) || any(!nzchar(obs_id_clean))) {
+      stop("obs_id cannot contain NA or empty values on retained observations")
+    }
+    if (anyDuplicated(obs_id_clean)) {
+      stop("obs_id must be unique across retained observations")
+    }
+  } else if (is.character(attr(data, "bmfrm_obs_id")) &&
+             length(attr(data, "bmfrm_obs_id")) == n_before) {
+    obs_id_clean <- as.character(attr(data, "bmfrm_obs_id"))[keep_mask]
+    if (anyNA(obs_id_clean) || anyDuplicated(obs_id_clean)) {
+      stop("attr(data, 'bmfrm_obs_id') must be unique and non-missing on retained observations")
+    }
+    obs_id_source <- "attribute"
+  } else {
+    rn <- rownames(data)
+    has_custom_rn <- !is.null(rn) &&
+      length(rn) == n_before &&
+      !anyNA(rn) &&
+      !anyDuplicated(rn) &&
+      !identical(rn, as.character(seq_len(n_before)))
+    if (has_custom_rn) {
+      obs_id_clean <- rn[keep_mask]
+      obs_id_source <- "rownames"
+    } else {
+      obs_id_clean <- as.character(orig_row_index)
+      obs_id_source <- "pre_na_index"
+    }
+  }
+
+  # Drop missing scores with message
+  df <- data[keep_mask, , drop = FALSE]
   n_after <- nrow(df)
   
   if (n_after < n_before) {
@@ -50,9 +101,7 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL) {
     label_map[[f]]  <- levels(fac_factor)         # store original labels
   }
   
-  # 4. Handle bias facets - create combined indices
-  bias_idx_list <- list()
-  bias_J_list <- list()
+  # 4. Handle bias facets - store label metadata (Stan reuses main facet IDs and J_*)
   bias_label_map <- list()
   
   if (length(spec$facets_bias) > 0) {
@@ -65,16 +114,6 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL) {
       
       facet1 <- components[1]
       facet2 <- components[2]
-      
-      # Get indices for each component
-      idx1 <- idx_list[[facet1]]
-      idx2 <- idx_list[[facet2]]
-      
-      bias_idx_list[[paste0(facet1, "_", bias_facet)]] <- idx1
-      bias_idx_list[[paste0(facet2, "_", bias_facet)]] <- idx2
-      
-      bias_J_list[[paste0("J_", facet1, "_", gsub(":", "", bias_facet))]] <- J_list[[facet1]]
-      bias_J_list[[paste0("J_", facet2, "_", gsub(":", "", bias_facet))]] <- J_list[[facet2]]
       
       bias_label_map[[bias_facet]] <- list(
         facet1 = list(name = facet1, labels = label_map[[facet1]]),
@@ -98,19 +137,11 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL) {
   
   # Add main facet data
   for (f in spec$facets_main) {
-    stan_data[[paste0(f, "_id")]]               <- idx_list[[f]]
+    stan_data[[paste0(f, "_id")]] <- idx_list[[f]]
     stan_data[[paste0("J_", f)]] <- J_list[[f]]
   }
   if (!is.null(spec$gaussian_model)) {
     stan_data <- c(stan_data, gaussian_model_data(spec$gaussian_model, label_map, spec$K))
-  }
-  
-  # Add bias facet data
-  for (name in names(bias_idx_list)) {
-    stan_data[[name]] <- bias_idx_list[[name]]
-  }
-  for (name in names(bias_J_list)) {
-    stan_data[[name]] <- bias_J_list[[name]]
   }
   
   # 6. Validate response values are in expected range
@@ -122,10 +153,13 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL) {
   
   # 7. Return structured result
   list(
-    stan_data    = stan_data,
-    data_clean   = df,
-    facet_labels = label_map,
-    bias_labels  = bias_label_map
+    stan_data      = stan_data,
+    data_clean     = df,
+    facet_labels   = label_map,
+    bias_labels    = bias_label_map,
+    obs_id         = obs_id_clean,
+    obs_id_source  = obs_id_source,
+    orig_row_index = orig_row_index
   )
 }
 

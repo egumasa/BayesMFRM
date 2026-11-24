@@ -4,12 +4,18 @@
 \alias{build_stan_code}
 \title{Build Stan code from specification and priors}
 \usage{
-build_stan_code(spec, priors = NULL)
+build_stan_code(spec, priors = NULL, save_gq = NULL)
 }
 \arguments{
 \item{spec}{bmfrm_spec object from parse_bmfrm_formula()}
 
 \item{priors}{list of bmfrm_prior objects}
+
+\item{save_gq}{Either \code{"full"} (default; saves observation-level \code{log_lik},
+\code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan \verb{generated quantities}) or
+\code{"minimal"} (omits observation-level \verb{generated quantities} to save disk
+and memory on large datasets; downstream S3 methods compute quantities on
+demand in R).}
 }
 \value{
 character string with complete Stan code

@@ -3,25 +3,37 @@
 #' @param spec Prior distribution string. For a population mean or SD, a numeric
 #'   value fixes that parameter (SD must be positive).
 #' @param class Parameter class: theta, item, rater, bias, tau, facet_<name>,
-#'   mean, or sd. The last two specify a hierarchical population.
-#' @param facet Target facet for mean/sd, or interaction name for bias. For a
-#'   hierarchical two-way interaction, use class = "sd" and its term name.
-#'   Supported interaction SD priors are normal(0,s), student_t(df,0,s), and
-#'   cauchy(0,s), restricted to positive values, or lognormal(m,s). A positive
-#'   numeric value fixes its SD. Population means are absent for centered interactions.
-#' @param scale Meaning of the SD for a constrained Gaussian facet or step prior:
-#'   "raw" retains the historical pre-centering SD; "marginal" specifies the
-#'   constrained level SD. Marginal scaling requires a normal(0, sd) prior and
-#'   generated Gaussian RSM/PCM. Singleton blocks remain identically zero.
-#'   For a hierarchical interaction SD, "marginal" refers to each cell's
-#'   conditional SD given that parameter; "raw" retains the double-centering
-#'   variance factor (1-1/J1)*(1-1/J2). This does not describe the hyperprior's SD.
-#'   For tau, a block comprises K-1 steps: one shared block in RSM, or one
-#'   independent block per threshold-facet level in PCM. PCM steps are centered
-#'   within that level, not across levels. For S = K-1 > 1, raw Gaussian step
-#'   variance is sd^2 * (1-1/S); marginal scaling makes it sd^2. Binary steps are
-#'   identically zero. These priors shrink deviations toward zero, without
-#'   imposing step order or hierarchical pooling toward a common step profile.
+#'   mean, or sd. The last two specify a hierarchical population or scale.
+#' @param facet Target facet for mean/sd, or interaction name for bias.
+#'   For a hierarchical main facet (`"rater"`, `"item"`, etc.), hierarchical PCM
+#'   steps (`"tau"`), or a hierarchical two-way interaction (`"item:rater"`),
+#'   use `class = "sd"` and its facet/term name. Supported positive-scale priors
+#'   are `normal(0,s)`, `student_t(df,0,s)`, and `cauchy(0,s)` (restricted to
+#'   positive values), or `lognormal(m,s)`. A positive numeric value fixes the
+#'   SD. Population means (`class = "mean"`) apply only to `"person"`.
+#' @param scale Meaning of the SD for a constrained Gaussian facet, step, or
+#'   interaction prior: `"raw"` retains the historical pre-centering SD;
+#'   `"marginal"` specifies the constrained level SD. Marginal scaling requires
+#'   a `normal(0, sd)` prior (or a hierarchical `class = "sd"` prior). Singleton
+#'   blocks remain identically zero.
+#' @param local_shrinkage Optional local-global shrinkage structure for
+#'   hierarchical two-way interactions (`class = "sd"` with an interaction
+#'   `facet`): `"none"` (isotropic Gaussian conditional prior, default),
+#'   `"student_t"` (unit-variance Student-t scale mixture with df = 3,
+#'   `lambda ~ inv_gamma(1.5, 0.5)`, so conditional cell variance given `sigma`
+#'   is exactly `sigma^2` under `scale = "marginal"` and
+#'   `sigma^2 * (1 - 1/J1) * (1 - 1/J2)` under `scale = "raw"`), or
+#'   `"horseshoe"` (regularized horseshoe in latent cell space followed by
+#'   double centering; because its global scale parameter is a
+#'   distribution-specific shrinkage scale rather than a marginal cell SD,
+#'   `"horseshoe"` requires `scale = "raw"`). Note that local shrinkage acts on
+#'   unconstrained latent cells `U` prior to double centering `B = P1 U P2`:
+#'   double centering preserves label-permutation invariance and exact zero
+#'   row/column sums, but redistributes a single sparse latent deviation across
+#'   other cells of `B`. Thus latent-cell sparsity is distinct from exact zeros
+#'   in the reported relative bias matrix `B`; use a practical threshold
+#'   `delta > 0` in `summarise_bias()` to separate large deviations from small
+#'   centering spillover.
 #'
 #' @return bmfrm_prior object
 #' @export
@@ -33,63 +45,91 @@
 #' prior("student_t(3, 0, 1)", class = "rater")
 #' prior("normal(0, 1)", class = "tau")
 #'
-#' # Bias prior (requires facet specification)
+#' # Bias and hierarchical scale priors
 #' prior("normal(0, 0.5)", class = "bias", facet = "rater:item")
 #' prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal")
-prior <- function(spec, class, facet = NULL, scale = c("raw", "marginal")) {
+#' prior("normal(0, 0.5)", class = "sd", facet = "item:rater", local_shrinkage = "horseshoe")
+#' prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal", local_shrinkage = "student_t")
+#' prior("normal(0, 1)", class = "sd", facet = "rater", scale = "marginal")
+prior <- function(spec, class, facet = NULL, scale = c("raw", "marginal"),
+                  local_shrinkage = c("none", "horseshoe", "student_t")) {
   scale <- match.arg(scale)
+  local_shrinkage <- match.arg(local_shrinkage)
+
   # Validate class
   allowed_classes <- c("theta", "item", "rater", "bias", "tau", "mean", "sd")
   if (!is.character(class) || length(class) != 1L || is.na(class)) stop("class must be one parameter class")
   if (!class %in% allowed_classes && !grepl("^facet_", class)) {
-    stop("Invalid class '", class, "'. Must be one of: ", 
-         paste(allowed_classes, collapse = ", "), 
+    stop("Invalid class '", class, "'. Must be one of: ",
+         paste(allowed_classes, collapse = ", "),
          " or 'facet_<name>'")
   }
-  
+
   # Validate bias class requires facet
   if (class == "bias" && is.null(facet)) {
     stop("Class 'bias' requires 'facet' specification (e.g., facet = 'rater:item')")
   }
   if (!class %in% c("bias", "mean", "sd") && !is.null(facet)) stop("facet is only used for bias and population priors")
-  
+
   # Validate facet format for bias
   if (class == "bias" && !is.null(facet)) {
     if (!is.character(facet) || length(facet) != 1L || is.na(facet) || !grepl(":", facet)) {
       stop("Bias facet must be an interaction term (e.g., 'rater:item')")
     }
   }
-  
-  # Validate spec format - basic check for distribution name and parentheses
+
   population <- class %in% c("mean", "sd")
-  if (population && (!is.character(facet) || length(facet) != 1L || is.na(facet) || !nzchar(facet))) stop("Population priors require a target facet")
+  if (population && (!is.character(facet) || length(facet) != 1L || is.na(facet) || !nzchar(facet))) {
+    stop("Population priors require a target facet")
+  }
   interaction_sd <- population && grepl(":", facet, fixed = TRUE)
+  person_pop <- population && identical(facet, "person")
+  centered_sd <- population && !person_pop
+
+  if (local_shrinkage != "none" && !interaction_sd) {
+    stop("local_shrinkage is only supported for hierarchical two-way interaction priors (class = 'sd', facet = 'f1:f2')")
+  }
+  if (local_shrinkage == "horseshoe" && scale == "marginal") {
+    stop("local_shrinkage = 'horseshoe' uses a distribution-specific global shrinkage scale rather than a marginal cell SD; use scale = 'raw'")
+  }
+
   if (population) {
-    if (interaction_sd) {
-      if (class != "sd") stop("Centered interactions have no population mean; specify class = 'sd'")
-      interaction_sd_prior(spec)
-    } else rsm_population_prior(spec, if (class == "mean") "normal" else "lognormal", class == "sd")
+    if (centered_sd) {
+      if (class != "sd") {
+        stop("Centered facets, steps, and interactions have no population mean; specify class = 'sd'")
+      }
+      positive_sd_prior(spec)
+    } else {
+      # person population mean (normal) or sd (lognormal or fixed positive)
+      rsm_population_prior(spec, if (class == "mean") "normal" else "lognormal", class == "sd")
+    }
   } else if (!is.character(spec) || length(spec) != 1L || is.na(spec) ||
              !grepl("^[a-zA-Z_]+\\s*\\(.*\\)$", spec)) {
     stop("Invalid prior specification '", spec, "'. Must be in format 'distribution(parameters)'")
   }
+
   if (scale == "marginal") {
-    if (class %in% c("theta", "mean") || (class == "sd" && !interaction_sd)) stop("Marginal scaling applies only to constrained main facets, interactions and tau")
-    if (!interaction_sd) {
+    if (class %in% c("theta", "mean") || (class == "sd" && person_pop)) {
+      stop("Marginal scaling applies only to constrained main facets, interactions and tau")
+    }
+    if (!centered_sd) {
       p <- parse_bmfrm_prior_literal(spec)
-      if (p$distribution != "normal" || length(p$args) != 2L || p$args[1L] != 0 || p$args[2L] <= 0) stop("Marginal scaling requires normal(0, positive_sd)")
+      if (p$distribution != "normal" || length(p$args) != 2L || p$args[1L] != 0 || p$args[2L] <= 0) {
+        stop("Marginal scaling requires normal(0, positive_sd)")
+      }
     }
   }
-  
-  structure(
-    list(
-      spec  = spec,    # e.g. "normal(0,2)"
-      class = class,   # e.g. "theta", "item", "rater", "bias", "tau"
-      facet = facet,   # e.g. "rater:item" (only for bias)
-      scale = scale
-    ),
-    class = "bmfrm_prior"
+
+  obj <- list(
+    spec  = spec,    # e.g. "normal(0,2)"
+    class = class,   # e.g. "theta", "item", "rater", "bias", "tau", "mean", "sd"
+    facet = facet,   # e.g. "rater:item" or "person" or "rater" or "tau"
+    scale = scale
   )
+  if (local_shrinkage != "none") {
+    obj$local_shrinkage <- local_shrinkage
+  }
+  structure(obj, class = "bmfrm_prior")
 }
 
 #' Print method for bmfrm_prior
@@ -103,6 +143,14 @@ print.bmfrm_prior <- function(x, ...) {
     cat("Prior: ", x$spec, " for ", x$class, "\n", sep = "")
   }
   if (identical(x$scale, "marginal")) cat("  SD refers to each constrained level (singleton blocks are zero).\n")
+  if (!is.null(x$local_shrinkage) && x$local_shrinkage != "none") {
+    desc <- if (x$local_shrinkage == "student_t") {
+      "student_t (df = 3, unit-variance normalized)"
+    } else {
+      "horseshoe (global shrinkage scale; not a marginal cell SD)"
+    }
+    cat("  Local shrinkage:", desc, "\n")
+  }
 }
 
 #' Combine prior specifications without flattening their fields
@@ -125,10 +173,10 @@ c.bmfrm_prior <- function(..., recursive = FALSE) {
 #' @param facets_main vector of main facet names
 #' @param facets_bias vector of bias facet names
 #' @param family model family: "rsm" or "pcm"
-#' @param hierarchical Names of facets with hierarchical distributions. Currently
-#'   "person" and two-way interaction names are supported; character(0)
-#'   retains fixed-scale priors. A hierarchical interaction defaults to a
-#'   half-normal SD prior normal(0,0.5) with raw scaling.
+#' @param hierarchical Names of facets with hierarchical distributions. Supports
+#'   any main facet (e.g. `"person"`, `"rater"`, `"item"`), two-way interaction
+#'   terms (e.g. `"item:rater"`), and `"tau"` for hierarchical PCM partial
+#'   pooling toward common steps. `character(0)` retains fixed-scale priors.
 #'
 #' @return list of bmfrm_prior objects
 #' @export
@@ -137,36 +185,47 @@ get_default_priors <- function(facets_main = c("person", "item", "rater"),
                                family = "rsm", hierarchical = character()) {
   hierarchical <- validate_hierarchical(hierarchical, facets_main, facets_bias, family)
   priors <- list()
-  
+
   # Default priors for main facets
   for (facet in facets_main) {
     if (facet == "person") {
       if ("person" %in% hierarchical) {
-        priors <- c(priors, list(prior("normal(0, 2.5)", "mean", facet = "person"), prior("lognormal(0, 0.5)", "sd", facet = "person")))
-      } else priors[[length(priors) + 1]] <- prior("normal(0, 2)", class = "theta")
+        priors <- c(priors, list(
+          prior("normal(0, 2.5)", "mean", facet = "person"),
+          prior("lognormal(0, 0.5)", "sd", facet = "person")
+        ))
+      } else {
+        priors[[length(priors) + 1L]] <- prior("normal(0, 2)", class = "theta")
+      }
+    } else if (facet %in% hierarchical) {
+      priors[[length(priors) + 1L]] <- prior("normal(0, 1)", class = "sd", facet = facet)
     } else if (facet == "item") {
-      priors[[length(priors) + 1]] <- prior("normal(0, 1)", class = "item")
+      priors[[length(priors) + 1L]] <- prior("normal(0, 1)", class = "item")
     } else if (facet == "rater") {
-      priors[[length(priors) + 1]] <- prior("normal(0, 1)", class = "rater")
+      priors[[length(priors) + 1L]] <- prior("normal(0, 1)", class = "rater")
     } else {
-      # Other main facets get a generic name
       class_name <- paste0("facet_", facet)
-      priors[[length(priors) + 1]] <- prior("normal(0, 1)", class = class_name)
+      priors[[length(priors) + 1L]] <- prior("normal(0, 1)", class = class_name)
     }
   }
-  
+
   # Default priors for bias facets
   if (!is.null(facets_bias)) {
     for (bias_facet in facets_bias) {
-      priors[[length(priors) + 1]] <- prior("normal(0, 0.5)",
-                                             class = if (bias_facet %in% hierarchical) "sd" else "bias",
-                                             facet = bias_facet)
+      priors[[length(priors) + 1L]] <- prior(
+        "normal(0, 0.5)",
+        class = if (bias_facet %in% hierarchical) "sd" else "bias",
+        facet = bias_facet
+      )
     }
   }
-  
-  # Default prior for thresholds
-  priors[[length(priors) + 1]] <- prior("normal(0, 1)", class = "tau")
-  
+
+  # Default prior(s) for thresholds
+  priors[[length(priors) + 1L]] <- prior("normal(0, 1)", class = "tau")
+  if ("tau" %in% hierarchical) {
+    priors[[length(priors) + 1L]] <- prior("normal(0, 0.5)", class = "sd", facet = "tau")
+  }
+
   priors
 }
 
@@ -176,8 +235,7 @@ get_default_priors <- function(facets_main = c("person", "item", "rater"),
 #' @param facets_main vector of main facet names
 #' @param facets_bias vector of bias facet names
 #' @param family model family: "rsm" or "pcm"
-#' @param hierarchical Names of facets with hierarchical distributions. Currently
-#'   "person" and two-way interaction names are supported.
+#' @param hierarchical Names of facets with hierarchical distributions.
 #'
 #' @return validated list of priors
 #' @keywords internal
@@ -186,9 +244,16 @@ validate_priors <- function(priors, facets_main, facets_bias = NULL, family = "r
   if (is.null(priors)) priors <- defaults
   if (!is.list(priors) || !length(priors)) stop("priors must be a list of prior() objects")
   if (!all(vapply(priors, inherits, logical(1), "bmfrm_prior"))) stop("All elements of priors must be prior() objects")
-  # Revalidate edited objects and normalize saved priors without the scale field.
-  priors <- lapply(priors, function(p) prior(p$spec, p$class,
-    if (is.null(p$facet)) NULL else match_interaction_names(p$facet, facets_bias), p$scale %||% "raw"))
+  # Revalidate edited objects and normalize saved priors without scale/local_shrinkage fields.
+  priors <- lapply(priors, function(p) {
+    prior(
+      p$spec,
+      p$class,
+      if (is.null(p$facet)) NULL else match_interaction_names(p$facet, facets_bias),
+      p$scale %||% "raw",
+      p$local_shrinkage %||% "none"
+    )
+  })
   key <- function(p) paste(p$class, p$facet %||% "", sep = ":")
   keys <- vapply(priors, key, character(1))
   required <- vapply(defaults, key, character(1))

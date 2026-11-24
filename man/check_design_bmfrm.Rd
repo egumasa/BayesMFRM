@@ -12,7 +12,8 @@ check_design_bmfrm(
   observed_only = FALSE,
   tol = 1e-10,
   max_cells = 2e+06,
-  threshold_facet = NULL
+  threshold_facet = NULL,
+  method = c("auto", "dense", "schur")
 )
 }
 \arguments{
@@ -28,21 +29,17 @@ check_design_bmfrm(
 
 \item{tol}{Relative singular-value tolerance.}
 
-\item{max_cells}{Limit for the dense matrix used by this initial implementation.}
+\item{max_cells}{Cell limit for dense SVD (and for \code{p_other^2} in Schur mode).}
 
 \item{threshold_facet}{Required for PCM: the facet with within-level centered steps.}
+
+\item{method}{Solver mode: \code{"auto"} (dense SVD when within \code{max_cells},
+Schur-complement solver otherwise), \code{"dense"} (strict dense SVD limit), or
+\code{"schur"} (always use within-person Schur-complement solver).}
 }
 \value{
 A bmfrm_design_check with component membership, rank, null spaces,
-the constraint map, and observation counts. rank/null_space describe the
-category-independent predictor. Adjacent-logit rank also includes step
-contrasts: K-2 for RSM, or K-2 for each observed threshold-facet level in PCM.
-Unobserved PCM step levels are reported separately; no large Kronecker matrix
-is constructed. This is a property of all adjacent logits, not just observed
-response categories. condition_number concerns the predictor only.
-Interaction contrasts are included in rank/null_space. interaction_levels
-retains every planned cell, its observation count and constraint-map row.
-Sum-to-zero interaction constraints are unweighted across declared levels.
+the constraint map, and observation counts.
 }
 \description{
 Checks the facet incidence graph and the rank of the linear predictor after
@@ -50,4 +47,12 @@ imposing the same sum-to-zero constraints as the generated model. Connectivity
 alone does not establish identification. This is a numerical structural rank
 check, not a test for separation, practical precision, or adequate categories.
 Unused levels of factor columns are retained as planned levels.
+}
+\details{
+For small/medium designs (\code{n * p <= max_cells} and \code{p * p <= max_cells}),
+uses dense SVD. For large designs (e.g., thousands of persons), \code{method = "auto"}
+automatically switches to an exact Schur-complement (within-person Gram
+matrix) solver that scales in \code{O(n * p_other + p_other^3)} without ever
+forming an \verb{n x P} dense matrix, while still computing the exact structural
+rank and null space.
 }

@@ -4,20 +4,93 @@
 \alias{fair_scores}
 \title{Extract fair scores}
 \usage{
-fair_scores(object, summary = TRUE, ...)
+fair_scores(
+  object,
+  summary = TRUE,
+  adjust_facets = NULL,
+  standardize = FALSE,
+  reference_grid = NULL,
+  reference_weights = NULL,
+  decompose = FALSE,
+  return_draws = FALSE,
+  max_grid_cells = 10000L,
+  max_output_rows = 1000000L,
+  chunk_size = NULL,
+  ...
+)
 }
 \arguments{
 \item{object}{bmfrm_fit object}
 
-\item{summary}{whether to return summary or observation-level scores}
+\item{summary}{whether to return person-level summaries or row-level scores}
+
+\item{adjust_facets}{Optional character vector of nuisance facet names to
+remove (default NULL auto-detects \code{"rater"} and \code{"interlocutor"}).}
+
+\item{standardize}{Logical; if TRUE, standardize every person to the common
+reference grid of unadjusted non-person facets (or \code{reference_grid}).}
+
+\item{reference_grid}{Optional data.frame of unadjusted non-person facet
+combinations (and optional \code{weight} column) used for standardized
+evaluation.}
+
+\item{reference_weights}{Optional weights over \code{reference_grid}: either a
+non-negative numeric vector of length \code{nrow(reference_grid)} or a named
+list of named facet-level weight vectors (e.g.,
+\code{list(item = c(k1 = 0.4, k2 = 0.3, k3 = 0.3))}). Normalized internally to
+sum to 1.}
+
+\item{decompose}{Logical; if TRUE (requires \code{summary = TRUE}), add exact
+draw-matched decomposition columns separating pure facet adjustment,
+optional standardization shift, and shrinkage/sampling noise with 95\% CrIs.}
+
+\item{return_draws}{Logical; if TRUE (requires \code{summary = TRUE}), attach
+\verb{D x P} posterior draw matrices as \code{attr(res, "draws")} and reference
+metadata as \code{attr(res, "reference_meta")}.}
+
+\item{max_grid_cells}{Maximum number of cells allowed when auto-expanding the
+common reference grid for \code{standardize = TRUE} (default \code{10000L}). Prevents
+combinatorial explosion with many unadjusted facets; supply an explicit
+\code{reference_grid} or raise \code{max_grid_cells} deliberately for larger grids.}
+
+\item{max_output_rows}{Maximum total person x reference-grid rows allowed
+when \code{standardize = TRUE} and \code{summary = FALSE} (default \code{1000000L}).}
+
+\item{chunk_size}{Optional observation chunk size for streaming posterior
+evaluation (auto-sized to ~16 MB per chunk when NULL).}
 
 \item{...}{unused}
 }
 \description{
-Person summaries average joint posterior draws over that person's observed
-item mix. They do not standardize different persons to a common item design.
-PCM steps on an adjusted facet (rater or interlocutor) require a reference
-step profile, which is not implemented; this case raises an error.
-Interactions involving rater or interlocutor are removed; other interactions
-remain in the prediction.
+Computes expected scores after setting adjusted nuisance facets (and any
+interactions involving them) to zero (average severity). By default,
+\code{"rater"} and \code{"interlocutor"} are detected automatically; if neither is
+present and other non-person facets exist, a warning is issued so custom
+facet names (e.g., \code{"judge"}, \code{"examiner"}) are not silently left unadjusted.
+}
+\details{
+When \code{standardize = TRUE} (or \code{reference_grid} / \code{reference_weights} is
+supplied), person summaries are evaluated over a common reference condition
+spanning the unadjusted facets, optionally weighted by \code{reference_weights}
+(e.g., rubric blueprint weights such as \code{list(item = c(content = 0.4, org = 0.3, lang = 0.3))}
+or a numeric row-weight vector / \code{reference_grid$weight} column).
+
+When \code{decompose = TRUE} (with \code{summary = TRUE}), computes exact draw-matched
+decompositions of \code{Fair - Raw} on the same posterior draws:
+\itemize{
+\item Under \code{standardize = FALSE}: \code{fair_minus_raw = adjustment + shrinkage_and_noise},
+separating pure nuisance-facet adjustment (\code{E[mu_fair - mu_actual]}) from
+hierarchical shrinkage and sampling noise (\code{E[mu_actual] - mean_score}).
+\item Under \code{standardize = TRUE}: \code{fair_minus_raw = standardization_shift + adjustment + shrinkage_and_noise},
+further separating the design/criterion weighting shift from pure rater adjustment.
+}
+
+When \code{return_draws = TRUE} (with \code{summary = TRUE}), attaches person-level
+posterior draw matrices (\verb{D x P}) as \code{attr(res, "draws")} so users can
+compute draw-matched score contrasts across reference conditions without
+subtracting marginal credible intervals.
+
+For non-hierarchical PCM with steps on an adjusted facet, no reference step
+profile exists and an error is raised. For hierarchical PCM
+(\code{hierarchical = "tau"}), the shared \code{tau_common} profile is used.
 }

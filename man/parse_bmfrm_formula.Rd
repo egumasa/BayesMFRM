@@ -12,7 +12,8 @@ parse_bmfrm_formula(
   threshold_facet = NULL,
   model_name = NULL,
   cache_dir = "stan_cache",
-  hierarchical = character()
+  hierarchical = character(),
+  save_gq = c("full", "minimal")
 )
 }
 \arguments{
@@ -30,9 +31,15 @@ parse_bmfrm_formula(
 
 \item{cache_dir}{cache directory}
 
-\item{hierarchical}{Names of facets with hierarchical distributions. Currently
-"person" and two-way interaction terms are implemented. Component order
-in interaction names does not affect prior matching.}
+\item{hierarchical}{Names of facets or terms with hierarchical distributions
+(e.g., \code{"person"}, centered main facets such as \code{"rater"} / \code{"item"},
+two-way interactions such as \code{"item:rater"}, or \code{"tau"} for hierarchical
+PCM). Component order in interaction names does not affect prior matching.}
+
+\item{save_gq}{Either \code{"full"} (default; generate observation-level
+\code{log_lik}, \code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan \verb{generated quantities})
+or \code{"minimal"} (omit observation-level \verb{generated quantities} and compute
+downstream quantities in memory-bounded R chunks).}
 }
 \value{
 bmfrm_spec object with model specification

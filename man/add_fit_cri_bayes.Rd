@@ -2,7 +2,7 @@
 % Please edit documentation in R/fit_stats.R
 \name{add_fit_cri_bayes}
 \alias{add_fit_cri_bayes}
-\title{Bayesian CrIs for infit & outfit using draws stored in residuals}
+\title{Bayesian CrIs and posterior means for infit & outfit using draws stored in residuals}
 \usage{
 add_fit_cri_bayes(fit_stats, res_df, facet, prob = 0.95)
 }
@@ -11,13 +11,16 @@ add_fit_cri_bayes(fit_stats, res_df, facet, prob = 0.95)
 
 \item{res_df}{tibble from extract_residuals() with draws}
 
-\item{facet}{facet name}
+\item{facet}{facet name (bare column name or string)}
 
 \item{prob}{probability for credible intervals}
 }
 \value{
-fit_stats tibble with added CrI columns
+fit_stats tibble with added posterior summary and CrI columns
 }
 \description{
-Bayesian CrIs for infit & outfit using draws stored in residuals
+Computes draw-level infit and outfit mean squares for each facet level,
+returning posterior means alongside credible intervals so point estimates
+and intervals come from the same posterior distribution (avoiding Jensen's
+inequality discrepancies between plug-in means and draw intervals).
 }

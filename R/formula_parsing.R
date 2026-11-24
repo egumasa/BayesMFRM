@@ -7,9 +7,14 @@
 #' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
 #' @param model_name optional model name for caching
 #' @param cache_dir cache directory
-#' @param hierarchical Names of facets with hierarchical distributions. Currently
-#'   "person" and two-way interaction terms are implemented. Component order
-#'   in interaction names does not affect prior matching.
+#' @param hierarchical Names of facets or terms with hierarchical distributions
+#'   (e.g., `"person"`, centered main facets such as `"rater"` / `"item"`,
+#'   two-way interactions such as `"item:rater"`, or `"tau"` for hierarchical
+#'   PCM). Component order in interaction names does not affect prior matching.
+#' @param save_gq Either `"full"` (default; generate observation-level
+#'   `log_lik`, `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan `generated quantities`)
+#'   or `"minimal"` (omit observation-level `generated quantities` and compute
+#'   downstream quantities in memory-bounded R chunks).
 #'
 #' @return bmfrm_spec object with model specification
 #' @export
@@ -20,11 +25,13 @@ parse_bmfrm_formula <- function(formula,
                                threshold_facet = NULL,
                                model_name = NULL,
                                cache_dir = "stan_cache",
-                               hierarchical = character()) {
+                               hierarchical = character(),
+                               save_gq = c("full", "minimal")) {
 
   # Validate family
   allowed_families <- c("rsm", "pcm")
   family <- match.arg(family, allowed_families)
+  save_gq <- match.arg(save_gq)
   
   # Parse formula terms
   terms_obj <- stats::terms(formula)
@@ -45,6 +52,7 @@ parse_bmfrm_formula <- function(formula,
   
   # Remove parentheses from bias terms if present
   facets_bias <- gsub("[()]", "", facets_bias)
+  validate_facet_names(facets_main)
   validate_interaction_terms(facets_main, facets_bias)
   
   # Check all variables exist in data
@@ -84,6 +92,11 @@ parse_bmfrm_formula <- function(formula,
     if (min(resp, na.rm = TRUE) < 1) {
       stop("Response values must start from 1, not 0. Add 1 to your scores if needed.")
     }
+    message(
+      "K was not specified; inferred K = ", K, " from max(", response_name, "). ",
+      "If your rating rubric defines higher categories that did not occur in this sample, ",
+      "pass K explicitly (e.g., K = 6) so the intended rating scale is modeled."
+    )
   }
   
   validate_category_count(K)
@@ -108,6 +121,7 @@ parse_bmfrm_formula <- function(formula,
     family          = family,
     hierarchical    = hierarchical,
     threshold_facet = threshold_facet,
+    save_gq         = save_gq,
     formula         = formula,
     model_name      = model_name,
     cache_dir       = cache_dir

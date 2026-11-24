@@ -4,34 +4,53 @@
 \alias{prior}
 \title{Create a prior specification for bmfrm models}
 \usage{
-prior(spec, class, facet = NULL, scale = c("raw", "marginal"))
+prior(
+  spec,
+  class,
+  facet = NULL,
+  scale = c("raw", "marginal"),
+  local_shrinkage = c("none", "horseshoe", "student_t")
+)
 }
 \arguments{
 \item{spec}{Prior distribution string. For a population mean or SD, a numeric
 value fixes that parameter (SD must be positive).}
 
 \item{class}{Parameter class: theta, item, rater, bias, tau, facet_\if{html}{\out{<name>}},
-mean, or sd. The last two specify a hierarchical population.}
+mean, or sd. The last two specify a hierarchical population or scale.}
 
-\item{facet}{Target facet for mean/sd, or interaction name for bias. For a
-hierarchical two-way interaction, use class = "sd" and its term name.
-Supported interaction SD priors are normal(0,s), student_t(df,0,s), and
-cauchy(0,s), restricted to positive values, or lognormal(m,s). A positive
-numeric value fixes its SD. Population means are absent for centered interactions.}
+\item{facet}{Target facet for mean/sd, or interaction name for bias.
+For a hierarchical main facet (\code{"rater"}, \code{"item"}, etc.), hierarchical PCM
+steps (\code{"tau"}), or a hierarchical two-way interaction (\code{"item:rater"}),
+use \code{class = "sd"} and its facet/term name. Supported positive-scale priors
+are \code{normal(0,s)}, \code{student_t(df,0,s)}, and \code{cauchy(0,s)} (restricted to
+positive values), or \code{lognormal(m,s)}. A positive numeric value fixes the
+SD. Population means (\code{class = "mean"}) apply only to \code{"person"}.}
 
-\item{scale}{Meaning of the SD for a constrained Gaussian facet or step prior:
-"raw" retains the historical pre-centering SD; "marginal" specifies the
-constrained level SD. Marginal scaling requires a normal(0, sd) prior and
-generated Gaussian RSM/PCM. Singleton blocks remain identically zero.
-For a hierarchical interaction SD, "marginal" refers to each cell's
-conditional SD given that parameter; "raw" retains the double-centering
-variance factor (1-1/J1)*(1-1/J2). This does not describe the hyperprior's SD.
-For tau, a block comprises K-1 steps: one shared block in RSM, or one
-independent block per threshold-facet level in PCM. PCM steps are centered
-within that level, not across levels. For S = K-1 > 1, raw Gaussian step
-variance is sd^2 * (1-1/S); marginal scaling makes it sd^2. Binary steps are
-identically zero. These priors shrink deviations toward zero, without
-imposing step order or hierarchical pooling toward a common step profile.}
+\item{scale}{Meaning of the SD for a constrained Gaussian facet, step, or
+interaction prior: \code{"raw"} retains the historical pre-centering SD;
+\code{"marginal"} specifies the constrained level SD. Marginal scaling requires
+a \code{normal(0, sd)} prior (or a hierarchical \code{class = "sd"} prior). Singleton
+blocks remain identically zero.}
+
+\item{local_shrinkage}{Optional local-global shrinkage structure for
+hierarchical two-way interactions (\code{class = "sd"} with an interaction
+\code{facet}): \code{"none"} (isotropic Gaussian conditional prior, default),
+\code{"student_t"} (unit-variance Student-t scale mixture with df = 3,
+\code{lambda ~ inv_gamma(1.5, 0.5)}, so conditional cell variance given \code{sigma}
+is exactly \code{sigma^2} under \code{scale = "marginal"} and
+\code{sigma^2 * (1 - 1/J1) * (1 - 1/J2)} under \code{scale = "raw"}), or
+\code{"horseshoe"} (regularized horseshoe in latent cell space followed by
+double centering; because its global scale parameter is a
+distribution-specific shrinkage scale rather than a marginal cell SD,
+\code{"horseshoe"} requires \code{scale = "raw"}). Note that local shrinkage acts on
+unconstrained latent cells \code{U} prior to double centering \verb{B = P1 U P2}:
+double centering preserves label-permutation invariance and exact zero
+row/column sums, but redistributes a single sparse latent deviation across
+other cells of \code{B}. Thus latent-cell sparsity is distinct from exact zeros
+in the reported relative bias matrix \code{B}; use a practical threshold
+\code{delta > 0} in \code{summarise_bias()} to separate large deviations from small
+centering spillover.}
 }
 \value{
 bmfrm_prior object
@@ -46,7 +65,10 @@ prior("normal(0, 1)", class = "item")
 prior("student_t(3, 0, 1)", class = "rater")
 prior("normal(0, 1)", class = "tau")
 
-# Bias prior (requires facet specification)
+# Bias and hierarchical scale priors
 prior("normal(0, 0.5)", class = "bias", facet = "rater:item")
 prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal")
+prior("normal(0, 0.5)", class = "sd", facet = "item:rater", local_shrinkage = "horseshoe")
+prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal", local_shrinkage = "student_t")
+prior("normal(0, 1)", class = "sd", facet = "rater", scale = "marginal")
 }

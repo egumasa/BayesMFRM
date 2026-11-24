@@ -91,7 +91,7 @@ generated quantities {
     logits_fair[1] = 0;
     for (k in 2:K) {
       logits_full[k] = logits_full[k-1] + eta_full - tau[threshold_n, k-1];
-      logits_fair[k] = logits_fair[k-1] + eta_fair - tau[threshold_n, k-1];
+      logits_fair[k] = logits_fair[k-1] + eta_fair - // {{FAIR_TAU_EXPR}};
     }
 
     // probabilities

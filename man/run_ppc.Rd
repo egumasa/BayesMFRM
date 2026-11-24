@@ -4,10 +4,11 @@
 \alias{run_ppc}
 \title{Run posterior predictive checks}
 \usage{
-run_ppc(fit, y_obs, ndraws = 200, seed = 123, group = NULL)
+run_ppc(fit, y_obs, ndraws = 200, seed = 123, group = NULL, y_rep = NULL)
 }
 \arguments{
-\item{fit}{cmdstanr fit object with y_rep in generated quantities}
+\item{fit}{cmdstanr fit object with y_rep in generated quantities (or unused
+when \code{y_rep} is supplied directly)}
 
 \item{y_obs}{observed response data}
 
@@ -16,6 +17,9 @@ run_ppc(fit, y_obs, ndraws = 200, seed = 123, group = NULL)
 \item{seed}{random seed}
 
 \item{group}{Optional grouping vector for conditional checks.}
+
+\item{y_rep}{Optional precomputed replicated response matrix (\verb{D x N}),
+e.g. from on-demand computation when \code{save_gq = "minimal"}.}
 }
 \value{
 list with PPC plots and y_rep subset

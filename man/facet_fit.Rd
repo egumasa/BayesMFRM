@@ -4,12 +4,16 @@
 \alias{facet_fit}
 \title{Extract facet fit statistics}
 \usage{
-facet_fit(object, facet, ...)
+facet_fit(object, facet, prob = 0.95, chunk_size = NULL, ...)
 }
 \arguments{
 \item{object}{bmfrm_fit object}
 
 \item{facet}{name of facet}
+
+\item{prob}{credible interval probability (default 0.95)}
+
+\item{chunk_size}{Optional observation chunk size for streaming evaluation.}
 
 \item{...}{unused}
 }

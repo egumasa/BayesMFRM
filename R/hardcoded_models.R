@@ -120,6 +120,62 @@ bmfrm_model <- function(name, compile = FALSE, cache_dir = "stan_cache") {
   result
 }
 
+#' Internal registry of verified bundled Stan models and their R-engine compatibility
+#'
+#' Maps each bundled model under `inst/stan/models/` to its verified likelihood
+#' structure, whether the R posterior-quantity engine matches its parameter names
+#' and linear predictor, and which facets its built-in `mu_fair` adjusts.
+#'
+#' @keywords internal
+bundled_stan_model_registry <- function() {
+  list(
+    "two-facet/person-rater-main" = list(
+      family = "rsm",
+      facets_main = c("person", "rater"),
+      facets_bias = character(0),
+      r_recompute = TRUE,
+      stan_mu_fair_adjust = "rater",
+      supported_ops = c("residuals", "facet_fit", "fair_scores", "standardized_fair_scores", "pp_check", "predict", "loo")
+    ),
+    "three-facet/person-rater-scenario-main" = list(
+      family = "rsm",
+      facets_main = c("person", "rater", "scenario"),
+      facets_bias = character(0),
+      r_recompute = TRUE,
+      stan_mu_fair_adjust = c("rater", "scenario"),
+      supported_ops = c("residuals", "facet_fit", "fair_scores", "standardized_fair_scores", "pp_check", "predict", "loo")
+    ),
+    "four-facet/person-item-rater-scenario-main" = list(
+      family = "rsm",
+      facets_main = c("person", "item", "rater", "scenario"),
+      facets_bias = character(0),
+      r_recompute = FALSE,
+      stan_mu_fair_adjust = c("rater", "scenario"),
+      supported_ops = c("stan_gq_only")
+    )
+  )
+}
+
+#' Match Stan source code exactly against verified bundled Stan models
+#' @keywords internal
+match_bundled_stan_model <- function(stan_code) {
+  if (is.null(stan_code) || !is.character(stan_code) || length(stan_code) != 1L || !nzchar(stan_code)) {
+    return(NULL)
+  }
+  norm_code <- sub("\n+$", "", gsub("\r\n", "\n", stan_code, fixed = TRUE))
+  reg <- bundled_stan_model_registry()
+  for (name in names(reg)) {
+    path <- tryCatch(get_hardcoded_model_path(name), error = function(e) NULL)
+    if (is.null(path) || !file.exists(path)) next
+    ref_code <- paste(readLines(path, warn = FALSE), collapse = "\n")
+    norm_ref <- sub("\n+$", "", gsub("\r\n", "\n", ref_code, fixed = TRUE))
+    if (identical(norm_code, norm_ref)) {
+      return(c(list(model_id = name), reg[[name]]))
+    }
+  }
+  NULL
+}
+
 #' Print method for bmfrm_hardcoded_model objects
 #' @param x bmfrm_hardcoded_model object
 #' @param ... unused

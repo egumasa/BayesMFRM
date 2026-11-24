@@ -2,13 +2,15 @@
 % Please edit documentation in R/bias_analysis.R
 \name{summarise_bias_ir}
 \alias{summarise_bias_ir}
-\title{Summarize rater × criterion bias effects}
+\title{Summarize rater x criterion bias effects (legacy raw \code{bias[I,R]} fits)}
 \usage{
 summarise_bias_ir(
   fit,
   item_labels = NULL,
   rater_labels = NULL,
-  prob_thresh = 0.95
+  prob_thresh = 0.95,
+  diagnostics = TRUE,
+  mcse_multiplier = 2
 )
 }
 \arguments{
@@ -18,11 +20,32 @@ summarise_bias_ir(
 
 \item{rater_labels}{optional character vector length R}
 
-\item{prob_thresh}{posterior probability threshold for flagging (e.g., .95)}
+\item{prob_thresh}{posterior directional probability threshold in (0.5, 1]
+for flagging (default 0.95; e.g., use 0.975 to match a two-sided 95\% CrI
+excluding 0)}
+
+\item{diagnostics}{Logical; include probability Monte Carlo standard errors
+(MCSE) and numerical decision stability (default \code{TRUE}). \code{FALSE} retains
+the original summary columns and skips these calculations.}
+
+\item{mcse_multiplier}{Positive multiplier for the approximate Monte Carlo
+error band \verb{probability +/- mcse_multiplier * MCSE} (default 2). This does
+not change \code{prob_thresh}, \code{delta}, or \code{flag_bias}.}
 }
 \value{
-tibble with item, rater, bias_mean, sd, CrI, prob_pos, prob_neg, flag
+tibble with item, rater, bias_mean, sd, CrI, prob_pos, prob_neg, flag.
+With \code{diagnostics = TRUE}, also returns \code{mcse_prob_pos}, \code{mcse_prob_neg},
+\code{prob_thresh}, \code{mcse_multiplier}, \code{decision_stable}, and \code{decision_status}.
 }
 \description{
-Summarize rater × criterion bias effects
+Applies the same single directional posterior probability rule as
+\code{\link[=summarise_bias]{summarise_bias()}} (\code{prob_pos >= prob_thresh} for \code{"positive_bias"},
+\code{prob_neg >= prob_thresh} for \code{"negative_bias"}). Pass \code{prob_thresh = 0.975}
+to match a two-sided 95\% credible interval excluding 0.
+}
+\details{
+Uses the same probability MCSE and numerical stability rules as
+\code{\link[=summarise_bias]{summarise_bias()}}, with \code{delta = 0}. Sampler checks are obtained from the
+raw fit; if unavailable, stability is \code{NA}. This legacy interface does not
+check likelihood identification.
 }

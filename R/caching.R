@@ -20,7 +20,8 @@ fit_cmdstan_cached <- function(model, data, file, refit = c("never", "always", "
   dots <- list(...)
   if (length(dots) && (is.null(names(dots)) || any(names(dots) == ""))) stop("Sampling arguments must be named")
   if (any(c("data", "seed", "chains", "parallel_chains", "output_dir") %in% names(dots))) stop("Reserved sampling argument supplied twice")
-  sampling <- c(list(seed = seed, chains = chains, parallel_chains = parallel_chains), dots[order(names(dots))])
+  ordered_dots <- if (length(dots)) dots[order(names(dots))] else list()
+  sampling <- c(list(seed = seed, chains = chains, parallel_chains = parallel_chains), ordered_dots)
   signature <- list(schema = 2L, code = model$code(), data = data, sampling = sampling,
                     cmdstan = tryCatch(as.character(cmdstanr::cmdstan_version()), error = function(e) NA_character_))
   current_hash <- digest::digest(signature)
