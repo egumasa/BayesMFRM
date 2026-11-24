@@ -123,43 +123,147 @@ prepare_data_bmfrm <- function(spec, data, priors = NULL, obs_id = NULL) {
   }
   
   response <- df[[spec$response]]
-  validate_category_count(spec$K)
   if (!is.numeric(response) || any(!is.finite(response)) || any(response != floor(response))) {
     stop("Response must contain finite integer scores")
   }
+  spec_eff <- spec
+  is_hetero <- isTRUE(spec_eff$K_heterogeneous)
 
   # 5. Build stan_data list
-  stan_data <- list(
-    N = nrow(df),
-    K = spec$K,
-    X = as.integer(df[[spec$response]])
-  )
+  # Separate input-level rubric validation from post-NA-drop level mapping so
+  # dropping an all-NA level from a character column never rejects valid scalar K
+  # or valid pre-NA named K definitions. If all retained levels share a single K
+  # (including K = 2), normalize smoothly to the uniform PCM path.
+  if (is_hetero) {
+    tf <- spec_eff$threshold_facet
+    tf_labels <- label_map[[tf]]
+    raw_K_by_level <- spec_eff$K_by_level
+    if (is.null(raw_K_by_level) || is.null(names(raw_K_by_level))) {
+      stop("Heterogeneous PCM specification requires named K_by_level")
+    }
+    missing_lv <- setdiff(tf_labels, names(raw_K_by_level))
+    if (length(missing_lv) > 0L) {
+      stop(
+        "Named vector K is missing level(s) of threshold_facet '", tf, "': ",
+        paste(missing_lv, collapse = ", ")
+      )
+    }
+    input_tf_vec <- data[[tf]]
+    input_tf_levels <- if (is.factor(input_tf_vec)) {
+      levels(input_tf_vec)
+    } else {
+      unique(as.character(input_tf_vec[!is.na(input_tf_vec)]))
+    }
+    unknown_lv <- setdiff(names(raw_K_by_level), union(tf_labels, input_tf_levels))
+    if (length(unknown_lv) > 0L) {
+      stop(
+        "Named vector K contains unknown level(s) not present in threshold_facet '", tf, "': ",
+        paste(unknown_lv, collapse = ", ")
+      )
+    }
+    K_level_named <- stats::setNames(as.integer(raw_K_by_level[tf_labels]), tf_labels)
+    obs_tf <- as.character(df[[tf]])
+    obs_K <- unname(K_level_named[obs_tf])
+    bad <- response < 1 | response > obs_K
+    if (any(bad)) {
+      bad_lv <- unique(obs_tf[bad])
+      stop(
+        "Response values exceed valid category range 1..K_j for threshold_facet '",
+        tf, "' level(s): ",
+        paste(sprintf("%s (1..%d)", bad_lv, K_level_named[bad_lv]), collapse = ", ")
+      )
+    }
+    K_level_int <- as.integer(unname(K_level_named))
+    K_max_int <- as.integer(max(K_level_int))
+    if (length(unique(K_level_int)) == 1L) {
+      # All surviving levels share a single category count (e.g., K = 2 only):
+      # normalize internal specification and Stan data to the uniform PCM path.
+      is_hetero <- FALSE
+      spec_eff$K <- K_max_int
+      spec_eff$K_by_level <- K_level_named
+      spec_eff$K_max <- K_max_int
+      spec_eff$K_heterogeneous <- FALSE
+      if (!is.null(spec_eff$gaussian_model)) {
+        spec_eff <- resolve_bmfrm_spec(spec_eff, spec_eff$priors)
+      }
+      stan_data <- list(
+        N = nrow(df),
+        K = K_max_int,
+        X = as.integer(response)
+      )
+    } else {
+      tau_len_int <- as.integer(K_level_int - 1L)
+      tau_start_int <- as.integer(c(1L, utils::head(cumsum(tau_len_int), -1L) + 1L))
+      stan_data <- list(
+        N = nrow(df),
+        K_max = K_max_int,
+        X = as.integer(response),
+        K_level = K_level_int,
+        N_tau_steps = as.integer(sum(tau_len_int)),
+        tau_start = tau_start_int,
+        tau_len = tau_len_int
+      )
+    }
+  } else {
+    K_scalar <- if (length(spec_eff$K) == 1L) spec_eff$K else as.integer(get_spec_K_max(spec_eff))
+    validate_category_count(K_scalar)
+    K_max_int <- as.integer(K_scalar)
+    stan_data <- list(
+      N = nrow(df),
+      K = K_scalar,
+      X = as.integer(response)
+    )
+    K_level_named <- if (identical(spec_eff$family, "pcm") && !is.null(spec_eff$threshold_facet)) {
+      tf_labels <- label_map[[spec_eff$threshold_facet]]
+      stats::setNames(rep(K_max_int, length(tf_labels)), tf_labels)
+    } else {
+      NULL
+    }
+  }
   
   # Add main facet data
-  for (f in spec$facets_main) {
+  for (f in spec_eff$facets_main) {
     stan_data[[paste0(f, "_id")]] <- idx_list[[f]]
     stan_data[[paste0("J_", f)]] <- J_list[[f]]
   }
-  if (!is.null(spec$gaussian_model)) {
-    stan_data <- c(stan_data, gaussian_model_data(spec$gaussian_model, label_map, spec$K))
+  if (!is.null(spec_eff$gaussian_model)) {
+    stan_data <- c(
+      stan_data,
+      gaussian_model_data(spec_eff$gaussian_model, label_map, K_max_int, K_by_level = K_level_named)
+    )
+  } else if (is_hetero) {
+    # Legacy/no-gaussian_model raw ragged step offsets
+    K_level_int <- as.integer(unname(K_level_named))
+    tau_raw_len <- ifelse(K_level_int >= 3L, K_level_int - 1L, 0L)
+    tau_raw_start <- as.integer(cumsum(c(1L, utils::head(tau_raw_len, -1L))))
+    tau_raw_start[tau_raw_len == 0L] <- 1L
+    stan_data$N_tau_raw <- as.integer(sum(tau_raw_len))
+    stan_data$tau_raw_start <- as.integer(tau_raw_start)
+    stan_data$tau_raw_len <- as.integer(tau_raw_len)
   }
   
-  # 6. Validate response values are in expected range
-  score_range <- range(stan_data$X)
-  if (score_range[1] < 1 || score_range[2] > spec$K) {
-    stop("Response values must be between 1 and ", spec$K, 
-         ", but found range ", score_range[1], " to ", score_range[2])
+  # 6. Validate response values are in expected range (already checked per level above for hetero)
+  if (!is_hetero) {
+    score_range <- range(stan_data$X)
+    if (score_range[1] < 1 || score_range[2] > K_max_int) {
+      stop("Response values must be between 1 and ", K_max_int, 
+           ", but found range ", score_range[1], " to ", score_range[2])
+    }
   }
   
   # 7. Return structured result
   list(
-    stan_data      = stan_data,
-    data_clean     = df,
-    facet_labels   = label_map,
-    bias_labels    = bias_label_map,
-    obs_id         = obs_id_clean,
-    obs_id_source  = obs_id_source,
-    orig_row_index = orig_row_index
+    stan_data       = stan_data,
+    data_clean      = df,
+    facet_labels    = label_map,
+    bias_labels     = bias_label_map,
+    spec            = spec_eff,
+    K_by_level      = K_level_named,
+    K_max           = K_max_int,
+    K_heterogeneous = is_hetero,
+    obs_id          = obs_id_clean,
+    obs_id_source   = obs_id_source,
+    orig_row_index  = orig_row_index
   )
 }
 

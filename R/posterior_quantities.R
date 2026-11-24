@@ -160,7 +160,8 @@ check_fair_score_identifiability <- function(object, eval_df, adjust_facets = ch
     ))
   }
   dc <- object$design
-  n_free_steps <- if (!is.null(object$spec$K)) max(as.integer(object$spec$K) - 2L, 0L) else NA_integer_
+  K_max_val <- if (!is.null(object$spec$K)) get_spec_K_max(object$spec) else NA_integer_
+  n_free_steps <- if (!is.na(K_max_val)) max(K_max_val - 2L, 0L) else NA_integer_
   has_free_steps <- is.na(n_free_steps) || n_free_steps > 0L
   uses_hier_common_tau <- identical(object$spec$family, "pcm") &&
     has_free_steps &&
@@ -251,7 +252,8 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
     return(list(likelihood_identified = rep(NA, P), identification_basis = rep(NA_character_, P)))
   }
   dc <- object$design
-  n_free_steps <- if (!is.null(object$spec$K)) max(as.integer(object$spec$K) - 2L, 0L) else NA_integer_
+  K_max_val <- if (!is.null(object$spec$K)) get_spec_K_max(object$spec) else NA_integer_
+  n_free_steps <- if (!is.na(K_max_val)) max(K_max_val - 2L, 0L) else NA_integer_
   has_free_steps <- is.na(n_free_steps) || n_free_steps > 0L
   uses_hier_common_tau <- identical(object$spec$family, "pcm") &&
     has_free_steps &&
@@ -431,8 +433,9 @@ resolve_adjust_facets <- function(spec, adjust_facets = NULL, warn_if_empty = TR
 extract_bmfrm_param_draws <- function(object, adjust_facets = character(), draw_idx = NULL) {
   spec <- object$spec
   labels <- object$data_info$facet_labels
-  K <- as.integer(spec$K)
+  K <- get_spec_K_max(spec)
   family <- spec$family %||% "rsm"
+  is_hetero <- isTRUE(spec$K_heterogeneous)
 
   theta <- extract_ordered_draws(object$fit, "theta", length(labels$person))
   if (!is.null(draw_idx)) theta <- theta[draw_idx, , drop = FALSE]
@@ -461,6 +464,13 @@ extract_bmfrm_param_draws <- function(object, adjust_facets = character(), draw_
   is_pcm <- identical(family, "pcm")
   use_common_tau <- FALSE
   if (is_pcm && spec$threshold_facet %in% adjust_facets) {
+    if (is_hetero) {
+      stop(
+        "Fair scores / adjusted predictions cannot adjust threshold_facet '",
+        spec$threshold_facet, "' in heterogeneous-category PCM because no common ",
+        "reference step profile exists across differing category counts."
+      )
+    }
     if (fit_has_variable(object$fit, "tau_common")) {
       use_common_tau <- TRUE
     } else {
@@ -478,6 +488,34 @@ extract_bmfrm_param_draws <- function(object, adjust_facets = character(), draw_
       for (k in 2:K) cum_tau[, k] <- cum_tau[, k - 1L] + tau_draws[, k - 1L]
     }
     tau_info <- list(mode = "shared", cum_tau = cum_tau)
+  } else if (is_hetero) {
+    tf <- spec$threshold_facet
+    tf_labels <- labels[[tf]]
+    J_tf <- length(tf_labels)
+    K_lvl <- as.integer(unname((object$data_info$K_by_level %||% spec$K_by_level)[tf_labels]))
+    tau_len <- K_lvl - 1L
+    tau_start <- as.integer(c(1L, utils::head(cumsum(tau_len), -1L) + 1L))
+    tau_draws <- extract_ordered_draws(object$fit, "tau", sum(tau_len))
+    if (!is.null(draw_idx)) tau_draws <- tau_draws[draw_idx, , drop = FALSE]
+    cum_tau_by_level <- vector("list", J_tf)
+    for (j in seq_len(J_tf)) {
+      Kj <- K_lvl[j]
+      ct_j <- matrix(0, nrow = D, ncol = Kj)
+      if (Kj >= 2L) {
+        s <- tau_start[j]
+        for (k in 2:Kj) {
+          ct_j[, k] <- ct_j[, k - 1L] + tau_draws[, s + k - 2L]
+        }
+      }
+      cum_tau_by_level[[j]] <- ct_j
+    }
+    tau_info <- list(
+      mode = "pcm_ragged",
+      threshold_facet = tf,
+      K_level = K_lvl,
+      K_max = K,
+      cum_tau_by_level = cum_tau_by_level
+    )
   } else {
     tf <- spec$threshold_facet
     J_tf <- length(labels[[tf]])
@@ -527,6 +565,119 @@ default_bmfrm_chunk_size <- function(D, N, chunk_size = NULL) {
   as.integer(max(1L, min(N, floor(2e6 / max(D, 1L)))))
 }
 
+#' Vectorized two-pass softmax over valid per-level categories 1..K_j for pcm_ragged
+#' @keywords internal
+eval_softmax_ragged <- function(eta, tau_info, t_idx, resp_chunk = NULL,
+                                compute_mu = TRUE,
+                                compute_probs = FALSE,
+                                compute_kurtosis = FALSE,
+                                compute_log_lik = FALSE,
+                                compute_y_rep = FALSE) {
+  D <- nrow(eta)
+  nc <- ncol(eta)
+  K_max <- tau_info$K_max
+  K_rows <- tau_info$K_level[t_idx]
+
+  out <- list()
+  mu_mat <- if (compute_mu || compute_kurtosis) matrix(NA_real_, nrow = D, ncol = nc) else NULL
+  s2_mat <- if (compute_mu) matrix(NA_real_, nrow = D, ncol = nc) else NULL
+  probs_arr <- if (compute_probs) array(NA_real_, dim = c(D, nc, K_max)) else NULL
+  kurt_mat <- if (compute_kurtosis) matrix(0, nrow = D, ncol = nc) else NULL
+  ll_mat <- if (compute_log_lik) matrix(NA_real_, nrow = D, ncol = nc) else NULL
+  y_rep_mat <- if (compute_y_rep) matrix(1L, nrow = D, ncol = nc) else NULL
+  u_all <- if (compute_y_rep) matrix(stats::runif(D * nc), nrow = D, ncol = nc) else NULL
+
+  for (Kj in unique(K_rows)) {
+    sub <- which(K_rows == Kj)
+    nc_s <- length(sub)
+    eta_s <- eta[, sub, drop = FALSE]
+    t_sub <- t_idx[sub]
+    u_lv <- unique(t_sub)
+
+    ct_list <- vector("list", Kj)
+    ct_list[[1L]] <- matrix(0, nrow = D, ncol = nc_s)
+    if (Kj >= 2L) {
+      for (k in 2:Kj) {
+        m_k <- matrix(0, nrow = D, ncol = nc_s)
+        for (lv in u_lv) {
+          pos <- which(t_sub == lv)
+          m_k[, pos] <- tau_info$cum_tau_by_level[[lv]][, k]
+        }
+        ct_list[[k]] <- m_k
+      }
+    }
+
+    max_logit <- matrix(0, nrow = D, ncol = nc_s)
+    if (Kj >= 2L) {
+      for (k in 2:Kj) {
+        lk <- (k - 1) * eta_s - ct_list[[k]]
+        max_logit <- pmax(max_logit, lk)
+      }
+    }
+
+    e1 <- exp(-max_logit)
+    denom <- e1
+    num_mu <- if (compute_mu || compute_kurtosis) e1 else NULL
+    num_ex2 <- if (compute_mu) e1 else NULL
+    if (Kj >= 2L) {
+      for (k in 2:Kj) {
+        ek <- exp((k - 1) * eta_s - ct_list[[k]] - max_logit)
+        denom <- denom + ek
+        if (compute_mu || compute_kurtosis) num_mu <- num_mu + k * ek
+        if (compute_mu) num_ex2 <- num_ex2 + (k * k) * ek
+      }
+    }
+    mu_s <- if (compute_mu || compute_kurtosis) num_mu / denom else NULL
+    if (compute_mu) {
+      mu_mat[, sub] <- mu_s
+      s2_mat[, sub] <- pmax(num_ex2 / denom - mu_s * mu_s, 1e-12)
+    }
+
+    if (compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep) {
+      log_denom <- if (compute_log_lik) log(denom) + max_logit else NULL
+      u_s <- if (compute_y_rep) u_all[, sub, drop = FALSE] else NULL
+      yr_s <- if (compute_y_rep) matrix(1L, nrow = D, ncol = nc_s) else NULL
+      cum_p <- if (compute_y_rep) matrix(0, nrow = D, ncol = nc_s) else NULL
+      kurt_s <- if (compute_kurtosis) matrix(0, nrow = D, ncol = nc_s) else NULL
+      resp_s <- if (compute_log_lik) resp_chunk[sub] else NULL
+
+      for (k in seq_len(Kj)) {
+        lk <- if (k == 1L) matrix(0, nrow = D, ncol = nc_s) else (k - 1) * eta_s - ct_list[[k]]
+        if (compute_probs || compute_kurtosis || compute_y_rep) {
+          pk <- exp(lk - max_logit) / denom
+          if (compute_probs) probs_arr[, sub, k] <- pk
+          if (compute_kurtosis) kurt_s <- kurt_s + ((k - mu_s)^4) * pk
+          if (compute_y_rep && k < Kj) {
+            cum_p <- cum_p + pk
+            yr_s <- yr_s + (u_s > cum_p)
+          }
+        }
+        if (compute_log_lik) {
+          cols <- which(resp_s == k)
+          if (length(cols)) {
+            ll_mat[, sub[cols]] <- lk[, cols, drop = FALSE] - log_denom[, cols, drop = FALSE]
+          }
+        }
+      }
+      if (compute_kurtosis) kurt_mat[, sub] <- kurt_s
+      if (compute_y_rep) y_rep_mat[, sub] <- yr_s
+    }
+  }
+
+  if (compute_mu) {
+    out$mu <- mu_mat
+    out$sigma2 <- s2_mat
+  }
+  if (compute_probs) out$probs <- probs_arr
+  if (compute_kurtosis) out$kurt <- kurt_mat
+  if (compute_log_lik) out$log_lik <- ll_mat
+  if (compute_y_rep) {
+    storage.mode(y_rep_mat) <- "integer"
+    out$y_rep <- y_rep_mat
+  }
+  out
+}
+
 #' Evaluate posterior moments, linear predictors, probabilities, or draws for one chunk
 #' @keywords internal
 eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
@@ -560,6 +711,17 @@ eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
   if (!need_softmax) return(out)
 
   tau_info <- params$tau_info
+  if (identical(tau_info$mode, "pcm_ragged")) {
+    t_idx <- ids[[tau_info$threshold_facet]][rows]
+    rag <- eval_softmax_ragged(
+      eta = eta, tau_info = tau_info, t_idx = t_idx, resp_chunk = resp_chunk,
+      compute_mu = compute_mu, compute_probs = compute_probs,
+      compute_kurtosis = compute_kurtosis, compute_log_lik = compute_log_lik,
+      compute_y_rep = compute_y_rep
+    )
+    for (nm in names(rag)) out[[nm]] <- rag[[nm]]
+    return(out)
+  }
   t_idx <- if (tau_info$mode == "pcm") ids[[tau_info$threshold_facet]][rows] else NULL
   get_cum_tau_k <- function(k) {
     if (tau_info$mode == "shared") {
@@ -936,8 +1098,9 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
       cell_idx <- ref_ids[[b$f1]][r_rows] + (ref_ids[[b$f2]][r_rows] - 1L) * b$n1
       base_eta <- base_eta + b$draws[, cell_idx, drop = FALSE]
     }
-    is_person_pcm <- identical(tau_info$mode, "pcm") && identical(tau_info$threshold_facet, "person")
-    t_idx_r <- if (identical(tau_info$mode, "pcm") && !is_person_pcm) {
+    is_pcm_mode <- tau_info$mode %in% c("pcm", "pcm_ragged")
+    is_person_pcm <- is_pcm_mode && identical(tau_info$threshold_facet, "person")
+    t_idx_r <- if (is_pcm_mode && !is_person_pcm) {
       ref_ids[[tau_info$threshold_facet]][r_rows]
     } else {
       NULL
@@ -960,35 +1123,44 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
         eta <- eta + b$draws[, cell_idx, drop = FALSE]
       }
 
-      get_ct <- function(k) {
-        if (tau_info$mode == "shared") {
-          matrix(tau_info$cum_tau[, k], nrow = D, ncol = nc)
-        } else if (is_person_pcm) {
-          tau_info$cum_tau_list[[k]][, p_rep, drop = FALSE]
-        } else {
-          tau_info$cum_tau_list[[k]][, t_idx_r[r_rep], drop = FALSE]
+      if (identical(tau_info$mode, "pcm_ragged")) {
+        t_rep <- if (is_person_pcm) p_rep else t_idx_r[r_rep]
+        mu_block <- eval_softmax_ragged(
+          eta = eta, tau_info = tau_info, t_idx = t_rep,
+          compute_mu = TRUE, compute_probs = FALSE,
+          compute_kurtosis = FALSE, compute_log_lik = FALSE, compute_y_rep = FALSE
+        )$mu
+      } else {
+        get_ct <- function(k) {
+          if (tau_info$mode == "shared") {
+            matrix(tau_info$cum_tau[, k], nrow = D, ncol = nc)
+          } else if (is_person_pcm) {
+            tau_info$cum_tau_list[[k]][, p_rep, drop = FALSE]
+          } else {
+            tau_info$cum_tau_list[[k]][, t_idx_r[r_rep], drop = FALSE]
+          }
         }
-      }
 
-      # Two-pass softmax for E[Y] (no K-fold matrix retention)
-      max_logit <- matrix(0, nrow = D, ncol = nc)
-      if (K >= 2L) {
-        for (k in 2:K) {
-          lk <- (k - 1) * eta - get_ct(k)
-          max_logit <- pmax(max_logit, lk)
+        # Two-pass softmax for E[Y] (no K-fold matrix retention)
+        max_logit <- matrix(0, nrow = D, ncol = nc)
+        if (K >= 2L) {
+          for (k in 2:K) {
+            lk <- (k - 1) * eta - get_ct(k)
+            max_logit <- pmax(max_logit, lk)
+          }
         }
-      }
-      e1 <- exp(-max_logit)
-      denom <- e1
-      num_mu <- e1
-      if (K >= 2L) {
-        for (k in 2:K) {
-          ek <- exp((k - 1) * eta - get_ct(k) - max_logit)
-          denom <- denom + ek
-          num_mu <- num_mu + k * ek
+        e1 <- exp(-max_logit)
+        denom <- e1
+        num_mu <- e1
+        if (K >= 2L) {
+          for (k in 2:K) {
+            ek <- exp((k - 1) * eta - get_ct(k) - max_logit)
+            denom <- denom + ek
+            num_mu <- num_mu + k * ek
+          }
         }
+        mu_block <- num_mu / denom
       }
-      mu_block <- num_mu / denom
 
       if (summary) {
         for (j_loc in seq_len(np)) {
@@ -1258,6 +1430,15 @@ prepare_eval_plan <- function(object, newdata,
     unseen <- unique(vals_chr[is.na(idx)])
 
     if (length(unseen)) {
+      if (identical(params$tau_info$mode, "pcm_ragged") &&
+          identical(f, params$tau_info$threshold_facet)) {
+        stop(
+          "Unseen level(s) of threshold_facet '", f, "' (",
+          paste(utils::head(unseen, 5L), collapse = ", "),
+          ") are not supported in v1 heterogeneous-category PCM (even with allow_new_levels = TRUE ",
+          "or sample_new_levels = 'zero'), because their rubric category count and step distribution are undefined."
+        )
+      }
       if (!isTRUE(allow_new_levels)) {
         preview <- paste(utils::head(unseen, 5L), collapse = ", ")
         if (length(unseen) > 5L) preview <- paste0(preview, ", ...")
@@ -1313,7 +1494,17 @@ prepare_eval_plan <- function(object, newdata,
 
   # 2. PCM step thresholds for unseen threshold_facet levels (compact hyperprior + seeds only)
   tau_new <- NULL
-  if (identical(params$tau_info$mode, "pcm")) {
+  if (identical(params$tau_info$mode, "pcm_ragged")) {
+    tf <- params$tau_info$threshold_facet
+    if (length(new_levels[[tf]]) > 0L) {
+      stop(
+        "Unseen level(s) of threshold_facet '", tf, "' (",
+        paste(utils::head(new_levels[[tf]], 5L), collapse = ", "),
+        ") are not supported in v1 heterogeneous-category PCM (even with allow_new_levels = TRUE ",
+        "or sample_new_levels = 'zero'), because their rubric category count and step distribution are undefined."
+      )
+    }
+  } else if (identical(params$tau_info$mode, "pcm")) {
     tf <- params$tau_info$threshold_facet
     n_new_tf <- length(new_levels[[tf]])
     if (n_new_tf > 0L) {
@@ -1559,6 +1750,17 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
 
   # 4. Step thresholds (materializing unseen PCM levels only for this chunk)
   tau_info <- params$tau_info
+  if (identical(tau_info$mode, "pcm_ragged")) {
+    t_idx <- ids[[tau_info$threshold_facet]][rows]
+    rag <- eval_softmax_ragged(
+      eta = eta, tau_info = tau_info, t_idx = t_idx, resp_chunk = resp_chunk,
+      compute_mu = compute_mu, compute_probs = compute_probs,
+      compute_kurtosis = compute_kurtosis, compute_log_lik = compute_log_lik,
+      compute_y_rep = compute_y_rep
+    )
+    for (nm in names(rag)) out[[nm]] <- rag[[nm]]
+    return(out)
+  }
   t_idx <- if (tau_info$mode == "pcm") ids[[tau_info$threshold_facet]][rows] else NULL
   chunk_cum_tau_pcm <- NULL
   if (identical(tau_info$mode, "pcm") && !is.null(plan$tau_new)) {
@@ -1712,6 +1914,16 @@ stream_bmfrm_predictions <- function(object,
                                      max_cells = 5e7) {
   type <- match.arg(type)
   sample_new_levels <- match.arg(sample_new_levels)
+  if (isTRUE(object$spec$K_heterogeneous) &&
+      identical(object$spec$family, "pcm") &&
+      !is.null(object$spec$threshold_facet) &&
+      (object$spec$threshold_facet %in% adjust_facets)) {
+    stop(
+      "Adjusting threshold_facet '", object$spec$threshold_facet,
+      "' is not supported in v1 heterogeneous-category PCM because no shared reference ",
+      "category count or step profile exists across levels."
+    )
+  }
   if (!can_evaluate_in_r(object, adjust_facets = adjust_facets)) {
     stop("Cannot compute predictions in R for this fit: ", get_eval_contract(object)$reason)
   }
@@ -1732,7 +1944,9 @@ stream_bmfrm_predictions <- function(object,
   draw_meta <- extract_draw_index_info(object$fit, D_total, draw_idx)
 
   N <- nrow(df)
-  K <- as.integer(object$spec$K)
+  K <- get_spec_K_max(object$spec)
+  is_hetero <- isTRUE(object$spec$K_heterogeneous)
+  K_by_level_obj <- object$data_info$K_by_level %||% object$spec$K_by_level
   D <- length(draw_meta$draw_ids)
 
   if (!isTRUE(summary)) {
@@ -1808,7 +2022,12 @@ stream_bmfrm_predictions <- function(object,
           prob_means[rows, k] <- unname(colMeans(pk_mat))
         }
       }
-      return(list(value = tibble::as_tibble(prob_means), new_levels = plan$new_levels))
+      prob_tbl <- tibble::as_tibble(prob_means)
+      if (is_hetero) {
+        K_obs_vec <- as.integer(unname(K_by_level_obj[as.character(df[[object$spec$threshold_facet]])]))
+        prob_tbl <- tibble::add_column(prob_tbl, K_obs = K_obs_vec, .before = 1L)
+      }
+      return(list(value = prob_tbl, new_levels = plan$new_levels))
     }
 
     est <- numeric(N)
@@ -1845,6 +2064,11 @@ stream_bmfrm_predictions <- function(object,
 
   eval_res <- if (!is.null(seed)) with_bmfrm_seed(seed, run_eval()) else run_eval()
   out <- eval_res$value
+  K_obs_meta <- if (is_hetero) {
+    as.integer(unname(K_by_level_obj[as.character(df[[object$spec$threshold_facet]])]))
+  } else {
+    NULL
+  }
   attr(out, "bmfrm_prediction_meta") <- list(
     type = type,
     prediction_target = classify_prediction_target(adjust_facets, eval_res$new_levels, sample_new_levels),
@@ -1852,6 +2076,9 @@ stream_bmfrm_predictions <- function(object,
     allow_new_levels = isTRUE(allow_new_levels),
     sample_new_levels = sample_new_levels,
     new_levels = eval_res$new_levels,
+    K_heterogeneous = is_hetero,
+    K_by_level = K_by_level_obj,
+    K_obs = K_obs_meta,
     n_draws = D,
     draw_ids = draw_meta$draw_ids,
     draw_info = draw_meta$draw_info,
@@ -1903,6 +2130,27 @@ eval_bmfrm_log_lik_obs <- function(data_i, draws) {
   }
 
   tau_info <- draws$tau_info
+  if (identical(tau_info$mode, "pcm_ragged")) {
+    t_idx <- as.integer(data_i[[tau_info$threshold_facet]][[1L]])
+    K_i <- tau_info$K_level[t_idx]
+    ct_mat <- tau_info$cum_tau_by_level[[t_idx]]
+    max_logit <- numeric(D)
+    if (K_i >= 2L) {
+      for (k in 2:K_i) {
+        lk <- (k - 1) * eta - ct_mat[, k]
+        max_logit <- pmax(max_logit, lk)
+      }
+    }
+    denom <- exp(-max_logit)
+    if (K_i >= 2L) {
+      for (k in 2:K_i) {
+        denom <- denom + exp((k - 1) * eta - ct_mat[, k] - max_logit)
+      }
+    }
+    ly <- if (y == 1L) numeric(D) else (y - 1) * eta - ct_mat[, y]
+    return(as.numeric(ly - (log(denom) + max_logit)))
+  }
+
   t_idx <- if (tau_info$mode == "pcm") as.integer(data_i[[tau_info$threshold_facet]][[1L]]) else NULL
   get_ct_k <- function(k) {
     if (tau_info$mode == "shared") {

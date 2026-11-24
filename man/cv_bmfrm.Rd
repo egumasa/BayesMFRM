@@ -105,6 +105,10 @@ distribution using \code{M} draws per posterior draw \code{d} via exact double-\
 When \code{strict_target = TRUE} (default), holding out one facet that incidentally drops all
 training observations of another facet (e.g., holding out a rater who was the sole rater of an
 examinee) raises an error rather than silently changing the prediction target.
+For heterogeneous-category PCM, each training fold preserves the full per-level rubric category
+definition (\code{K_by_level}) even when upper categories are unobserved in that fold; holding
+out \code{threshold_facet} itself (\code{target = "facet", facet = threshold_facet}) is not
+supported in v1 and raises an error.
 Note that passing the \code{mc_ess_m_median >= 5} diagnostic warning threshold alone does not
 guarantee Monte Carlo integration accuracy; verify stability across larger \code{M} and
 independent \code{seed} values (keeping \code{refit_seed} fixed on cached fold fits).

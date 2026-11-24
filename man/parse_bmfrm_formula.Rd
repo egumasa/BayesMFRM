@@ -21,7 +21,9 @@ parse_bmfrm_formula(
 
 \item{data}{data.frame containing variables}
 
-\item{K}{number of rating categories (if NULL, inferred from data)}
+\item{K}{number of rating categories: either a scalar integer \code{>= 2}, a
+named integer vector matching \code{threshold_facet} levels for heterogeneous-category
+PCM (\code{family = "pcm"}), or \code{NULL} (inferred from \code{max(score)}).}
 
 \item{family}{model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)}
 

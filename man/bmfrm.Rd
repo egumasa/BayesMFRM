@@ -34,7 +34,12 @@ bmfrm(
 
 \item{data}{data.frame containing all variables in the formula}
 
-\item{K}{number of rating categories (if NULL, inferred from max(score))}
+\item{K}{number of rating categories: either a single integer \code{>= 2}
+(shared across all facets, required for \code{family = "rsm"}), a named integer
+vector matching every level of \code{threshold_facet} for heterogeneous-category
+PCM (\code{family = "pcm"}, e.g., \code{c(I1 = 2L, I2 = 4L, I3 = 6L)}), or
+\code{NULL} (inferred from \code{max(score)}). If a named vector has identical
+values across all levels, the existing uniform PCM path is used unchanged.}
 
 \item{priors}{list of prior() objects (if NULL, uses defaults)}
 
@@ -81,7 +86,8 @@ facet (\code{"person"} with \code{mean}/\code{sd}, or centered facets such as \c
 \code{"item"} with \code{class = "sd"}), two-way interaction names (e.g.
 \code{"item:rater"} with \code{class = "sd"} and optional \code{local_shrinkage} =
 \code{"horseshoe"} or \code{"student_t"}), and \code{"tau"} for hierarchical PCM partial
-pooling toward common steps.}
+pooling toward common steps when category counts \code{K} are uniform across
+\code{threshold_facet} levels (not supported in v1 when \code{K} varies across levels).}
 
 \item{obs_id}{Optional observation identifier passed to
 \code{\link{prepare_data_bmfrm}} (either a column name in \code{data} or a unique vector

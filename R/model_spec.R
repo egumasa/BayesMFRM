@@ -125,6 +125,12 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   # 3. Step (tau) block
   tau_p <- get_prior("tau")
   if ("tau" %in% spec$hierarchical) {
+    if (isTRUE(spec$K_heterogeneous)) {
+      stop(
+        "Hierarchical step sharing (hierarchical = 'tau') is not supported in v1 when PCM category ",
+        "counts K vary across '", spec$threshold_facet, "' levels."
+      )
+    }
     # Hierarchical PCM: tau[j, k] = tau_common[k] + tau_dev[j, k], each row sums to zero
     if (!is_normal_prior_literal(tau_p$spec)) {
       stop("Hierarchical PCM common step prior ('tau') requires a normal(0, positive_sd) distribution")
@@ -198,6 +204,8 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
     schema = "bayesmfrm.unified_ordinal.v5",
     family = spec$family,
     threshold_facet = spec$threshold_facet,
+    K_heterogeneous = isTRUE(spec$K_heterogeneous),
+    K_by_level = spec$K_by_level,
     hierarchical = spec$hierarchical,
     ability = ability_spec,
     ability_mean = ability_spec$mean,
@@ -240,7 +248,7 @@ double_center_scale_factor <- function(n1, n2, scale) {
   sqrt((n1 / (n1 - 1L)) * (n2 / (n2 - 1L)))
 }
 
-gaussian_model_data <- function(model, labels, K) {
+gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
   out <- list()
 
   # Ability data (preserved verbatim for Gaussian / hierarchical person compatibility)
@@ -258,7 +266,38 @@ gaussian_model_data <- function(model, labels, K) {
   }
 
   # Step (tau) data
-  if (model$step$mode == "gaussian_basis") {
+  if (isTRUE(model$K_heterogeneous)) {
+    tf_labels <- labels[[model$threshold_facet]]
+    K_lvl <- as.integer(unname((K_by_level %||% model$K_by_level)[tf_labels]))
+    M_lvl <- K_lvl - 1L
+    K_max <- max(K_lvl)
+    N_tau_steps <- sum(M_lvl)
+    tau_start <- as.integer(c(1L, utils::head(cumsum(M_lvl), -1L) + 1L))
+    if (model$step$mode == "gaussian_basis") {
+      d_lvl <- pmax(K_lvl - 2L, 0L)
+      tau_free_start <- as.integer(c(1L, utils::head(cumsum(d_lvl), -1L) + 1L))
+      tau_free_start[d_lvl == 0L] <- 1L
+      B_tau_rows <- matrix(0, nrow = N_tau_steps, ncol = max(K_max - 2L, 1L))
+      for (j in seq_along(K_lvl)) {
+        if (d_lvl[j] > 0L) {
+          rows_j <- tau_start[j]:(tau_start[j] + M_lvl[j] - 1L)
+          B_tau_rows[rows_j, seq_len(d_lvl[j])] <- rsm_prior_basis(M_lvl[j], model$step$scale)
+        }
+      }
+      out$N_tau_free <- as.integer(sum(d_lvl))
+      out$tau_free_start <- tau_free_start
+      out$tau_free_len <- as.integer(d_lvl)
+      out$B_tau_rows <- B_tau_rows
+      out$prior_sd_tau <- model$step$sd
+    } else {
+      tau_raw_len <- ifelse(K_lvl >= 3L, M_lvl, 0L)
+      tau_raw_start <- as.integer(c(1L, utils::head(cumsum(tau_raw_len), -1L) + 1L))
+      tau_raw_start[tau_raw_len == 0L] <- 1L
+      out$N_tau_raw <- as.integer(sum(tau_raw_len))
+      out$tau_raw_start <- tau_raw_start
+      out$tau_raw_len <- as.integer(tau_raw_len)
+    }
+  } else if (model$step$mode == "gaussian_basis") {
     out$B_tau <- rsm_prior_basis(K - 1L, model$step$scale)
     out$prior_sd_tau <- model$step$sd
   } else if (model$step$mode == "hierarchical_pcm") {
@@ -301,7 +340,7 @@ gaussian_model_data <- function(model, labels, K) {
   out
 }
 
-sample_gaussian_model <- function(model, labels, K) {
+sample_gaussian_model <- function(model, labels, K, K_by_level = NULL) {
   # 1. Person ability
   if (model$ability$mode %in% c("hierarchical", "gaussian")) {
     mu <- model$ability$mean
@@ -331,7 +370,25 @@ sample_gaussian_model <- function(model, labels, K) {
   }
 
   # 3. Steps (tau)
-  if (model$step$mode == "gaussian_basis") {
+  if (isTRUE(model$K_heterogeneous)) {
+    tf_labels <- labels[[model$threshold_facet]]
+    K_lvl <- as.integer(unname((K_by_level %||% model$K_by_level)[tf_labels]))
+    tau_list <- vector("list", length(tf_labels))
+    names(tau_list) <- tf_labels
+    for (j in seq_along(tf_labels)) {
+      Kj <- K_lvl[j]
+      if (Kj == 2L) {
+        tau_list[[j]] <- 0
+      } else if (model$step$mode == "gaussian_basis") {
+        Bj <- rsm_prior_basis(Kj - 1L, model$step$scale)
+        tau_list[[j]] <- as.vector(model$step$sd * Bj %*% stats::rnorm(Kj - 2L))
+      } else {
+        xj <- sample_bmfrm_prior(model$step$spec, Kj - 1L)
+        tau_list[[j]] <- xj - mean(xj)
+      }
+    }
+    out$tau <- tau_list
+  } else if (model$step$mode == "gaussian_basis") {
     B <- rsm_prior_basis(K - 1L, model$step$scale)
     if (model$family == "pcm") {
       J <- length(labels[[model$threshold_facet]])
@@ -416,17 +473,33 @@ model_diagnostic_variables <- function(spec, data_info) {
   all_other <- names(model$facet_specs)
   active_facets <- all_other[lengths(data_info$facet_labels[all_other]) > 1L]
 
+  K_max <- get_spec_K_max(spec)
+  is_hetero <- isTRUE(spec$K_heterogeneous)
+  tau_vars <- character(0)
+  if (is_hetero) {
+    tf_labels <- data_info$facet_labels[[spec$threshold_facet]]
+    K_lvl <- as.integer(unname((data_info$K_by_level %||% spec$K_by_level)[tf_labels]))
+    tau_len <- K_lvl - 1L
+    tau_start <- as.integer(c(1L, utils::head(cumsum(tau_len), -1L) + 1L))
+    active_idx <- unlist(lapply(seq_along(K_lvl), function(j) {
+      if (K_lvl[j] >= 3L) seq.int(tau_start[j], tau_start[j] + tau_len[j] - 1L) else integer(0)
+    }), use.names = FALSE)
+    if (length(active_idx) > 0L) tau_vars <- paste0("tau[", active_idx, "]")
+  } else if (K_max > 2L) {
+    tau_vars <- "tau"
+  }
+
   variable <- c(
     "theta",
     active_facets,
-    if (spec$K > 2L) "tau",
+    tau_vars,
     if (model$ability$mode == "hierarchical" && model$ability$mean$estimated) "mu_theta",
     if (model$ability$mode == "hierarchical" && model$ability$sd$estimated) "sigma_theta"
   )
   raw <- c(
     "theta_raw",
     if (length(active_facets)) paste0(active_facets, "_raw"),
-    if (spec$K > 2L && model$step$mode != "hierarchical_pcm") "tau_raw",
+    if (K_max > 2L && model$step$mode != "hierarchical_pcm") "tau_raw",
     if (model$ability$mode == "hierarchical" && model$ability$mean$estimated) "mu_theta_raw",
     if (model$ability$mode == "hierarchical" && model$ability$sd$estimated) "log_sigma_theta_raw"
   )
@@ -441,7 +514,7 @@ model_diagnostic_variables <- function(spec, data_info) {
   }
 
   # Hierarchical PCM step parameters
-  if (model$step$mode == "hierarchical_pcm" && spec$K > 2L) {
+  if (model$step$mode == "hierarchical_pcm" && K_max > 2L) {
     variable <- c(variable, "tau_common")
     raw <- c(raw, "tau_common_raw", "tau_dev_raw")
     if (model$step$dev_sd$estimated) {

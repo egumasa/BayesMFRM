@@ -24,9 +24,6 @@
 #'   `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan `generated quantities`) or
 #'   `"minimal"` (omits observation-level `generated quantities` for scalability
 #'   on large datasets; downstream S3 methods compute quantities on demand in R).
-#' @param design_check How to handle a rank-deficient generated RSM/PCM, including
-#'   two-way interactions: warn, error, or none.
-#' @param cpp_options Named compilation options passed to cmdstanr.
 #' @param refit refit behavior: "never", "always", or "on_change"
 #' @param iter number of MCMC iterations
 #' @param warmup number of warmup iterations
@@ -131,10 +128,12 @@ bmfrm <- function(
   # 2. Prepare data → stan_data + facet labels  
   message("Preparing data...")
   data_info <- prepare_data_bmfrm(spec, data, obs_id = obs_id)
+  if (!is.null(data_info$spec)) spec <- data_info$spec
   
   design_info <- NULL
   if (design_check != "none" && is.null(stan_file)) {
-    design_info <- check_design_bmfrm(formula, data_info$data_clean, K = spec$K, family = family,
+    design_K <- if (isTRUE(spec$K_heterogeneous)) data_info$K_by_level else spec$K
+    design_info <- check_design_bmfrm(formula, data_info$data_clean, K = design_K, family = family,
                                       threshold_facet = spec$threshold_facet)
     if (!design_info$identifiable) {
       msg <- paste0("Rank-deficient ", toupper(family), " design: ", design_info$adjacent_logit_parameters - design_info$adjacent_logit_rank,

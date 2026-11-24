@@ -14,7 +14,8 @@ build_comparison_key <- function(method, target, target_facet = NULL, actual_tar
                                  data_clean, response_col, K,
                                  K_folds = NULL, fold_ids = NULL,
                                  group_ids = NULL, aggregation = "sum",
-                                 data_info = NULL, facets_main = NULL) {
+                                 data_info = NULL, facets_main = NULL,
+                                 K_by_level = NULL, threshold_facet = NULL) {
   N <- nrow(data_clean)
   if (!is.null(data_info) && !is.null(data_info$obs_id) && length(data_info$obs_id) == N) {
     obs_ids <- as.character(data_info$obs_id)
@@ -41,6 +42,15 @@ build_comparison_key <- function(method, target, target_facet = NULL, actual_tar
   ord <- order(obs_ids)
   obs_ids_sorted <- obs_ids[ord]
   resp_int <- as.integer(data_clean[[response_col]])
+
+  # Per-observation rubric category count vector K_obs (uniform models -> rep(K, N))
+  eff_K_by_level <- K_by_level %||% if (!is.null(data_info)) data_info$K_by_level else NULL
+  if (!is.null(eff_K_by_level) && !is.null(threshold_facet) && threshold_facet %in% names(data_clean)) {
+    K_obs <- as.integer(unname(eff_K_by_level[as.character(data_clean[[threshold_facet]])]))
+  } else {
+    K_obs <- rep(as.integer(max(K)), N)
+  }
+  K_max_int <- as.integer(max(K_obs))
 
   if (is.null(facets_main)) {
     facets_main <- sort(unique(c(as.character(known_facets), as.character(unseen_facets))))
@@ -85,9 +95,11 @@ build_comparison_key <- function(method, target, target_facet = NULL, actual_tar
     obs_id_source = obs_id_source,
     obs_id_set_hash = digest::digest(obs_ids_sorted),
     obs_id_order_hash = digest::digest(obs_ids),
-    K = as.integer(K),
+    K = K_max_int,
+    K_obs_hash_by_id = digest::digest(list(obs_ids = obs_ids_sorted, K_obs = K_obs[ord])),
+    K_heterogeneous = length(unique(K_obs)) > 1L,
     response_col = as.character(response_col),
-    response_hash = digest::digest(list(obs_ids = obs_ids_sorted, response = resp_int[ord], K = as.integer(K))),
+    response_hash = digest::digest(list(obs_ids = obs_ids_sorted, response = resp_int[ord], K_obs = K_obs[ord])),
     facet_hashes_by_id = facet_hashes_by_id,
     extra_col_hashes_by_id = extra_col_hashes_by_id,
     K_folds = if (is.null(K_folds)) NULL else as.integer(K_folds),
@@ -325,10 +337,12 @@ loo.bmfrm_fit <- function(x,
     unseen_facets = if (length(sing$singleton_obs)) names(sing$singleton_facets) else character(0),
     data_clean = obs_data,
     response_col = spec$response,
-    K = spec$K,
+    K = get_spec_K_max(spec),
     aggregation = "sum",
     data_info = x$data_info,
-    facets_main = spec$facets_main
+    facets_main = spec$facets_main,
+    K_by_level = x$data_info$K_by_level %||% spec$K_by_level,
+    threshold_facet = spec$threshold_facet
   )
   class(loo_obj) <- unique(c("bmfrm_loo", class(loo_obj)))
   loo_obj
@@ -401,6 +415,13 @@ build_cv_folds <- function(data_clean, facets_main, target, target_facet, K_fold
 #' Validate model hierarchy requirements for unseen-level CV
 #' @keywords internal
 validate_cv_hierarchy <- function(spec, target_facet) {
+  if (isTRUE(spec$K_heterogeneous) && identical(spec$threshold_facet, target_facet)) {
+    stop(
+      "Grouped CV holding out threshold_facet '", target_facet,
+      "' is not supported in v1 heterogeneous-category PCM because unseen levels have ",
+      "undefined rubric category counts and step distributions."
+    )
+  }
   hier <- spec$hierarchical %||% character(0)
   missing_terms <- character(0)
   if (!(target_facet %in% hier)) {
@@ -574,7 +595,7 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
       }
 
       # Fixed cum_tau when tau does not depend on target_facet
-      fixed_t_idx <- if (!is_target_pcm && identical(params$tau_info$mode, "pcm")) {
+      fixed_t_idx <- if (!is_target_pcm && (params$tau_info$mode %in% c("pcm", "pcm_ragged"))) {
         known_ids[[params$tau_info$threshold_facet]][g_rows]
       } else NULL
 
@@ -640,42 +661,50 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
             eta_c <- eta_c + u_draw$b_slices[[term]][, p_idx, drop = FALSE]
           }
 
-          get_ct <- function(k) {
-            if (is_target_pcm) {
-              matrix(u_draw$cum_tau[, k], nrow = D, ncol = nc)
-            } else if (identical(params$tau_info$mode, "shared")) {
-              matrix(params$tau_info$cum_tau[, k], nrow = D, ncol = nc)
-            } else {
-              params$tau_info$cum_tau_list[[k]][, fixed_t_idx[loc], drop = FALSE]
-            }
-          }
-
-          # Two-pass log-likelihood for chunk
-          max_l <- matrix(0, nrow = D, ncol = nc)
-          if (K >= 2L) {
-            for (k in 2:K) max_l <- pmax(max_l, (k - 1) * eta_c - get_ct(k))
-          }
-          denom <- exp(-max_l)
-          if (K >= 2L) {
-            for (k in 2:K) denom <- denom + exp((k - 1) * eta_c - get_ct(k) - max_l)
-          }
-          log_denom <- log(denom) + max_l
-          ll_c <- matrix(NA_real_, nrow = D, ncol = nc)
-          y_loc <- y_g[loc]
-          for (k in seq_len(K)) {
-            cols <- which(y_loc == k)
-            if (length(cols)) {
-              lk <- if (k == 1L) matrix(0, nrow = D, ncol = length(cols)) else {
-                ct_cols <- if (is_target_pcm) {
-                  matrix(u_draw$cum_tau[, k], nrow = D, ncol = length(cols))
-                } else if (identical(params$tau_info$mode, "shared")) {
-                  matrix(params$tau_info$cum_tau[, k], nrow = D, ncol = length(cols))
-                } else {
-                  params$tau_info$cum_tau_list[[k]][, fixed_t_idx[loc[cols]], drop = FALSE]
-                }
-                (k - 1) * eta_c[, cols, drop = FALSE] - ct_cols
+          if (!is_target_pcm && identical(params$tau_info$mode, "pcm_ragged")) {
+            ll_c <- eval_softmax_ragged(
+              eta = eta_c, tau_info = params$tau_info, t_idx = fixed_t_idx[loc],
+              resp_chunk = y_g[loc], compute_mu = FALSE, compute_probs = FALSE,
+              compute_kurtosis = FALSE, compute_log_lik = TRUE, compute_y_rep = FALSE
+            )$log_lik
+          } else {
+            get_ct <- function(k) {
+              if (is_target_pcm) {
+                matrix(u_draw$cum_tau[, k], nrow = D, ncol = nc)
+              } else if (identical(params$tau_info$mode, "shared")) {
+                matrix(params$tau_info$cum_tau[, k], nrow = D, ncol = nc)
+              } else {
+                params$tau_info$cum_tau_list[[k]][, fixed_t_idx[loc], drop = FALSE]
               }
-              ll_c[, cols] <- lk - log_denom[, cols, drop = FALSE]
+            }
+
+            # Two-pass log-likelihood for chunk
+            max_l <- matrix(0, nrow = D, ncol = nc)
+            if (K >= 2L) {
+              for (k in 2:K) max_l <- pmax(max_l, (k - 1) * eta_c - get_ct(k))
+            }
+            denom <- exp(-max_l)
+            if (K >= 2L) {
+              for (k in 2:K) denom <- denom + exp((k - 1) * eta_c - get_ct(k) - max_l)
+            }
+            log_denom <- log(denom) + max_l
+            ll_c <- matrix(NA_real_, nrow = D, ncol = nc)
+            y_loc <- y_g[loc]
+            for (k in seq_len(K)) {
+              cols <- which(y_loc == k)
+              if (length(cols)) {
+                lk <- if (k == 1L) matrix(0, nrow = D, ncol = length(cols)) else {
+                  ct_cols <- if (is_target_pcm) {
+                    matrix(u_draw$cum_tau[, k], nrow = D, ncol = length(cols))
+                  } else if (identical(params$tau_info$mode, "shared")) {
+                    matrix(params$tau_info$cum_tau[, k], nrow = D, ncol = length(cols))
+                  } else {
+                    params$tau_info$cum_tau_list[[k]][, fixed_t_idx[loc[cols]], drop = FALSE]
+                  }
+                  (k - 1) * eta_c[, cols, drop = FALSE] - ct_cols
+                }
+                ll_c[, cols] <- lk - log_denom[, cols, drop = FALSE]
+              }
             }
           }
 
@@ -936,6 +965,21 @@ cv_bmfrm <- function(object,
       }
     }
 
+    # Mandatory pre-fit guard for v1 heterogeneous-category PCM: unseen threshold_facet
+    # levels are NEVER supported regardless of strict_target (must stop before any refit).
+    if (isTRUE(spec$K_heterogeneous) &&
+        identical(spec$family, "pcm") &&
+        !is.null(spec$threshold_facet) &&
+        (spec$threshold_facet %in% names(unseen_k))) {
+      u_tf <- unseen_k[[spec$threshold_facet]]
+      stop(
+        "Fold ", k, " leaves threshold_facet '", spec$threshold_facet, "' level(s) (",
+        paste(utils::head(u_tf, 5L), collapse = ", "),
+        ") unseen in training, which is not supported in v1 heterogeneous-category PCM ",
+        "(even when strict_target = FALSE), because their rubric category count and step distribution are undefined."
+      )
+    }
+
     # Check training facet sizes (1-level degeneracy for interactions)
     if (!isTRUE(allow_degenerate_interaction) && length(spec$facets_bias) > 0L) {
       for (term in spec$facets_bias) {
@@ -951,8 +995,13 @@ cv_bmfrm <- function(object,
       }
     }
 
+    K_fold_dc <- if (isTRUE(spec$K_heterogeneous) && !is.null(spec$K_by_level)) {
+      spec$K_by_level[levels(train_df[[spec$threshold_facet]])]
+    } else {
+      spec$K
+    }
     dc_k <- check_design_bmfrm(
-      spec$formula, train_df, K = spec$K,
+      spec$formula, train_df, K = K_fold_dc,
       family = spec$family, threshold_facet = spec$threshold_facet
     )
     fold_plans[[k]] <- list(
@@ -990,6 +1039,13 @@ cv_bmfrm <- function(object,
   default_refit_fn <- function(train_df, fold, spec, fit_args) {
     fold_spec <- spec
     fold_spec$save_gq <- "minimal"
+    if (!is.null(spec$K_by_level) && !is.null(spec$threshold_facet)) {
+      tr_tf <- levels(train_df[[spec$threshold_facet]])
+      fold_spec$K_by_level <- spec$K_by_level[tr_tf]
+      fold_spec$K_max <- as.integer(max(fold_spec$K_by_level))
+      fold_spec$K_heterogeneous <- length(unique(fold_spec$K_by_level)) > 1L
+      fold_spec$K <- if (fold_spec$K_heterogeneous) fold_spec$K_by_level else as.integer(fold_spec$K_by_level[1L])
+    }
     fold_spec <- resolve_bmfrm_spec(fold_spec, object$priors)
     stan_code <- if (is.null(fit_args$stan_file)) {
       build_stan_code(fold_spec, object$priors, save_gq = "minimal")
@@ -1103,8 +1159,38 @@ cv_bmfrm <- function(object,
         )
       }
     }
-    if (!identical(as.integer(fold_fit$spec$K), as.integer(spec$K))) {
-      stop("Fold ", k, " refit changed K from ", spec$K, " to ", fold_fit$spec$K)
+    # Verify category definitions match the original fit per observation / per level,
+    # regardless of whether the original fit or fold refit uses uniform or heterogeneous K.
+    resolve_fold_K_obs <- function(f_spec, f_di, df_check) {
+      tf_f <- f_spec$threshold_facet
+      k_map_f <- f_di$K_by_level %||% f_spec$K_by_level
+      if (identical(f_spec$family, "pcm") && !is.null(tf_f) && !is.null(k_map_f)) {
+        out_k <- as.integer(unname(k_map_f[as.character(df_check[[tf_f]])]))
+        if (anyNA(out_k)) {
+          stop("Fold ", k, " refit is missing per-level category count(s) for '", tf_f, "'")
+        }
+        return(out_k)
+      }
+      rep(as.integer(get_spec_K_max(f_spec)), nrow(df_check))
+    }
+    exp_K_tr <- resolve_fold_K_obs(spec, object$data_info, fp$train_df)
+    got_K_tr <- resolve_fold_K_obs(fold_fit$spec, fold_fit$data_info, fp$train_df)
+    if (!identical(got_K_tr, exp_K_tr)) {
+      stop("Fold ", k, " refit changed per-level/per-observation category counts K relative to the original fit")
+    }
+    if (isTRUE(fold_fit$spec$K_heterogeneous) && !isTRUE(spec$K_heterogeneous)) {
+      stop("Fold ", k, " refit changed category definition from uniform K to heterogeneous K_by_level")
+    }
+    if (!isTRUE(fold_fit$spec$K_heterogeneous) && isTRUE(spec$K_heterogeneous)) {
+      tr_tf <- levels(fp$train_df[[spec$threshold_facet]])
+      exp_tr_u <- unique(as.integer(unname((object$data_info$K_by_level %||% spec$K_by_level)[tr_tf])))
+      if (length(exp_tr_u) > 1L) {
+        stop("Fold ", k, " refit changed category definition from heterogeneous K_by_level to uniform K")
+      }
+    }
+    if (!isTRUE(spec$K_heterogeneous) &&
+        !identical(as.integer(get_spec_K_max(fold_fit$spec)), as.integer(get_spec_K_max(spec)))) {
+      stop("Fold ", k, " refit changed K from ", get_spec_K_max(spec), " to ", get_spec_K_max(fold_fit$spec))
     }
 
     n_draws_per_fold[k] <- nrow(unclass(fold_fit$fit$draws("theta", format = "matrix")))
@@ -1192,13 +1278,15 @@ cv_bmfrm <- function(object,
     unseen_facets = all_unseen_facets,
     data_clean = obs_data,
     response_col = spec$response,
-    K = spec$K,
+    K = get_spec_K_max(spec),
     K_folds = K_folds,
     fold_ids = folds,
     group_ids = if (is.null(target_facet)) NULL else as.character(obs_data[[target_facet]]),
     aggregation = "sum",
     data_info = object$data_info,
-    facets_main = spec$facets_main
+    facets_main = spec$facets_main,
+    K_by_level = object$data_info$K_by_level %||% spec$K_by_level,
+    threshold_facet = spec$threshold_facet
   )
 
   pointwise_tbl <- tibble::tibble(
@@ -1405,8 +1493,8 @@ compare_bmfrm <- function(...,
       stop("Cannot compare different prediction targets: '", ref_name, "' (", ref_key$actual_target,
            ") vs '", oname, "' (", k$actual_target, ").")
     }
-    if (!identical(k$n_obs, ref_key$n_obs) || !identical(k$K, ref_key$K)) {
-      stop("Cannot compare models evaluated on different sample sizes or K encoding ('",
+    if (!identical(k$n_obs, ref_key$n_obs)) {
+      stop("Cannot compare models evaluated on different sample sizes ('",
            ref_name, "' vs '", oname, "').")
     }
 
@@ -1421,6 +1509,18 @@ compare_bmfrm <- function(...,
       }
     } else if (!setequal(k_obs_ids, ref_obs_ids)) {
       stop("Cannot compare models evaluated on different observation sets ('",
+           ref_name, "' vs '", oname, "').")
+    }
+    if (!is.null(ref_key$K_obs_hash_by_id) && !is.null(k$K_obs_hash_by_id)) {
+      if (!identical(k$K_obs_hash_by_id, ref_key$K_obs_hash_by_id)) {
+        stop(
+          "Cannot compare models with different per-observation category definitions (K_obs mismatch between '",
+          ref_name, "' and '", oname,
+          "'). v1 compare_bmfrm() requires identical rubric category definitions across compared models."
+        )
+      }
+    } else if (!identical(k$K, ref_key$K)) {
+      stop("Cannot compare models evaluated on different K encoding ('",
            ref_name, "' vs '", oname, "').")
     }
     if (!identical(k$response_hash, ref_key$response_hash)) {

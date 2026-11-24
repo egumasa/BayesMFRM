@@ -33,7 +33,6 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
                                method = c("auto", "dense", "schur")) {
   family <- match.arg(family, c("rsm", "pcm"))
   method <- match.arg(method)
-  validate_category_count(K)
   if (!is.data.frame(data) || !nrow(data)) stop("data must contain planned rating rows")
   if (length(tol) != 1L || !is.finite(tol) || tol <= 0) stop("tol must be positive")
   if (length(max_cells) != 1L || !is.finite(max_cells) || max_cells <= 0) stop("max_cells must be positive")
@@ -50,6 +49,15 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
       is.na(threshold_facet) || !threshold_facet %in% facets)) {
     stop("PCM requires threshold_facet among the main facets")
   }
+  k_info <- resolve_category_spec(
+    K = K,
+    data = data,
+    family = family,
+    threshold_facet = threshold_facet,
+    response_name = if (response %in% names(data)) response else NULL,
+    check_response = FALSE,
+    drop_na_response_levels = isTRUE(observed_only)
+  )
   n_planned <- nrow(data)
   fs <- lapply(data[facets], function(x) if (is.factor(x)) x else factor(x))
   if (any(vapply(fs, anyNA, logical(1)))) stop("Missing values in design facets")
@@ -472,10 +480,39 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
 
   step_levels <- if (family == "pcm") labels[[threshold_facet]] else "shared"
   step_observed <- if (family == "pcm") tabulate(ids[[threshold_facet]], length(step_levels)) > 0L else TRUE
-  step_parameters <- length(step_levels) * (K - 2L)
-  step_rank <- sum(step_observed) * (K - 2L)
+  step_K <- if (family == "pcm") as.integer(k_info$K_by_level[step_levels]) else as.integer(k_info$K_max)
+  step_df <- pmax(step_K - 2L, 0L)
+  step_parameters <- sum(step_df)
+  step_rank <- sum(step_df[step_observed])
+
+  # Informative diagnostic: rubric categories that exist in 1..K_j but were not observed
+  unobserved_categories <- NULL
+  if (response %in% names(data)) {
+    resp_obs <- data[[response]][keep]
+    non_na_resp <- !is.na(resp_obs)
+    if (any(non_na_resp)) {
+      if (family == "pcm") {
+        tf_obs <- as.character(data[[threshold_facet]][keep][non_na_resp])
+        unobserved_categories <- stats::setNames(
+          lapply(seq_along(step_levels), function(j) {
+            lv <- step_levels[j]
+            obs_cats <- unique(as.integer(resp_obs[non_na_resp][tf_obs == lv]))
+            setdiff(seq_len(step_K[j]), obs_cats)
+          }),
+          step_levels
+        )
+      } else {
+        obs_cats <- unique(as.integer(resp_obs[non_na_resp]))
+        unobserved_categories <- list(shared = setdiff(seq_len(k_info$K_max), obs_cats))
+      }
+    }
+  }
+
   structure(list(
-    formula = formula, family = family, K = K, threshold_facet = threshold_facet, observed_only = observed_only,
+    formula = formula, family = family, K = k_info$K,
+    K_by_level = k_info$K_by_level, K_max = k_info$K_max,
+    K_heterogeneous = k_info$K_heterogeneous,
+    threshold_facet = threshold_facet, observed_only = observed_only,
     solver = solver_used,
     n_observations = n, n_dropped = n_planned - n,
     levels = nodes, interaction_levels = interaction_levels,
@@ -484,6 +521,7 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
     rank = rank, n_parameters = p, nullity = p - rank, identifiable = rank == p && step_rank == step_parameters,
     step_rank = step_rank, step_parameters = step_parameters, step_nullity = step_parameters - step_rank,
     unobserved_step_levels = step_levels[!step_observed],
+    unobserved_categories = unobserved_categories,
     adjacent_logit_rank = rank + step_rank, adjacent_logit_parameters = p + step_parameters,
     condition_number = cond_num,
     singular_values = sing_vals, tolerance = tol, design_matrix = X,

@@ -1,5 +1,13 @@
 # BayesMFRM Changelog
 
+## 0.1.0.9006 (Development)
+
+### Heterogeneous-Category Partial Credit Model (PCM v1)
+- Extended `K` in `bmfrm()`, `parse_bmfrm_formula()`, `check_design_bmfrm()`, and `simulate_bmfrm()` to accept a named integer vector matching all levels of `threshold_facet` for `family = "pcm"` (e.g., `K = c(I1 = 2L, I2 = 4L, I3 = 6L)`), while keeping scalar `K >= 2` and uniform named-vector `K` 100% backward compatible (including `hierarchical = "tau"` when all `K_j` are equal). Separated input-level rubric validation from post-NA level mapping so dropping all-NA levels cleanly retains valid scalar-`K` PCM observations and automatically normalizes post-NA uniform levels (including binary `K = 2`) to the existing uniform PCM path.
+- Added a packed ragged Stan template (`inst/stan/bmfrm_pcm_hetero.stan`) with within-level zero-sum step constraints ($\sum_{m=1}^{K_j - 1} \tau_{j,m} = 0$, 0 free step parameters for binary $K_j = 2$), per-$K_j$ `scale = "raw"` / `"marginal"` orthonormal step bases (`B_tau_rows`), non-Gaussian step priors, convergence monitoring excluding constant binary-level `tau` entries, and `summary()` decoding of packed `tau[idx]` back to `(threshold_facet, step)`.
+- Strictly separated "exists in rubric but unobserved in sample" (retained in the softmax denominator across full fits and CV training folds via locked `K_by_level`) from "does not exist on this level's rubric" (`NA_real_` for $c > K_j$ in `predict(..., type = "probs")`, with a `K_obs` column in `summary = TRUE` and `K_obs`/`K_by_level`/`K_heterogeneous` in `bmfrm_prediction_meta`).
+- Enforced v1 guardrails on heterogeneous-category PCM: `hierarchical = "tau"` raises an explicit error only when `K_j` actually varies across levels (hierarchical `person`, `rater`, and 2-way interactions remain supported); unseen `threshold_facet` levels always raise an error (even under `allow_new_levels = TRUE`, `sample_new_levels = "zero"`, or `cv_bmfrm(..., strict_target = FALSE)`); holding out or adjusting `threshold_facet` is rejected; `pp_check()` recommends grouping by `threshold_facet` when ungrouped; `fair_scores()` preserves `mean_fair_score` on native rubric units and attaches `attr(res, "reference_meta")` unconditionally across all `summary = TRUE` (`score_unit = "native_weighted_mean"`, even when `return_draws = FALSE`) and `summary = FALSE` (`score_unit = "native_row_expected_score"`) return paths; and `cv_bmfrm()` / `compare_bmfrm()` verify per-observation `K_obs` compatibility across refits and candidate models as a v1 compatibility rule.
+
 ## 0.1.0.9005 (Development)
 
 ### Prediction, Fair-Score Extensions, & Target-Aware Model Comparison

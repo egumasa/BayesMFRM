@@ -18,8 +18,8 @@ build_stan_code <- function(spec, priors = NULL, save_gq = NULL) {
   spec <- resolve_bmfrm_spec(spec, priors)
   priors <- spec$priors
 
-  # Load appropriate template based on family
-  template_path <- get_stan_template_path(spec$family)
+  # Load appropriate template based on family (and heterogeneous PCM flag)
+  template_path <- get_stan_template_path(spec$family, heterogeneous = isTRUE(spec$K_heterogeneous))
 
   stan_code <- readLines(template_path, warn = FALSE)
   stan_code <- paste(stan_code, collapse = "\n")
@@ -326,7 +326,7 @@ generate_prior_block <- function(spec, priors) {
 
     # 2. Step (tau) priors
     if (gm$step$mode == "gaussian_basis") {
-      tau_lhs <- if (spec$family == "pcm") "to_vector(tau_raw)" else "tau_raw"
+      tau_lhs <- if (spec$family == "pcm" && !isTRUE(spec$K_heterogeneous)) "to_vector(tau_raw)" else "tau_raw"
       lines <- c(lines, paste0("  ", tau_lhs, " ~ std_normal();"))
     } else if (gm$step$mode == "hierarchical_pcm") {
       lines <- c(
@@ -338,7 +338,7 @@ generate_prior_block <- function(spec, priors) {
         lines <- c(lines, paste0("  sigma_tau_raw ~ ", gm$step$dev_sd$spec, ";"))
       }
     } else {
-      tau_lhs <- if (spec$family == "pcm") "to_vector(tau_raw)" else "tau_raw"
+      tau_lhs <- if (spec$family == "pcm" && !isTRUE(spec$K_heterogeneous)) "to_vector(tau_raw)" else "tau_raw"
       lines <- c(lines, paste0("  ", tau_lhs, " ~ ", gm$step$spec, ";"))
     }
 
@@ -400,7 +400,7 @@ generate_prior_block <- function(spec, priors) {
     } else if (prior_obj$class == "rater") {
       lines <- c(lines, paste0("  rater_raw ~ ", prior_obj$spec, ";"))
     } else if (prior_obj$class == "tau") {
-      if (spec$family == "pcm") {
+      if (spec$family == "pcm" && !isTRUE(spec$K_heterogeneous)) {
         lines <- c(lines, paste0("  to_vector(tau_raw) ~ ", prior_obj$spec, ";"))
       } else {
         lines <- c(lines, paste0("  tau_raw ~ ", prior_obj$spec, ";"))
@@ -419,7 +419,33 @@ generate_prior_block <- function(spec, priors) {
 
 ordinal_stan_replacements <- function(spec) {
   J <- paste0("J_", spec$threshold_facet)
+  is_hetero <- isTRUE(spec$K_heterogeneous)
   if (is.null(spec$gaussian_model)) {
+    if (is_hetero) {
+      return(list(
+        MODEL_DATA = paste(c(
+          "  int<lower=1> N_tau_raw;",
+          paste0("  array[", J, "] int<lower=1> tau_raw_start;"),
+          paste0("  array[", J, "] int<lower=0> tau_raw_len;")
+        ), collapse = "\n"),
+        ABILITY_PARAM_DECL = "vector[J_person] theta_raw;",
+        ABILITY_TRANSFORM = "vector[J_person] theta = theta_raw;",
+        THRESHOLD_PARAM_DECL = "vector[N_tau_raw] tau_raw;",
+        THRESHOLD_TRANSFORM = paste(c(
+          "vector[N_tau_steps] tau = rep_vector(0.0, N_tau_steps);",
+          paste0("  for (j in 1:", J, ") {"),
+          "    int mj = tau_len[j];",
+          "    int rj = tau_raw_len[j];",
+          "    if (rj > 0) {",
+          "      int s = tau_start[j];",
+          "      int rs = tau_raw_start[j];",
+          "      vector[mj] raw_j = tau_raw[rs:(rs + mj - 1)];",
+          "      tau[s:(s + mj - 1)] = raw_j - mean(raw_j);",
+          "    }",
+          "  }"
+        ), collapse = "\n")
+      ))
+    }
     return(list(
       MODEL_DATA = "",
       ABILITY_PARAM_DECL = "vector[J_person] theta_raw;",
@@ -463,7 +489,52 @@ ordinal_stan_replacements <- function(spec) {
   }
 
   # 2. Step (tau) fields/decls/transforms
-  if (gm$step$mode == "gaussian_basis") {
+  if (is_hetero) {
+    if (gm$step$mode == "gaussian_basis") {
+      fields <- c(
+        fields,
+        "int<lower=1> N_tau_free;",
+        paste0("array[", J, "] int<lower=1> tau_free_start;"),
+        paste0("array[", J, "] int<lower=0> tau_free_len;"),
+        "matrix[N_tau_steps, K_max - 2] B_tau_rows;",
+        "real<lower=0> prior_sd_tau;"
+      )
+      thresh_param <- "vector[N_tau_free] tau_raw;"
+      thresh_transform <- paste(c(
+        "vector[N_tau_steps] tau = rep_vector(0.0, N_tau_steps);",
+        paste0("  for (j in 1:", J, ") {"),
+        "    int mj = tau_len[j];",
+        "    int dj = tau_free_len[j];",
+        "    if (dj > 0) {",
+        "      int s = tau_start[j];",
+        "      int fs = tau_free_start[j];",
+        "      tau[s:(s + mj - 1)] = prior_sd_tau * (B_tau_rows[s:(s + mj - 1), 1:dj] * tau_raw[fs:(fs + dj - 1)]);",
+        "    }",
+        "  }"
+      ), collapse = "\n")
+    } else {
+      fields <- c(
+        fields,
+        "int<lower=1> N_tau_raw;",
+        paste0("array[", J, "] int<lower=1> tau_raw_start;"),
+        paste0("array[", J, "] int<lower=0> tau_raw_len;")
+      )
+      thresh_param <- "vector[N_tau_raw] tau_raw;"
+      thresh_transform <- paste(c(
+        "vector[N_tau_steps] tau = rep_vector(0.0, N_tau_steps);",
+        paste0("  for (j in 1:", J, ") {"),
+        "    int mj = tau_len[j];",
+        "    int rj = tau_raw_len[j];",
+        "    if (rj > 0) {",
+        "      int s = tau_start[j];",
+        "      int rs = tau_raw_start[j];",
+        "      vector[mj] raw_j = tau_raw[rs:(rs + mj - 1)];",
+        "      tau[s:(s + mj - 1)] = raw_j - mean(raw_j);",
+        "    }",
+        "  }"
+      ), collapse = "\n")
+    }
+  } else if (gm$step$mode == "gaussian_basis") {
     fields <- c(fields, "matrix[K - 1, K - 2] B_tau;", "real<lower=0> prior_sd_tau;")
     thresh_param <- if (spec$family == "pcm") paste0("matrix[", J, ", K - 2] tau_raw;") else "vector[K - 2] tau_raw;"
     thresh_transform <- if (spec$family == "pcm") {
@@ -605,12 +676,12 @@ generate_eta_sum <- function(spec, fair = FALSE) {
 #'
 #' @return Path to the Stan template file
 #' @keywords internal
-get_stan_template_path <- function(family = "rsm") {
+get_stan_template_path <- function(family = "rsm", heterogeneous = FALSE) {
   template_name <- switch(family,
     "rsm" = "bmfrm_rsm.stan",
-    "pcm" = "bmfrm_pcm.stan",
+    "pcm" = if (isTRUE(heterogeneous)) "bmfrm_pcm_hetero.stan" else "bmfrm_pcm.stan",
     "rating_scale" = "bmfrm_rsm.stan",
-    "partial_credit" = "bmfrm_pcm.stan",
+    "partial_credit" = if (isTRUE(heterogeneous)) "bmfrm_pcm_hetero.stan" else "bmfrm_pcm.stan",
     stop("Unknown family: ", family, ". Use 'rsm' or 'pcm'.")
   )
 

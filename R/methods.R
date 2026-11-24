@@ -10,7 +10,13 @@ print.bmfrm_fit <- function(x, ...) {
   cat("Family: ", x$spec$family, "\n")
   cat("Hierarchical facets:", paste(x$hierarchical %||% if (!is.null(x$model)) "person" else character(), collapse = ", "), "\n")
   cat("Observations:", x$data_info$stan_data$N, "\n")
-  cat("Rating categories: 1 to", x$spec$K, "\n\n")
+  if (isTRUE(x$spec$K_heterogeneous) && !is.null(x$spec$K_by_level)) {
+    cat("Rating categories: heterogeneous by ", x$spec$threshold_facet, " (",
+        paste(sprintf("%s=1..%d", names(x$spec$K_by_level), as.integer(x$spec$K_by_level)), collapse = ", "),
+        ")\n\n", sep = "")
+  } else {
+    cat("Rating categories: 1 to", get_spec_K_max(x$spec), "\n\n")
+  }
   
   cat("Facets:\n")
   cat("  Main facets:", paste(x$spec$facets_main, collapse = ", "), "\n")
@@ -97,7 +103,13 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   cat("Family: ", object$spec$family, "\n") 
   cat("Hierarchical facets:", paste(object$hierarchical %||% if (!is.null(object$model)) "person" else character(), collapse = ", "), "\n")
   cat("Observations:", object$data_info$stan_data$N, "\n")
-  cat("Rating categories: 1 to", object$spec$K, "\n\n")
+  if (isTRUE(object$spec$K_heterogeneous) && !is.null(object$spec$K_by_level)) {
+    cat("Rating categories: heterogeneous by ", object$spec$threshold_facet, " (",
+        paste(sprintf("%s=1..%d", names(object$spec$K_by_level), as.integer(object$spec$K_by_level)), collapse = ", "),
+        ")\n\n", sep = "")
+  } else {
+    cat("Rating categories: 1 to", get_spec_K_max(object$spec), "\n\n")
+  }
   
   # Design identification (always inspect before MCMC convergence and estimates)
   cat("Design Identification:\n")
@@ -138,12 +150,33 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   # Threshold parameters
   cat("Centered step deviations (tau):\n")
   tau_summary <- object$fit$summary("tau", "mean", ~stats::quantile(.x, probs = range(probs)))
+  tau_tf <- object$spec$threshold_facet
+  tau_tf_labels <- if (!is.null(tau_tf)) object$data_info$facet_labels[[tau_tf]] else NULL
+  tau_start_vec <- object$data_info$stan_data$tau_start
+  tau_len_vec <- object$data_info$stan_data$tau_len
+  if (isTRUE(object$spec$K_heterogeneous) &&
+      (is.null(tau_start_vec) || is.null(tau_len_vec)) &&
+      !is.null(tau_tf_labels)) {
+    k_map_s <- object$data_info$K_by_level %||% object$spec$K_by_level
+    if (!is.null(k_map_s)) {
+      tau_len_vec <- as.integer(unname(k_map_s[tau_tf_labels]) - 1L)
+      tau_start_vec <- as.integer(c(1L, utils::head(cumsum(tau_len_vec), -1L) + 1L))
+    }
+  }
   for (i in seq_len(nrow(tau_summary))) {
     label <- tau_summary$variable[i]
     if (identical(object$spec$family, "pcm")) {
       idx <- as.integer(strsplit(gsub("^tau\\[|\\]$", "", label), ",")[[1L]])
-      label <- paste0(label, " (", object$spec$threshold_facet, "=",
-        object$data_info$facet_labels[[object$spec$threshold_facet]][idx[1L]], ", step=", idx[2L], ")")
+      if (length(idx) == 1L && !is.null(tau_start_vec) && !is.null(tau_len_vec) && !is.null(tau_tf_labels)) {
+        p <- idx[1L]
+        lv_i <- which(p >= tau_start_vec & p < (tau_start_vec + tau_len_vec))
+        if (length(lv_i) == 1L) {
+          step_m <- p - tau_start_vec[lv_i] + 1L
+          label <- paste0(label, " (", tau_tf, "=", tau_tf_labels[lv_i], ", step=", step_m, ")")
+        }
+      } else if (length(idx) >= 2L && !is.null(tau_tf_labels)) {
+        label <- paste0(label, " (", tau_tf, "=", tau_tf_labels[idx[1L]], ", step=", idx[2L], ")")
+      }
     }
     cat(sprintf("  %s: %6.2f [%6.2f, %6.2f]\n",
                 label,
@@ -266,6 +299,13 @@ pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws =
   type <- match.arg(type)
   
   y_obs <- object$data_info$stan_data$X
+  if (is.null(group) && isTRUE(object$spec$K_heterogeneous)) {
+    message(
+      "Note: Heterogeneous category counts across '", object$spec$threshold_facet,
+      "' are pooled in ungrouped PPC; pass group = '", object$spec$threshold_facet,
+      "' to inspect category distributions on each valid rubric scale."
+    )
+  }
   if (!is.null(group)) {
     if (!is.character(group) || length(group) != 1L || !group %in% names(object$data_info$data_clean)) stop("group must name a column in the fitted data")
     group <- object$data_info$data_clean[[group]]
@@ -579,7 +619,17 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
                       length(setdiff(object$spec$facets_main, "person")) <= 1L)
   )
 
+  is_hetero_pcm <- isTRUE(object$spec$K_heterogeneous)
+  K_by_level_meta <- object$data_info$K_by_level %||% object$spec$K_by_level
+
   if (identical(object$spec$family, "pcm") && object$spec$threshold_facet %in% resolved_adjust) {
+    if (is_hetero_pcm) {
+      stop(
+        "Fair scores are not defined when adjusting threshold_facet '",
+        object$spec$threshold_facet, "' in heterogeneous-category PCM because no common ",
+        "reference step profile exists across differing category counts."
+      )
+    }
     if (!fit_has_variable(object$fit, "tau_common")) {
       stop("Fair scores are not defined for PCM steps on an adjusted facet; a reference step profile must be specified first")
     }
@@ -681,7 +731,31 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       out_grid$mu_fair_sd <- st$mu_fair_sd
       out_grid$likelihood_identified <- id_rows$likelihood_identified
       out_grid$identification_basis <- id_rows$identification_basis
-      return(tibble::as_tibble(out_grid))
+      res_row <- tibble::as_tibble(out_grid)
+      if (has_explicit_weights || is_hetero_pcm) {
+        ref_grid_meta <- reference_grid
+        if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
+        rm_list <- list(
+          adjust_facets = resolved_adjust,
+          standardized = TRUE,
+          summary = FALSE,
+          score_unit = "native_row_expected_score",
+          K_heterogeneous = is_hetero_pcm,
+          K_by_level = K_by_level_meta,
+          reference_grid = ref_grid_meta,
+          reference_weights = ref_w
+        )
+        if (is_hetero_pcm) {
+          rm_list$comparability_note <- paste0(
+            "Heterogeneous category counts across '", object$spec$threshold_facet,
+            "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+            object$spec$threshold_facet, " level (not rescaled to 0-1); downstream aggregation across ",
+            "levels should use the common reference grid and reference_weights."
+          )
+        }
+        attr(res_row, "reference_meta") <- rm_list
+      }
+      return(res_row)
     }
 
     active_grid <- reference_grid[ref_w > 0, , drop = FALSE]
@@ -786,17 +860,28 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       }
       attr(res, "draws") <- draw_list
     }
-    if (isTRUE(return_draws) || has_explicit_weights) {
+    if (isTRUE(return_draws) || has_explicit_weights || is_hetero_pcm) {
       ref_grid_meta <- reference_grid
       if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
-      attr(res, "reference_meta") <- list(
+      rm_list <- list(
         adjust_facets = resolved_adjust,
         standardized = TRUE,
+        score_unit = "native_weighted_mean",
+        K_heterogeneous = is_hetero_pcm,
+        K_by_level = K_by_level_meta,
         reference_grid = ref_grid_meta,
         reference_weights = ref_w,
         draw_ids = draw_meta$draw_ids,
         draw_info = draw_meta$draw_info
       )
+      if (is_hetero_pcm) {
+        rm_list$comparability_note <- paste0(
+          "Heterogeneous category counts across '", object$spec$threshold_facet,
+          "': scores are weighted means in native rubric units on the common reference configuration ",
+          "(not rescaled to 0-1)."
+        )
+      }
+      attr(res, "reference_meta") <- rm_list
     }
     return(res)
   }
@@ -852,7 +937,27 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     obs_data$mu_fair_sd <- apply(draws, 2L, stats::sd)
     obs_data$likelihood_identified <- id_obs$likelihood_identified
     obs_data$identification_basis <- id_obs$identification_basis
-    if (!summary) return(obs_data)
+    if (!summary) {
+      if (is_hetero_pcm) {
+        attr(obs_data, "reference_meta") <- list(
+          adjust_facets = effective_adjust,
+          standardized = FALSE,
+          summary = FALSE,
+          score_unit = "native_row_expected_score",
+          K_heterogeneous = TRUE,
+          K_by_level = K_by_level_meta,
+          reference_grid = NULL,
+          reference_weights = NULL,
+          comparability_note = paste0(
+            "Heterogeneous category counts across '", object$spec$threshold_facet,
+            "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+            object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
+            "aggregation depends on each examinee's assigned levels."
+          )
+        )
+      }
+      return(obs_data)
+    }
 
     mu_draws_stan <- NULL
     if (isTRUE(decompose)) {
@@ -932,14 +1037,28 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
         draw_list$shrinkage_and_noise <- set_dn(do.call(cbind, shrink_cols))
       }
       attr(res, "draws") <- draw_list
-      attr(res, "reference_meta") <- list(
+    }
+    if (isTRUE(return_draws) || is_hetero_pcm) {
+      draw_meta_stan <- extract_draw_index_info(object$fit, D)
+      rm_list <- list(
         adjust_facets = effective_adjust,
         standardized = FALSE,
+        score_unit = "native_weighted_mean",
+        K_heterogeneous = is_hetero_pcm,
+        K_by_level = K_by_level_meta,
         reference_grid = NULL,
         reference_weights = NULL,
         draw_ids = draw_meta_stan$draw_ids,
         draw_info = draw_meta_stan$draw_info
       )
+      if (is_hetero_pcm) {
+        rm_list$comparability_note <- paste0(
+          "Heterogeneous category counts across '", object$spec$threshold_facet,
+          "': unstandardized averages depend on each examinee's assigned levels; ",
+          "use standardize = TRUE or reference_grid for cross-examinee comparisons."
+        )
+      }
+      attr(res, "reference_meta") <- rm_list
     }
     return(res)
   }
@@ -964,6 +1083,24 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     obs_data$mu_fair_sd <- st$mu_fair_sd
     obs_data$likelihood_identified <- id_obs$likelihood_identified
     obs_data$identification_basis <- id_obs$identification_basis
+    if (is_hetero_pcm) {
+      attr(obs_data, "reference_meta") <- list(
+        adjust_facets = resolved_adjust,
+        standardized = FALSE,
+        summary = FALSE,
+        score_unit = "native_row_expected_score",
+        K_heterogeneous = TRUE,
+        K_by_level = K_by_level_meta,
+        reference_grid = NULL,
+        reference_weights = NULL,
+        comparability_note = paste0(
+          "Heterogeneous category counts across '", object$spec$threshold_facet,
+          "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+          object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
+          "aggregation depends on each examinee's assigned levels."
+        )
+      )
+    }
     return(obs_data)
   }
 
@@ -1030,14 +1167,28 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       draw_list$shrinkage_and_noise <- set_dn(do.call(cbind, shrink_cols))
     }
     attr(res, "draws") <- draw_list
-    attr(res, "reference_meta") <- list(
+  }
+  if (isTRUE(return_draws) || is_hetero_pcm) {
+    draw_meta_stream <- extract_draw_index_info(object$fit, nrow(st$sum_mu))
+    rm_list <- list(
       adjust_facets = resolved_adjust,
       standardized = FALSE,
+      score_unit = "native_weighted_mean",
+      K_heterogeneous = is_hetero_pcm,
+      K_by_level = K_by_level_meta,
       reference_grid = NULL,
       reference_weights = NULL,
       draw_ids = draw_meta_stream$draw_ids,
       draw_info = draw_meta_stream$draw_info
     )
+    if (is_hetero_pcm) {
+      rm_list$comparability_note <- paste0(
+        "Heterogeneous category counts across '", object$spec$threshold_facet,
+        "': unstandardized averages depend on each examinee's assigned levels; ",
+        "use standardize = TRUE or reference_grid for cross-examinee comparisons."
+      )
+    }
+    attr(res, "reference_meta") <- rm_list
   }
   res
 }

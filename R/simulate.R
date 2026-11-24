@@ -33,7 +33,6 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
                            nsim = 1L, seed = NULL, hierarchical = character(),
                            family = c("rsm", "pcm"), threshold_facet = NULL) {
   family <- match.arg(family)
-  validate_category_count(K)
   if (length(nsim) != 1L || !is.finite(nsim) || nsim < 1 || nsim != floor(nsim)) stop("nsim must be a positive integer")
   if (!is.data.frame(design) || !nrow(design)) stop("design must contain rating rows")
   response <- all.vars(formula)[1L]
@@ -44,6 +43,9 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   model <- spec$gaussian_model
   priors <- spec$priors
   hierarchical <- spec$hierarchical
+  K_max <- get_spec_K_max(spec)
+  is_hetero <- isTRUE(spec$K_heterogeneous)
+  K_by_level <- spec$K_by_level
   if (!"person" %in% spec$facets_main ||
       any(!spec$facets_main %in% names(design))) stop("Simulation requires person and named main facets")
   fs <- lapply(design[spec$facets_main], function(x) if (is.factor(x)) x else factor(x))
@@ -51,10 +53,10 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   labels <- lapply(fs, levels)
   ids <- lapply(fs, as.integer)
   param_names <- c(ifelse(spec$facets_main == "person", "theta", spec$facets_main), "tau")
-  sizes <- c(lengths(labels), K - 1L)
+  sizes <- c(lengths(labels), K_max - 1L)
   names(sizes) <- param_names
   J_step <- if (family == "pcm") length(labels[[spec$threshold_facet]]) else 1L
-  sizes["tau"] <- J_step * (K - 1L)
+  sizes["tau"] <- if (is_hetero) sum(as.integer(K_by_level[labels[[spec$threshold_facet]]]) - 1L) else J_step * (K_max - 1L)
   if ("person" %in% hierarchical) {
     param_names <- c(param_names, "mu_theta", "sigma_theta")
     sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
@@ -67,7 +69,7 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   }
   if ("tau" %in% hierarchical) {
     param_names <- c(param_names, "tau_common", "sigma_tau")
-    sizes <- c(sizes, tau_common = K - 1L, sigma_tau = 1L)
+    sizes <- c(sizes, tau_common = K_max - 1L, sigma_tau = 1L)
   }
   bias_names <- gsub(":", "", spec$facets_bias)
   bias_dims <- lapply(strsplit(spec$facets_bias, ":", fixed = TRUE), function(f) lengths(labels[f]))
@@ -83,6 +85,33 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
     parameters <- parameters[param_names]
     for (j in seq_along(parameters)) {
       x <- parameters[[j]]
+      if (param_names[j] == "tau" && is_hetero) {
+        tf_lv <- labels[[spec$threshold_facet]]
+        if (!is.list(x) || length(x) != length(tf_lv)) {
+          stop("Heterogeneous PCM tau must be a list of step vectors, one per level of ", spec$threshold_facet)
+        }
+        if (!is.null(names(x))) {
+          if (anyDuplicated(names(x)) || !setequal(names(x), tf_lv)) {
+            stop("Heterogeneous PCM tau list names do not match threshold_facet levels")
+          }
+          x <- x[tf_lv]
+        } else {
+          names(x) <- tf_lv
+        }
+        for (lv in tf_lv) {
+          Kj <- as.integer(K_by_level[[lv]])
+          tv <- x[[lv]]
+          if (!is.numeric(tv) || length(tv) != (Kj - 1L) || any(!is.finite(tv))) {
+            stop("PCM tau for level '", lv, "' must be a finite numeric vector of length ", Kj - 1L)
+          }
+          if (abs(sum(tv)) > 1e-8) {
+            stop("PCM tau for level '", lv, "' must sum to zero")
+          }
+          x[[lv]] <- as.numeric(unname(tv))
+        }
+        parameters[[j]] <- x
+        next
+      }
       if (!is.numeric(x) || length(x) != sizes[j] || any(!is.finite(x))) stop("Invalid parameter vector: ", param_names[j])
       if (param_names[j] %in% bias_names) {
         f <- strsplit(spec$facets_bias[match(param_names[j], bias_names)], ":", fixed = TRUE)[[1L]]
@@ -115,14 +144,14 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
         parameters[[j]] <- unname(x); next
       }
       if (param_names[j] == "tau" && family == "pcm") {
-        if (!is.matrix(x) || !identical(dim(x), c(J_step, as.integer(K - 1L)))) stop("PCM tau must have threshold-facet levels as rows and K-1 steps as columns")
+        if (!is.matrix(x) || !identical(dim(x), c(J_step, as.integer(K_max - 1L)))) stop("PCM tau must have threshold-facet levels as rows and K-1 steps as columns")
         if (!is.null(rownames(x))) {
           if (anyDuplicated(rownames(x)) || !setequal(rownames(x), labels[[spec$threshold_facet]])) stop("PCM tau row labels do not match threshold_facet")
           x <- x[labels[[spec$threshold_facet]], , drop = FALSE]
         }
         if (!is.null(colnames(x))) {
-          if (anyDuplicated(colnames(x)) || !setequal(colnames(x), as.character(seq_len(K - 1L)))) stop("PCM tau column names must be step numbers")
-          x <- x[, as.character(seq_len(K - 1L)), drop = FALSE]
+          if (anyDuplicated(colnames(x)) || !setequal(colnames(x), as.character(seq_len(K_max - 1L)))) stop("PCM tau column names must be step numbers")
+          x <- x[, as.character(seq_len(K_max - 1L)), drop = FALSE]
         }
         if (any(abs(rowSums(x)) > 1e-8)) stop("PCM tau must sum to zero within every threshold-facet level")
         parameters[[j]] <- unname(x)
@@ -148,12 +177,26 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   prior_classes <- vapply(priors, function(p) p$class, character(1))
   sample_one <- function() {
     pars <- parameters
-    if (is.null(pars) && !is.null(model)) pars <- sample_gaussian_model(model, labels, K)
+    if (is.null(pars) && !is.null(model)) {
+      pars <- sample_gaussian_model(model, labels, K_max, K_by_level = K_by_level)
+    }
     if (is.null(pars)) {
       pars <- lapply(seq_along(classes), function(j) {
+        if (param_names[j] == "tau" && is_hetero) {
+          tf_lv <- labels[[spec$threshold_facet]]
+          p_spec <- priors[[match(classes[j], prior_classes)]]$spec
+          tl <- lapply(tf_lv, function(lv) {
+            Kj <- as.integer(K_by_level[[lv]])
+            if (Kj == 2L) return(0)
+            v <- sample_bmfrm_prior(p_spec, Kj - 1L)
+            v - mean(v)
+          })
+          names(tl) <- tf_lv
+          return(tl)
+        }
         x <- sample_bmfrm_prior(priors[[match(classes[j], prior_classes)]]$spec, sizes[j])
         if (param_names[j] == "tau" && family == "pcm") {
-          x <- matrix(x, J_step, K - 1L)
+          x <- matrix(x, J_step, K_max - 1L)
           x <- x - rowMeans(x)
         } else if (param_names[j] != "theta") x <- x - mean(x)
         x
@@ -173,9 +216,24 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
       f <- strsplit(spec$facets_bias[j], ":", fixed = TRUE)[[1L]]
       eta <- eta + pars[[bias_names[j]]][cbind(ids[[f[1L]]], ids[[f[2L]]])]
     }
-    prob <- if (family == "pcm") pcm_probabilities(eta, pars$tau[ids[[spec$threshold_facet]], , drop = FALSE]) else rsm_probabilities(eta, pars$tau)
-    cum <- t(apply(prob, 1L, cumsum))
-    y <- 1L + rowSums(stats::runif(nrow(design)) > cum[, -K, drop = FALSE])
+    if (is_hetero) {
+      tf_ids <- ids[[spec$threshold_facet]]
+      tf_lv <- labels[[spec$threshold_facet]]
+      u <- stats::runif(nrow(design))
+      y <- integer(nrow(design))
+      for (j in seq_along(tf_lv)) {
+        loc <- which(tf_ids == j)
+        if (!length(loc)) next
+        Kj <- as.integer(K_by_level[[tf_lv[j]]])
+        prob_j <- rsm_probabilities(eta[loc], pars$tau[[j]])
+        cum_j <- t(apply(prob_j, 1L, cumsum))
+        y[loc] <- 1L + rowSums(u[loc] > cum_j[, -Kj, drop = FALSE])
+      }
+    } else {
+      prob <- if (family == "pcm") pcm_probabilities(eta, pars$tau[ids[[spec$threshold_facet]], , drop = FALSE]) else rsm_probabilities(eta, pars$tau)
+      cum <- t(apply(prob, 1L, cumsum))
+      y <- 1L + rowSums(stats::runif(nrow(design)) > cum[, -K_max, drop = FALSE])
+    }
     list(parameters = pars, y = as.integer(y))
   }
   generated <- with_bmfrm_seed(seed, replicate(nsim, sample_one(), simplify = FALSE))

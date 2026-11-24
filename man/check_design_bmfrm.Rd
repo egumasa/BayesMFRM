@@ -21,7 +21,8 @@ check_design_bmfrm(
 
 \item{data}{Planned rating rows; the response column is optional.}
 
-\item{K}{Number of categories, at least two.}
+\item{K}{Number of categories (\code{>= 2}): scalar integer for RSM or uniform PCM,
+or a named integer vector matching \code{threshold_facet} levels for heterogeneous-category PCM.}
 
 \item{family}{"rsm" or "pcm".}
 

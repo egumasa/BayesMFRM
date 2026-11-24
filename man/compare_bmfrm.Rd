@@ -37,11 +37,14 @@ and aggregation rule before delegating to \code{\link[loo:loo_compare]{loo::loo_
 \details{
 Observation correspondence is verified using each fit's preserved pre-preprocessing
 \code{obs_id} (explicit \code{obs_id} column/vector in \code{\link{bmfrm}}, non-default
-unique \code{rownames(data)}, or pre-NA row index) together with per-ID hashes of responses
-and all shared facet and metadata columns. If two models share the same unique \code{obs_id}
-set in different row orders, observations (and held-out groups) are aligned by \code{obs_id}
-before computing paired differences; if rows were permuted without preserved IDs (e.g.,
-swapping two same-score observations), shared-facet verification stops with an error.
+unique \code{rownames(data)}, or pre-NA row index) together with per-ID hashes of responses,
+per-observation rubric category counts (\code{K_obs}), and all shared facet and metadata columns.
+If two models share the same unique \code{obs_id} set in different row orders, observations
+(and held-out groups) are aligned by \code{obs_id} before computing paired differences; if rows
+were permuted without preserved IDs (e.g., swapping two same-score observations), shared-facet
+verification stops with an error. As a v1 compatibility rule, \code{compare_bmfrm()} requires
+identical per-observation rubric category definitions (\code{K_obs}) across compared models
+(uniform named-vector PCM with equal \code{K_j} remains comparable against uniform scalar-\code{K} RSM/PCM).
 
 For grouped CV (\code{target != "rating"}), paired differences are computed across held-out
 groups (\code{score = "group"} for group joint ELPD, or \code{score = "pointwise"} clustered
