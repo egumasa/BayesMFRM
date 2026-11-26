@@ -4,11 +4,17 @@
 #' It provides a user-friendly interface for specifying models with multiple facets
 #' and optional bias terms.
 #'
-#' @param formula R formula specifying the model (e.g., score ~ person + item + rater + rater:item)
+#' @param formula R formula specifying the model (e.g., score ~ person + item + rater + rater:item).
+#'   The response must be a single column name; transform scores in `data` first.
 #' @param data data.frame containing all variables in the formula
-#' @param K number of rating categories (if NULL, inferred from max(score))
-#' @param priors list of prior() objects (if NULL, uses defaults)
-#' @param stan_file optional path to a hardcoded Stan file (bypasses code generation)
+#' @param K Number of rating categories: a scalar integer `>= 2` for RSM or
+#'   uniform PCM, a named integer vector matching every `threshold_facet` level
+#'   for heterogeneous PCM (e.g., `c(I1 = 2L, I2 = 4L, I3 = 6L)`), or `NULL`
+#'   (inferred from `max(score)`). Equal values in a named vector use uniform PCM.
+#' @param priors list of prior() objects for generated models (if NULL, uses defaults).
+#'   Cannot be supplied together with `stan_file`.
+#' @param stan_file optional path to a hardcoded Stan file (bypasses code generation).
+#'   Priors are defined in that file; the returned `priors` metadata is `NULL`.
 #' @param family model family: "rsm" (Rating Scale Model with shared thresholds) or
 #'   "pcm" (Partial Credit Model with facet-specific thresholds)
 #' @param threshold_facet For PCM only: which facet gets level-specific steps
@@ -19,7 +25,9 @@
 #' @param design_check How to handle a rank-deficient generated RSM/PCM, including
 #'   two-way interactions: warn, error, or none.
 #' @param cpp_options Named compilation options passed to cmdstanr.
-#' @param save_csvs whether to save MCMC output as CSV files
+#' @param save_csvs Must be `TRUE`: persistent CmdStan fit caching requires CSV files.
+#'   `FALSE` is unsupported and raises an error. Use `save_gq = "minimal"` to
+#'   reduce saved output.
 #' @param save_gq Either `"full"` (default; saves observation-level `log_lik`,
 #'   `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan `generated quantities`) or
 #'   `"minimal"` (omits observation-level `generated quantities` for scalability
@@ -36,7 +44,8 @@
 #'   `"item"` with `class = "sd"`), two-way interaction names (e.g.
 #'   `"item:rater"` with `class = "sd"` and optional `local_shrinkage` =
 #'   `"horseshoe"` or `"student_t"`), and `"tau"` for hierarchical PCM partial
-#'   pooling toward common steps.
+#'   pooling toward common steps when category counts are uniform. Hierarchical
+#'   `tau` is not supported in v1 when `K` varies across threshold-facet levels.
 #' @param obs_id Optional observation identifier passed to
 #'   [prepare_data_bmfrm()] (either a column name in `data` or a unique vector
 #'   of length `nrow(data)`) used by [compare_bmfrm()] to verify observation
@@ -99,6 +108,12 @@ bmfrm <- function(
   refit <- match.arg(refit)
   save_gq <- match.arg(save_gq)
   design_check <- match.arg(design_check)
+  if (!isTRUE(save_csvs)) {
+    stop("save_csvs must be TRUE: cached CmdStan fits require CSV files; use save_gq = 'minimal' to reduce output")
+  }
+  if (!is.null(stan_file) && !is.null(priors)) {
+    stop("priors cannot be supplied with stan_file; specify priors inside the Stan file")
+  }
   # Prevent R partially matching the removed development argument to model_name.
   if ("model" %in% names(sys.call())) stop("The development model argument was removed; use hierarchical and priors")
   

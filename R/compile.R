@@ -125,7 +125,11 @@ clean_model_cache <- function(cache_dir, max_age_days = 30, dry_run = FALSE) {
   exe_files <- list.files(cache_dir, pattern = "\\.exe$", full.names = TRUE)
   rds_files <- list.files(cache_dir, pattern = "\\.rds$", full.names = TRUE)
   
-  all_files <- c(stan_files, exe_files, rds_files)
+  # CmdStan executables on Unix have no extension. Only include binaries paired
+  # with a Stan source, so unrelated extensionless files are never removed.
+  unix_exe_files <- tools::file_path_sans_ext(stan_files)
+  all_files <- unique(c(stan_files, exe_files, unix_exe_files, rds_files))
+  all_files <- all_files[file.exists(all_files) & !dir.exists(all_files)]
   
   if (length(all_files) == 0) {
     message("No files found in cache directory.")
@@ -135,7 +139,7 @@ clean_model_cache <- function(cache_dir, max_age_days = 30, dry_run = FALSE) {
   # Check file ages
   cutoff_time <- Sys.time() - (max_age_days * 24 * 60 * 60)
   file_times <- file.mtime(all_files)
-  old_files <- all_files[file_times < cutoff_time]
+  old_files <- all_files[!is.na(file_times) & file_times < cutoff_time]
   
   if (length(old_files) == 0) {
     message("No old files found to clean.")
@@ -154,8 +158,7 @@ clean_model_cache <- function(cache_dir, max_age_days = 30, dry_run = FALSE) {
   deleted <- character(0)
   for (f in old_files) {
     tryCatch({
-      file.remove(f)
-      deleted <- c(deleted, f)
+      if (file.remove(f)) deleted <- c(deleted, f)
     }, error = function(e) {
       warning("Could not delete ", f, ": ", e$message)
     })
@@ -177,13 +180,17 @@ validate_stan_code <- function(stan_code) {
   on.exit(unlink(temp_file))
   
   writeLines(stan_code, temp_file)
+  diagnostics <- character()
   
   # Try to parse with cmdstan
   tryCatch({
     model <- cmdstanr::cmdstan_model(temp_file, compile = FALSE)
-    # If we get here, syntax is valid
+    withCallingHandlers(model$check_syntax(quiet = TRUE), message = function(m) {
+      diagnostics <<- c(diagnostics, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
     list(is_valid = TRUE, message = "Stan code syntax is valid")
   }, error = function(e) {
-    list(is_valid = FALSE, error = e$message)
+    list(is_valid = FALSE, error = paste(c(diagnostics, conditionMessage(e)), collapse = "\n"))
   })
 }

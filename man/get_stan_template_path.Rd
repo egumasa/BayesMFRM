@@ -10,7 +10,7 @@ get_stan_template_path(family = "rsm", heterogeneous = FALSE)
 \item{family}{Model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)}
 
 \item{heterogeneous}{Logical; if \code{TRUE} and \code{family = "pcm"}, return the
-packed ragged heterogeneous-category PCM template (\file{bmfrm_pcm_hetero.stan}).}
+packed ragged heterogeneous-category PCM template (\code{bmfrm_pcm_hetero.stan}).}
 }
 \value{
 Path to the Stan template file

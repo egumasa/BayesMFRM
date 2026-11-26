@@ -1,6 +1,6 @@
-# BayesMFRM 開発・検証ノート（v0.1.0.9004 現行仕様）
+# BayesMFRM 開発・検証ノート（v0.1.0.9007 現行仕様）
 
-開発ブランチは `dev/rsm-design-diagnostics`、再現実験は隣接する `../mfrm-replication-bayes` に配置しています。過去の設計変更・破壊的変更の履歴は [NEWS.md](NEWS.md)、利用者向け入門ガイドは [README.md](README.md) および `vignette("getting-started", package = "BayesMFRM")`（[vignettes/getting-started.Rmd](vignettes/getting-started.Rmd)）を参照してください。
+共同編集ブランチは `fix/audit-findings` です。Git管理されたチェックアウトを編集・検証・インストールの正本としてください。この作業領域では `local-work/BayesMFRM` が該当し、その親にあるコピーは独立した開発場所として扱いません。再現実験の別リポジトリは、このチェックアウトに隣接する `../mfrm-replication-bayes` に配置しています。過去の設計変更・破壊的変更の履歴は [NEWS.md](NEWS.md)、利用者向け入門ガイドは [README.md](README.md) および `vignette("getting-started", package = "BayesMFRM")`（[vignettes/getting-started.Rmd](vignettes/getting-started.Rmd)）を参照してください。
 
 ## テストと検証コマンド
 
@@ -17,7 +17,17 @@ Rscript --vanilla tools/check-extensions-stan.R
 BAYESMFRM_RUN_STAN=true Rscript --vanilla tools/test-local.R
 ```
 
-共有プリコンパイル済みヘッダの書換えを避けるため、再現実験では `cpp_options = list(PRECOMPILED_HEADERS = "false")` を指定します。`renv.lock` に外部依存を固定しています（CmdStan 本体は別途インストールが必要）。
+共有プリコンパイル済みヘッダの書換えを避けるため、再現実験では `cpp_options = list(PRECOMPILED_HEADERS = "false")` を指定します。このチェックアウトの `renv.lock` に外部依存を固定しています。復元はチェックアウトのルートで `renv::restore()` を実行してください。CmdStan 本体は別途インストールが必要です。`Rscript --vanilla` は自動的なrenv有効化を省くため、上記の検証では実際に使われたライブラリと `sessionInfo()` も確認してください。
+
+例示的なBayes対ML実験は `Rscript --vanilla simulations/bayesian_benefits.R` で実行できます。出力は `simulations/results/` に保存され、Gitには含めません。`docs/reproduce-ratings1.R` とこの実験スクリプトは、ルートから実行すると現在のソースを `pkgload` で読み込みます。
+
+**0.1.0.9007の監査修正の検証（2026-11-27、macOS arm64 / R 4.6.1 / CmdStan 2.39.0）**
+
+- 通常テスト: 1,107 assertions成功、失敗・エラー・警告0件。既存の実MCMC統合テスト3件は既定どおりスキップ。
+- ビネットを含むソースビルドと `R CMD check --no-manual --no-tests`: `Status: OK`。単体テストは上記で別実行し、重複実行を省いた。
+- 一時ライブラリへインストールしたパッケージで `example_usage.R` の2モデルを実MCMC推定し、全後処理を実行。fitの保存・再読込後も残差が一致し、保存Stan対R再計算のLOOの観測別ELPDの最大差は `4.9e-14`。
+- 同梱カスタムStanの実推定で、使用していないR側の事前分布がメタデータに記録されないことを確認。推定済みキャッシュの再読込も確認。
+- 再現実験スクリプトは初期化・現行テンプレートからのコード生成・Stan検査まで確認。保存済み実験結果の再計算や、大規模シミュレーション・他OSでの検証は行っていない。使用例と短いカスタムStan推定には収束警告があり、これらは実行確認であって推定精度の保証ではない。
 
 ## 現行モデル仕様と制約
 

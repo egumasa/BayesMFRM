@@ -39,10 +39,31 @@ validate_facet_names <- function(facets_main) {
     "p_full", "p_fair", "ex", "ex2", "ex_fair",
     "data", "model", "parameters", "transformed", "generated", "quantities",
     "functions", "real", "int", "vector", "matrix", "array", "for", "in",
-    "if", "else", "while", "return", "target"
+    "if", "else", "while", "return", "target",
+    # https://mc-stan.org/docs/reference-manual/arithmetic-expressions.html
+    "repeat", "until", "then", "true", "false", "struct", "typedef", "export",
+    "auto", "extern", "var", "static", "lower", "upper", "offset", "multiplier",
+    "complex", "simplex", "unit_vector", "sum_to_zero_vector", "sum_to_zero_matrix",
+    "ordered", "positive_ordered", "row_vector", "cholesky_factor_corr",
+    "column_stochastic_matrix", "row_stochastic_matrix", "cholesky_factor_cov",
+    "corr_matrix", "cov_matrix", "print", "reject", "profile", "fatal_error", "jacobian",
+    "fvar", "STAN_MAJOR", "STAN_MINOR", "STAN_PATCH",
+    "STAN_MATH_MAJOR", "STAN_MATH_MINOR", "STAN_MATH_PATCH",
+    "alignas", "alignof", "and", "and_eq", "asm", "bitand", "bitor", "bool",
+    "break", "case", "catch", "char", "char16_t", "char32_t", "class", "compl",
+    "const", "constexpr", "const_cast", "continue", "decltype", "default", "delete",
+    "do", "double", "dynamic_cast", "enum", "explicit", "float", "friend", "goto",
+    "inline", "long", "mutable", "namespace", "new", "noexcept", "not", "not_eq",
+    "nullptr", "operator", "or", "or_eq", "private", "protected", "public", "register",
+    "reinterpret_cast", "short", "signed", "sizeof", "static_assert", "static_cast",
+    "switch", "template", "this", "thread_local", "throw", "try", "typeid", "typename",
+    "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "xor", "xor_eq",
+    # Local identifiers in the generated model, including ragged PCM blocks.
+    "threshold", "n", "k", "i", "j", "mj", "rj", "dj", "s", "rs", "fs", "raw_j", "Kj", "t_start",
+    "centered", "raw_eff", "lam_tilde"
   )
   if (any(facets %in% reserved) ||
-      any(grepl("_raw$|_id$|_n$|^(B_|J_|prior_sd_|ability_|estimate_|sigma_|lambda_|c2_)", facets)) ||
+      any(grepl("__$|_raw$|_id$|_n$|^(B_|J_|K_|N_tau_|tau_|mean_|fixed_sd_|scale_factor_|prior_sd_|ability_|estimate_|sigma_|lambda_|c2_)", facets)) ||
       any(!grepl("^[A-Za-z][A-Za-z0-9_]*$", facets))) {
     stop("Facet names must be nonreserved Stan identifiers")
   }
@@ -56,6 +77,14 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   validate_interaction_terms(spec$facets_main, spec$facets_bias)
   spec$hierarchical <- validate_hierarchical(spec$hierarchical %||% character(), spec$facets_main, spec$facets_bias, spec$family)
   spec$save_gq <- match.arg(spec$save_gq %||% "full", c("full", "minimal"))
+  if (isTRUE(spec$custom_stan)) {
+    if (!is.null(priors)) stop("priors cannot be supplied with a custom Stan model; specify priors inside the Stan file")
+    if (length(spec$hierarchical)) stop("Hierarchical ability and marginal scaling require generated Stan code")
+    # The Stan file owns its priors; package defaults do not describe that model.
+    spec$priors <- NULL
+    spec$gaussian_model <- NULL
+    return(spec)
+  }
   priors <- validate_priors(priors %||% spec$priors, spec$facets_main, spec$facets_bias, spec$family, spec$hierarchical)
   spec$priors <- priors
   spec$gaussian_model <- NULL

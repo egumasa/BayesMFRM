@@ -46,20 +46,19 @@ Evaluates pointwise leave-one-rating-out expected log predictive density
 (\code{elpd_loo}) via \code{\link[loo:loo]{loo::loo()}}. Uses Stan's saved \code{log_lik} array when
 available (\code{save_gq = "full"}), or streams pointwise log-likelihoods on
 demand via \code{loo::loo.function()} when \code{save_gq = "minimal"} without
-allocating a full \code{D x N} matrix.
+allocating a full \verb{D x N} matrix.
 }
 \details{
-\code{loo.bmfrm_fit()} evaluates the rating-level prediction task
-\code{"new_rating_known_levels"} (leaving out one rating while all main facet
-levels remain observed in training). Observations that are the sole observation
-of any main facet level are detected and flagged via
+The rating-level prediction task is \code{"new_rating_known_levels"}: leaving out
+one rating while all main facet levels remain observed in training. Sole
+observations of any main facet level are flagged with
 \code{actual_target = "new_rating_with_singleton_levels"}, because leaving them
 out removes that facet level from training.
 
 Relative effective sample sizes (\code{r_eff}) are computed on likelihoods
 \code{exp(log_lik)} preserving the original iteration-by-chain layout; missing
 chain structure raises an error rather than silently defaulting to \code{r_eff = 1}.
-When any observation exceeds \code{loo}'s Pareto-\eqn{k} diagnostic threshold
-(\eqn{k > 0.7}), verify its contribution via exact leave-one-out refitting (or
-\code{cv_bmfrm(fit, target = "rating")}) rather than assuming its error is negligible.
+When Pareto-k exceeds the diagnostic threshold (k > 0.7), verify the
+contribution by exact leave-one-out refitting or rating-level \code{\link[=cv_bmfrm]{cv_bmfrm()}}
+rather than assuming its error is negligible.
 }

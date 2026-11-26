@@ -30,20 +30,21 @@ bmfrm(
 )
 }
 \arguments{
-\item{formula}{R formula specifying the model (e.g., score ~ person + item + rater + rater:item)}
+\item{formula}{R formula specifying the model (e.g., score ~ person + item + rater + rater:item).
+The response must be a single column name; transform scores in \code{data} first.}
 
 \item{data}{data.frame containing all variables in the formula}
 
-\item{K}{number of rating categories: either a single integer \code{>= 2}
-(shared across all facets, required for \code{family = "rsm"}), a named integer
-vector matching every level of \code{threshold_facet} for heterogeneous-category
-PCM (\code{family = "pcm"}, e.g., \code{c(I1 = 2L, I2 = 4L, I3 = 6L)}), or
-\code{NULL} (inferred from \code{max(score)}). If a named vector has identical
-values across all levels, the existing uniform PCM path is used unchanged.}
+\item{K}{Number of rating categories: a scalar integer \verb{>= 2} for RSM or
+uniform PCM, a named integer vector matching every \code{threshold_facet} level
+for heterogeneous PCM (e.g., \code{c(I1 = 2L, I2 = 4L, I3 = 6L)}), or \code{NULL}
+(inferred from \code{max(score)}). Equal values in a named vector use uniform PCM.}
 
-\item{priors}{list of prior() objects (if NULL, uses defaults)}
+\item{priors}{list of prior() objects for generated models (if NULL, uses defaults).
+Cannot be supplied together with \code{stan_file}.}
 
-\item{stan_file}{optional path to a hardcoded Stan file (bypasses code generation)}
+\item{stan_file}{optional path to a hardcoded Stan file (bypasses code generation).
+Priors are defined in that file; the returned \code{priors} metadata is \code{NULL}.}
 
 \item{family}{model family: "rsm" (Rating Scale Model with shared thresholds) or
 "pcm" (Partial Credit Model with facet-specific thresholds)}
@@ -56,7 +57,9 @@ the level's overall location from its category pattern.}
 
 \item{cache_dir}{directory for caching compiled models and fits}
 
-\item{save_csvs}{whether to save MCMC output as CSV files}
+\item{save_csvs}{Must be \code{TRUE}: persistent CmdStan fit caching requires CSV files.
+\code{FALSE} is unsupported and raises an error. Use \code{save_gq = "minimal"} to
+reduce saved output.}
 
 \item{save_gq}{Either \code{"full"} (default; saves observation-level \code{log_lik},
 \code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan \verb{generated quantities}) or
@@ -86,12 +89,12 @@ facet (\code{"person"} with \code{mean}/\code{sd}, or centered facets such as \c
 \code{"item"} with \code{class = "sd"}), two-way interaction names (e.g.
 \code{"item:rater"} with \code{class = "sd"} and optional \code{local_shrinkage} =
 \code{"horseshoe"} or \code{"student_t"}), and \code{"tau"} for hierarchical PCM partial
-pooling toward common steps when category counts \code{K} are uniform across
-\code{threshold_facet} levels (not supported in v1 when \code{K} varies across levels).}
+pooling toward common steps when category counts are uniform. Hierarchical
+\code{tau} is not supported in v1 when \code{K} varies across threshold-facet levels.}
 
 \item{obs_id}{Optional observation identifier passed to
-\code{\link{prepare_data_bmfrm}} (either a column name in \code{data} or a unique vector
-of length \code{nrow(data)}) used by \code{\link{compare_bmfrm}} to verify observation
+\code{\link[=prepare_data_bmfrm]{prepare_data_bmfrm()}} (either a column name in \code{data} or a unique vector
+of length \code{nrow(data)}) used by \code{\link[=compare_bmfrm]{compare_bmfrm()}} to verify observation
 alignment across models.}
 
 \item{...}{additional arguments passed to cmdstanr::sample()}

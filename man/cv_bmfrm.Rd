@@ -29,11 +29,11 @@ or \code{"facet"} (leave levels of \code{facet} out).}
 
 \item{facet}{Character name of the held-out facet when \code{target = "facet"}.}
 
-\item{K_folds}{Integer number of folds (\code{>= 2}, default \code{5L}). Ignored if
+\item{K_folds}{Integer number of folds (\verb{>= 2}, default \code{5L}). Ignored if
 \code{folds} is supplied.}
 
 \item{folds}{Optional integer vector of length \code{N} assigning each
-observation in \code{object$data_info$data_clean} to a fold \code{1..K_folds}.}
+observation in \code{object$data_info$data_clean} to a fold \verb{1..K_folds}.}
 
 \item{M}{Positive integer number of Monte Carlo population draws per
 posterior draw for unseen-group marginalization (default \code{100L}; \code{M = 1L}
@@ -54,36 +54,36 @@ also drops an examinee rated only by that rater, or a rating fold drops
 all ratings of some level).}
 
 \item{allow_degenerate_interaction}{Logical; if \code{FALSE} (default), stops if
-any training fold reduces a facet or interaction axis to \code{<= 1} observed
+any training fold reduces a facet or interaction axis to \verb{<= 1} observed
 level (collapsing the interaction to 0 df).}
 
 \item{chunk_size}{Optional observation chunk size for streaming evaluation.}
 
-\item{refit_fn}{Optional custom refit function \code{function(train_df, fold, spec, fit_args)}
-returning a \code{bmfrm_fit} object.}
+\item{refit_fn}{Optional custom refit function \verb{function(train_df, fold, spec, fit_args)}
+returning a \code{bmfrm_fit} object (useful for custom clusters or fast unit
+tests). When \code{NULL}, refits via \code{\link[=bmfrm]{bmfrm()}} using the locked model
+specification (\code{K}, \code{priors}, \code{family}, \code{threshold_facet}, \code{hierarchical},
+and sampler settings from \code{object$fit_args}).}
 
-\item{...}{Optional overrides passed to \code{\link{bmfrm}} when refitting folds.}
+\item{...}{Optional overrides passed to \code{\link[=bmfrm]{bmfrm()}} when refitting folds.}
 }
 \value{
 A \code{bmfrm_cv} object containing:
 \itemize{
-\item \code{target}, \code{target_facet}, \code{actual_target}: requested and verified prediction task
-(\code{"new_rating_known_levels"} for \code{target = "rating"}, or
-\code{"new_<facet>_known_other_facets"} for grouped targets).
-\item \code{elpd_group}, \code{se_group}: held-out group joint ELPD and group-level SE across \code{G} groups
-(primary summary for grouped CV; \code{NA} when \code{target = "rating"}).
-\item \code{elpd_pointwise}, \code{se_pointwise_clustered}, \code{se_pointwise}: rating-level marginal ELPD sum,
-group-clustered SE, and naive rating-level SE (for reference).
-\item \code{pointwise}: tibble with one row per evaluated observation containing
-\code{obs_id} (the preserved pre-preprocessing observation ID from \code{object$data_info$obs_id}),
-\code{row_index} (\code{1:N} row position in \code{data_clean}), \code{fold}, \code{group},
-\code{elpd}, and chain-aware \code{mcse}.
-\item \code{group_scores}: tibble of per-group joint scores (\code{group}, \code{n_obs}, \code{elpd},
-\code{mcse}, \code{mc_ess_m_median}, \code{mc_ess_m_min}) for grouped CV (\code{NULL} for rating CV).
-\item \code{fold_diagnostics}: per-fold design connectivity/identifiability, rank, convergence
-(\code{max_rhat}, \code{min_ess_bulk}, \code{n_divergent}), fold ELPD, \code{min_mc_ess_m}, and \code{status}.
-\item \code{integration_diagnostics} and \code{comparison_key}: inner Monte Carlo draw metadata and
-the observation-aligned compatibility key used by \code{\link{compare_bmfrm}}.
+\item \code{target}, \code{target_facet}, \code{actual_target}: requested and verified
+prediction task (\code{"new_rating_known_levels"} or \code{"new_<facet>_known_other_facets"}).
+\item \code{elpd_group}, \code{se_group}: held-out group joint ELPD and group-level
+SE (primary for grouped CV; \code{NA} for rating CV).
+\item \code{elpd_pointwise}, \code{se_pointwise_clustered}, \code{se_pointwise}: marginal
+rating ELPD, group-clustered SE, and naive rating-level SE for reference.
+\item \code{pointwise}: tibble with preserved \code{obs_id}, cleaned-data \code{row_index},
+\code{fold}, \code{group}, \code{elpd}, and chain-aware \code{mcse}.
+\item \code{group_scores}: joint scores with \code{group}, \code{n_obs}, \code{elpd}, \code{mcse},
+\code{mc_ess_m_median}, and \code{mc_ess_m_min} (\code{NULL} for rating CV).
+\item \code{fold_diagnostics}: per-fold design connectivity/identifiability,
+rank, \code{max_rhat}, \code{min_ess_bulk}, \code{n_divergent}, ELPD, \code{min_mc_ess_m}, and \code{status}.
+\item \code{integration_diagnostics}, \code{comparison_key}: Monte Carlo metadata
+and the observation-aligned compatibility key used by \code{\link[=compare_bmfrm]{compare_bmfrm()}}.
 }
 }
 \description{
@@ -94,22 +94,15 @@ unseen hierarchical groups when evaluating generalization to new examinees,
 raters, or other facets.
 }
 \details{
-The \code{target} argument defines the generalization task evaluated by CV:
-\itemize{
-\item \code{"rating"}: predicts held-out ratings for known levels of all main facets
-(verified as \code{"new_rating_known_levels"}).
-\item \code{"person"}, \code{"rater"}, or \code{"facet"}: holds out entire levels of the target
-facet and marginalizes their unseen latent effects over the learned hierarchical population
-distribution using \code{M} draws per posterior draw \code{d} via exact double-\code{logmeanexp}.
-}
-When \code{strict_target = TRUE} (default), holding out one facet that incidentally drops all
-training observations of another facet (e.g., holding out a rater who was the sole rater of an
-examinee) raises an error rather than silently changing the prediction target.
-For heterogeneous-category PCM, each training fold preserves the full per-level rubric category
-definition (\code{K_by_level}) even when upper categories are unobserved in that fold; holding
-out \code{threshold_facet} itself (\code{target = "facet", facet = threshold_facet}) is not
-supported in v1 and raises an error.
-Note that passing the \code{mc_ess_m_median >= 5} diagnostic warning threshold alone does not
-guarantee Monte Carlo integration accuracy; verify stability across larger \code{M} and
-independent \code{seed} values (keeping \code{refit_seed} fixed on cached fold fits).
+\code{target = "rating"} evaluates ratings from known facet levels. Grouped
+targets hold out entire levels and integrate their effects over the learned
+hierarchical population with \code{M} draws per posterior draw, using double
+log-mean-exp. With \code{strict_target = TRUE}, collateral unseen facets cause an
+error rather than silently changing the prediction target.
+
+For heterogeneous-category PCM, training folds preserve \code{K_by_level} even
+when upper categories are unobserved. Holding out \code{threshold_facet} itself is
+unsupported in v1. Passing \code{mc_ess_m_median >= 5} alone does not guarantee
+integration accuracy: check larger \code{M} and independent \code{seed} values while
+keeping \code{refit_seed} fixed to reuse the same fold posterior draws.
 }

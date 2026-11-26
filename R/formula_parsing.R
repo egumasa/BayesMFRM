@@ -1,8 +1,11 @@
 #' Parse bmfrm formula to extract facets and model structure
 #'
-#' @param formula R formula (e.g., score ~ person + item + rater + (rater:item))
+#' @param formula R formula (e.g., score ~ person + item + rater + (rater:item)).
+#'   The response must be a single column name; transform scores in `data` first.
 #' @param data data.frame containing variables
-#' @param K number of rating categories (if NULL, inferred from data)
+#' @param K Number of rating categories: a scalar integer `>= 2`, a named
+#'   integer vector matching `threshold_facet` levels for heterogeneous PCM,
+#'   or `NULL` (inferred from `max(score)`).
 #' @param family model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)
 #' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
 #' @param model_name optional model name for caching
@@ -34,8 +37,8 @@ parse_bmfrm_formula <- function(formula,
   save_gq <- match.arg(save_gq)
   
   # Parse formula terms
+  response_name <- bmfrm_response_name(formula)
   terms_obj <- stats::terms(formula)
-  response_name <- all.vars(formula)[1]
   
   # Check response exists in data
   if (!response_name %in% names(data)) {
@@ -272,6 +275,13 @@ resolve_category_spec <- function(K,
     K_max = as.integer(K_max),
     K_heterogeneous = isTRUE(K_heterogeneous)
   )
+}
+
+bmfrm_response_name <- function(formula) {
+  if (!inherits(formula, "formula") || length(formula) != 3L || !is.symbol(formula[[2L]])) {
+    stop("The formula response must be a single column name; transform scores in data before fitting")
+  }
+  as.character(formula[[2L]])
 }
 
 #' Get maximum category count from a bmfrm_spec

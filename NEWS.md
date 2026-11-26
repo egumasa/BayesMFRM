@@ -1,5 +1,17 @@
 # BayesMFRM Changelog
 
+## 0.1.0.9007 (Development)
+
+### Audit fixes
+- Fixed streaming PSIS-LOO when a facet is named `y`; responses no longer overwrite facet indices. Fixed singleton-stratum fold assignment in rating-level CV.
+- Reject transformed/multivariate formula responses consistently in fitting, design checking, and simulation. Transform scores in the input data before calling these functions.
+- Custom `stan_file` models now keep `priors = NULL` in their metadata, because their priors are defined by the Stan file. Supplying R-side `priors` with `stan_file` is rejected before fitting. `save_csvs = FALSE`, previously ignored, now raises an explicit error because persistent fit caching requires the CSV files; use `save_gq = "minimal"` to reduce output.
+- Preserve all planned PCM rubric levels in observed-only design checks, including levels with entirely missing scores, consistently for character and factor columns.
+- Expanded reserved facet-name checks for Stan keywords and generated identifiers. `validate_stan_code()` now invokes the Stan compiler's syntax/semantic checker and returns its diagnostics.
+- Fixed residual-correlation output for item labels such as `item1` and cache cleanup of extensionless Unix executables.
+- Updated the installed-package usage example, local-source loading in reproduction scripts, and development/environment instructions. Added the illustrative Bayes-vs-ML script to version control; saved simulation results are excluded.
+- Restored LOO S3 registration and heterogeneous-PCM/model-comparison explanations in the roxygen source so regenerating the namespace and help preserves the published API and documentation. Completed the dependency lock with `loo` and `corrplot`.
+
 ## 0.1.0.9006 (Development)
 
 ### Heterogeneous-Category Partial Credit Model (PCM v1)

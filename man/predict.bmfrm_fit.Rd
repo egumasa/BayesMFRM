@@ -99,20 +99,15 @@ the RSM/PCM expectation is nonlinear, fixing a rater effect to 0 is not
 identical to averaging over a new rater drawn from the rater population.
 }
 
-Metadata describing the prediction target, adjusted facets, any unseen
-levels, and per-observation category counts (\code{K_obs}, \code{K_by_level},
-\code{K_heterogeneous} for heterogeneous-category PCM) is attached as
+Metadata describing the prediction target, adjusted facets, unseen levels,
+and \code{K_obs}, \code{K_by_level}, \code{K_heterogeneous} is attached as
 \code{attr(res, "bmfrm_prediction_meta")}.
 
-For heterogeneous-category PCM (named vector \code{K} with varying \code{K_j} across
-\code{threshold_facet} levels):
-\itemize{
-\item \code{type = "probs"} returns \code{NA_real_} for categories \code{c > K_j} that do
-not exist on that level's rubric (while existing-but-unobserved categories retain positive
-probability), and prepends a \code{K_obs} column when \code{summary = TRUE}.
-\item Unseen levels of \code{threshold_facet} are not supported in v1 and always raise an
-error (even when \code{allow_new_levels = TRUE} or \code{sample_new_levels = "zero"}),
-because their rubric category count and step distribution are undefined.
-\item Adjusting \code{threshold_facet} via \code{adjust_facets} is not supported in v1.
-}
+For heterogeneous-category PCM, \code{type = "probs"} returns \code{NA_real_} for
+categories above a level's \code{K_j}, while existing-but-unobserved categories
+retain positive probability. Summarized probabilities include \code{K_obs}.
+Unseen levels of \code{threshold_facet} are unsupported in v1 even with
+\code{allow_new_levels = TRUE} or \code{sample_new_levels = "zero"}, because their
+rubric and step distribution are undefined. Adjusting \code{threshold_facet}
+via \code{adjust_facets} is also unsupported.
 }

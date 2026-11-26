@@ -153,12 +153,18 @@ drop_unused_facet_levels <- function(df, facets_main) {
 #' demand via `loo::loo.function()` when `save_gq = "minimal"` without
 #' allocating a full `D x N` matrix.
 #'
+#' The rating-level prediction task is `"new_rating_known_levels"`: leaving out
+#' one rating while all main facet levels remain observed in training. Sole
+#' observations of any main facet level are flagged with
+#' `actual_target = "new_rating_with_singleton_levels"`, because leaving them
+#' out removes that facet level from training.
+#'
 #' Relative effective sample sizes (`r_eff`) are computed on likelihoods
 #' `exp(log_lik)` preserving the original iteration-by-chain layout; missing
 #' chain structure raises an error rather than silently defaulting to `r_eff = 1`.
-#' Observations that are the sole observation of any main facet level are
-#' detected and reported in `actual_target`, because leaving them out drops that
-#' facet level from training.
+#' When Pareto-k exceeds the diagnostic threshold (k > 0.7), verify the
+#' contribution by exact leave-one-out refitting or rating-level [cv_bmfrm()]
+#' rather than assuming its error is negligible.
 #'
 #' @param x A `bmfrm_fit` object.
 #' @param r_eff Optional numeric vector of relative effective sample sizes
@@ -177,7 +183,8 @@ drop_unused_facet_levels <- function(df, facets_main) {
 #' @return A `bmfrm_loo` object (inheriting from `psis_loo` and `loo`) with
 #'   `bmfrm_meta` (target verification, Pareto-k diagnostics, PSIS ESS, MCSE,
 #'   and original MCMC convergence) and `comparison_key`.
-#' @export
+#' @importFrom loo loo
+#' @exportS3Method loo::loo bmfrm_fit
 loo.bmfrm_fit <- function(x,
                           r_eff = NULL,
                           save_psis = FALSE,
@@ -264,7 +271,8 @@ loo.bmfrm_fit <- function(x,
     ids <- map_eval_indices(obs_data, spec, params$labels)
     resp <- as.integer(obs_data[[spec$response]])
     ll_data <- as.data.frame(ids, stringsAsFactors = FALSE)
-    ll_data$y <- resp
+    # Facet names cannot contain dots, so this cannot overwrite a facet index.
+    ll_data$.bmfrm_response <- resp
 
     if (is.null(r_eff)) {
       cl <- extract_verified_chain_layout(x$fit, params$D)
@@ -393,7 +401,8 @@ build_cv_folds <- function(data_clean, facets_main, target, target_facet, K_fold
       folds <- integer(N)
       offset <- 0L
       for (lv in sample(unique(vals))) {
-        idx <- sample(which(vals == lv))
+        idx <- which(vals == lv)
+        idx <- idx[sample.int(length(idx))]
         folds[idx] <- ((seq_along(idx) - 1L + offset) %% K_folds) + 1L
         offset <- (offset + length(idx)) %% K_folds
       }
@@ -488,8 +497,8 @@ score_rating_fold <- function(fold_fit, test_df, chunk_size = NULL) {
 #' Score held-out groups for one grouped CV fold via exact double-logmeanexp marginalization
 #'
 #' Evaluates, for each held-out group `g` of `target_facet`:
-#'   - Group joint lpd:    logmeanexp_d( logmeanexp_m( sum_{i in g} l_i(phi_d, u_{gdm}) ) )
-#'   - Rating-level lpd:   logmeanexp_d( logmeanexp_m( l_i(phi_d, u_{gdm}) ) )
+#'   - Group joint lpd: `logmeanexp_d(logmeanexp_m(sum_{i in g} l_i(phi_d, u_{gdm})))`
+#'   - Rating-level lpd: `logmeanexp_d(logmeanexp_m(l_i(phi_d, u_{gdm})))`
 #' sharing the complete joint latent vector `u_{gdm}` (main effect, sum-to-zero
 #' constrained interactions anchored to training-fold partner levels, and
 #' hierarchical PCM steps when applicable) across all observations i in g.
@@ -791,6 +800,18 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
 #' unseen hierarchical groups when evaluating generalization to new examinees,
 #' raters, or other facets.
 #'
+#' `target = "rating"` evaluates ratings from known facet levels. Grouped
+#' targets hold out entire levels and integrate their effects over the learned
+#' hierarchical population with `M` draws per posterior draw, using double
+#' log-mean-exp. With `strict_target = TRUE`, collateral unseen facets cause an
+#' error rather than silently changing the prediction target.
+#'
+#' For heterogeneous-category PCM, training folds preserve `K_by_level` even
+#' when upper categories are unobserved. Holding out `threshold_facet` itself is
+#' unsupported in v1. Passing `mc_ess_m_median >= 5` alone does not guarantee
+#' integration accuracy: check larger `M` and independent `seed` values while
+#' keeping `refit_seed` fixed to reuse the same fold posterior draws.
+#'
 #' @param object A `bmfrm_fit` object.
 #' @param target Prediction target: `"rating"` (leave ratings out, known facet
 #'   levels), `"person"` (leave examinees out), `"rater"` (leave raters out),
@@ -824,10 +845,23 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
 #'   specification (`K`, `priors`, `family`, `threshold_facet`, `hierarchical`,
 #'   and sampler settings from `object$fit_args`).
 #' @param ... Optional overrides passed to [bmfrm()] when refitting folds.
-#' @return A `bmfrm_cv` object containing `elpd_pointwise`, `se_pointwise`,
-#'   `elpd_group`, `se_group`, `pointwise` tibble, `group_scores` tibble,
-#'   `fold_diagnostics` tibble (per-fold design + convergence checks),
-#'   `integration_diagnostics`, and `comparison_key`.
+#' @return A `bmfrm_cv` object containing:
+#'   \itemize{
+#'     \item `target`, `target_facet`, `actual_target`: requested and verified
+#'       prediction task (`"new_rating_known_levels"` or `"new_<facet>_known_other_facets"`).
+#'     \item `elpd_group`, `se_group`: held-out group joint ELPD and group-level
+#'       SE (primary for grouped CV; `NA` for rating CV).
+#'     \item `elpd_pointwise`, `se_pointwise_clustered`, `se_pointwise`: marginal
+#'       rating ELPD, group-clustered SE, and naive rating-level SE for reference.
+#'     \item `pointwise`: tibble with preserved `obs_id`, cleaned-data `row_index`,
+#'       `fold`, `group`, `elpd`, and chain-aware `mcse`.
+#'     \item `group_scores`: joint scores with `group`, `n_obs`, `elpd`, `mcse`,
+#'       `mc_ess_m_median`, and `mc_ess_m_min` (`NULL` for rating CV).
+#'     \item `fold_diagnostics`: per-fold design connectivity/identifiability,
+#'       rank, `max_rhat`, `min_ess_bulk`, `n_divergent`, ELPD, `min_mc_ess_m`, and `status`.
+#'     \item `integration_diagnostics`, `comparison_key`: Monte Carlo metadata
+#'       and the observation-aligned compatibility key used by [compare_bmfrm()].
+#'   }
 #' @export
 cv_bmfrm <- function(object,
                      target = c("rating", "person", "rater", "facet"),
@@ -1419,13 +1453,30 @@ make_unit_elpd_loo_object <- function(elpd_vec) {
 #' Guarded model comparison for BayesMFRM PSIS-LOO and CV objects
 #'
 #' Validates that all candidate models were evaluated on the exact same
-#' prediction task (target + actual known/unseen facets), evaluation dataset
-#' (observation IDs, response values, K encoding), fold split, and score unit
+#' prediction task (target + verified `actual_target` known/unseen facets),
+#' observation set (preserved `obs_id`, response values, category encoding,
+#' shared facet/metadata alignment), fold split, held-out groups, and aggregation
 #' before delegating to [loo::loo_compare()].
 #'
-#' For grouped CV (`target != "rating"`), uses paired differences across
-#' held-out groups so SEs never treat multiple ratings from the same held-out
-#' examinee or rater as independent.
+#' Observation correspondence uses preserved pre-preprocessing `obs_id` (an
+#' explicit ID column/vector in [bmfrm()], non-default unique row names, or
+#' pre-NA row indices), plus per-ID hashes of responses, per-observation rubric
+#' category counts (`K_obs`), and shared facet and metadata columns. Permuted
+#' observations are aligned by preserved IDs; permutations without preserved
+#' IDs (including swaps of equal-score rows) are rejected when shared facets
+#' disagree. Compared models must have identical `K_obs` definitions; uniform
+#' named-vector PCM remains comparable to scalar-K RSM/PCM.
+#'
+#' For grouped CV (`target != "rating"`), paired differences are computed across
+#' held-out groups (`score = "group"` for joint ELPD, `score = "pointwise"` for
+#' rating-level ELPD clustered by group). Multiple ratings from one held-out
+#' examinee/rater are not treated as independent. These SEs remain approximate:
+#' shared known items/raters and overlapping training folds induce dependence.
+#'
+#' Do not compare raw ELPD across different prediction targets or methods
+#' (e.g., PSIS-LOO and person CV). Inspect `diag_diff` and `diag_elpd`:
+#' `abs(elpd_diff) < 4` flags unreliable normal-approximation SEs, not equivalence;
+#' `p_worse` is a rounded normal-approximation probability.
 #'
 #' @param ... Two or more `bmfrm_loo` or `bmfrm_cv` objects (optionally named).
 #' @param score Which score unit to compare on `bmfrm_cv` objects: `"auto"`

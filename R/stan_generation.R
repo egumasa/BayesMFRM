@@ -673,6 +673,8 @@ generate_eta_sum <- function(spec, fair = FALSE) {
 #' Get Stan template path
 #'
 #' @param family Model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)
+#' @param heterogeneous Logical; if `TRUE` and `family = "pcm"`, return the
+#'   packed ragged heterogeneous-category PCM template (`bmfrm_pcm_hetero.stan`).
 #'
 #' @return Path to the Stan template file
 #' @keywords internal

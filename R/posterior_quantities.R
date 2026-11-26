@@ -2107,7 +2107,7 @@ logmeanexp_rows <- function(X) {
 #' Single-observation log-likelihood evaluator for loo::loo.function() (O(D) memory)
 #'
 #' Expects `data_i` to be a 1-row data.frame containing integer facet indices
-#' (`person`, plus each unadjusted non-person facet) and integer response `y`,
+#' (`person`, plus each unadjusted non-person facet) and integer `.bmfrm_response`,
 #' and `draws` to be the compact parameter list from `extract_bmfrm_param_draws()`.
 #' Returns a length-D numeric vector of pointwise log-likelihoods without
 #' materializing any D x N intermediate matrices.
@@ -2116,7 +2116,7 @@ logmeanexp_rows <- function(X) {
 eval_bmfrm_log_lik_obs <- function(data_i, draws) {
   D <- draws$D
   K <- draws$K
-  y <- as.integer(data_i$y[[1L]])
+  y <- as.integer(data_i$.bmfrm_response[[1L]])
 
   eta <- draws$theta[, as.integer(data_i$person[[1L]])]
   for (f in names(draws$facet_draws)) {

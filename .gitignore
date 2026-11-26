@@ -11,3 +11,4 @@ stan_cache/
 *.tar.gz
 renv/library/
 renv/staging/
+simulations/results/

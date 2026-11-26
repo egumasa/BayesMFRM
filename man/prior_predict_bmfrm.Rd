@@ -21,7 +21,9 @@ prior_predict_bmfrm(
 
 \item{design}{Planned rating rows. Existing responses are ignored.}
 
-\item{K}{Number of categories.}
+\item{K}{Number of categories (\verb{>= 2}): scalar integer for RSM or uniform
+PCM, or a named integer vector matching \code{threshold_facet} levels for
+heterogeneous-category PCM.}
 
 \item{priors}{List of prior specifications; NULL uses package defaults.}
 
@@ -37,8 +39,10 @@ term name. The default character(0) retains fixed-scale priors.}
 \item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
 
 \item{threshold_facet}{Required for PCM. Its step deviations sum to zero within
-each level. Fixed tau must be a levels-by-(K-1) matrix; optional row names
-match facet labels and column names match step numbers 1,...,K-1.}
+each level. For uniform \code{K}, fixed \code{tau} must be a levels-by-(K-1) matrix;
+optional row names match facet labels and column names match step numbers
+1,...,K-1. For heterogeneous \code{K}, fixed \code{tau} must be a named list of numeric
+vectors of length \code{K_j - 1}, each summing to zero (\code{0} for binary \code{K_j = 2}).}
 }
 \value{
 A bmfrm_simulation. Inspect its y_rep before fitting observed data.

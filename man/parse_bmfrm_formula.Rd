@@ -17,13 +17,14 @@ parse_bmfrm_formula(
 )
 }
 \arguments{
-\item{formula}{R formula (e.g., score ~ person + item + rater + (rater:item))}
+\item{formula}{R formula (e.g., score ~ person + item + rater + (rater:item)).
+The response must be a single column name; transform scores in \code{data} first.}
 
 \item{data}{data.frame containing variables}
 
-\item{K}{number of rating categories: either a scalar integer \code{>= 2}, a
-named integer vector matching \code{threshold_facet} levels for heterogeneous-category
-PCM (\code{family = "pcm"}), or \code{NULL} (inferred from \code{max(score)}).}
+\item{K}{Number of rating categories: a scalar integer \verb{>= 2}, a named
+integer vector matching \code{threshold_facet} levels for heterogeneous PCM,
+or \code{NULL} (inferred from \code{max(score)}).}
 
 \item{family}{model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)}
 

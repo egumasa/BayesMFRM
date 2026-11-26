@@ -30,30 +30,28 @@ contract, uncertainty unit, and approximation caveats.
 \description{
 Validates that all candidate models were evaluated on the exact same
 prediction task (target + verified \code{actual_target} known/unseen facets),
-observation set (pre-preprocessing \code{obs_id}, response values, \code{K} encoding,
-and shared facet/metadata alignment), fold split, held-out group assignment,
-and aggregation rule before delegating to \code{\link[loo:loo_compare]{loo::loo_compare()}}.
+observation set (preserved \code{obs_id}, response values, category encoding,
+shared facet/metadata alignment), fold split, held-out groups, and aggregation
+before delegating to \code{\link[loo:loo_compare]{loo::loo_compare()}}.
 }
 \details{
-Observation correspondence is verified using each fit's preserved pre-preprocessing
-\code{obs_id} (explicit \code{obs_id} column/vector in \code{\link{bmfrm}}, non-default
-unique \code{rownames(data)}, or pre-NA row index) together with per-ID hashes of responses,
-per-observation rubric category counts (\code{K_obs}), and all shared facet and metadata columns.
-If two models share the same unique \code{obs_id} set in different row orders, observations
-(and held-out groups) are aligned by \code{obs_id} before computing paired differences; if rows
-were permuted without preserved IDs (e.g., swapping two same-score observations), shared-facet
-verification stops with an error. As a v1 compatibility rule, \code{compare_bmfrm()} requires
-identical per-observation rubric category definitions (\code{K_obs}) across compared models
-(uniform named-vector PCM with equal \code{K_j} remains comparable against uniform scalar-\code{K} RSM/PCM).
+Observation correspondence uses preserved pre-preprocessing \code{obs_id} (an
+explicit ID column/vector in \code{\link[=bmfrm]{bmfrm()}}, non-default unique row names, or
+pre-NA row indices), plus per-ID hashes of responses, per-observation rubric
+category counts (\code{K_obs}), and shared facet and metadata columns. Permuted
+observations are aligned by preserved IDs; permutations without preserved
+IDs (including swaps of equal-score rows) are rejected when shared facets
+disagree. Compared models must have identical \code{K_obs} definitions; uniform
+named-vector PCM remains comparable to scalar-K RSM/PCM.
 
-For grouped CV (\code{target != "rating"}), paired differences are computed across held-out
-groups (\code{score = "group"} for group joint ELPD, or \code{score = "pointwise"} clustered
-within held-out groups) so multiple ratings from the same held-out examinee or rater are not
-treated as independent. Group-level SEs remain an approximation because crossed known facets
-(shared items/raters) and overlapping CV training folds induce residual dependence.
+For grouped CV (\code{target != "rating"}), paired differences are computed across
+held-out groups (\code{score = "group"} for joint ELPD, \code{score = "pointwise"} for
+rating-level ELPD clustered by group). Multiple ratings from one held-out
+examinee/rater are not treated as independent. These SEs remain approximate:
+shared known items/raters and overlapping training folds induce dependence.
 
-Do not compare raw ELPD numbers across different prediction targets or methods (e.g., PSIS-LOO
-vs. K-fold person CV), and inspect \code{diag_diff} / \code{diag_elpd} carefully:
-\code{|elpd_diff| < 4} flags caution about normal-approximation SE reliability (not a proof of
-equivalence), and \code{p_worse} is a rounded normal-approximation probability.
+Do not compare raw ELPD across different prediction targets or methods
+(e.g., PSIS-LOO and person CV). Inspect \code{diag_diff} and \code{diag_elpd}:
+\code{abs(elpd_diff) < 4} flags unreliable normal-approximation SEs, not equivalence;
+\code{p_worse} is a rounded normal-approximation probability.
 }

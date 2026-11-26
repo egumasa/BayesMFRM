@@ -9,7 +9,9 @@
 #'
 #' @param formula Model formula with person, main facets and optional two-way interactions.
 #' @param design Planned rating rows. Existing responses are ignored.
-#' @param K Number of categories.
+#' @param K Number of categories (`>= 2`): scalar integer for RSM or uniform
+#'   PCM, or a named integer vector matching `threshold_facet` levels for
+#'   heterogeneous-category PCM.
 #' @param priors List of prior specifications; NULL uses package defaults.
 #' @param parameters NULL or a list with theta, each other facet, and tau.
 #'   With hierarchical ability, also supply mu_theta and sigma_theta.
@@ -24,8 +26,10 @@
 #'   term name. The default character(0) retains fixed-scale priors.
 #' @param family "rsm" for common steps or "pcm" for steps within threshold_facet.
 #' @param threshold_facet Required for PCM. Its step deviations sum to zero within
-#'   each level. Fixed tau must be a levels-by-(K-1) matrix; optional row names
-#'   match facet labels and column names match step numbers 1,...,K-1.
+#'   each level. For uniform `K`, fixed `tau` must be a levels-by-(K-1) matrix;
+#'   optional row names match facet labels and column names match step numbers
+#'   1,...,K-1. For heterogeneous `K`, fixed `tau` must be a named list of numeric
+#'   vectors of length `K_j - 1`, each summing to zero (`0` for binary `K_j = 2`).
 #' @return A bmfrm_simulation with y_rep (simulations by ratings), generating
 #'   parameters, facet_labels, specification, and data for nsim = 1.
 #' @export
@@ -35,7 +39,7 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   family <- match.arg(family)
   if (length(nsim) != 1L || !is.finite(nsim) || nsim < 1 || nsim != floor(nsim)) stop("nsim must be a positive integer")
   if (!is.data.frame(design) || !nrow(design)) stop("design must contain rating rows")
-  response <- all.vars(formula)[1L]
+  response <- bmfrm_response_name(formula)
   fake <- design
   fake[[response]] <- 1L
   spec <- resolve_bmfrm_spec(parse_bmfrm_formula(formula, fake, K = K, hierarchical = hierarchical,

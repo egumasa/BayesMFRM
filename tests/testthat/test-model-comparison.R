@@ -254,7 +254,7 @@ test_that("loo.bmfrm_fit matches Stan log_lik vs low-memory R streaming, chunk i
   expect_s3_class(l_na, "bmfrm_loo")
 
   # Custom unverified Stan model is blocked from R-side log_lik recomputation
-  obj_cust <- make_mock_cmp_fit(custom_stan = TRUE, save_stan_ll = FALSE)
+  obj_cust <- make_mock_cmp_fit(custom_stan = TRUE, save_stan_ll = FALSE, hierarchical = character())
   expect_error(loo::loo(obj_cust), "Unverified custom Stan model")
 })
 

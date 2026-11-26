@@ -94,18 +94,14 @@ For non-hierarchical PCM with steps on an adjusted facet, no reference step
 profile exists and an error is raised. For uniform hierarchical PCM
 (\code{hierarchical = "tau"}), the shared \code{tau_common} profile is used.
 
-For heterogeneous-category PCM (varying \code{K_j} across \code{threshold_facet} levels):
-\itemize{
-\item \code{mean_fair_score} remains a weighted average on the native rubric units of each
-included criterion (v1 does not add \code{expected_total_score}); use \code{standardize = TRUE}
-with a common reference grid/weights when comparing examinees across heterogeneous criteria,
-and note that 0--1 rescaling alone does not establish interval scale comparability across
-rubrics of different lengths.
-\item \code{attr(res, "reference_meta")} is always attached (both for \code{summary = TRUE}
-even when \code{return_draws = FALSE}, and for \code{summary = FALSE} on standardized and
-unstandardized paths), recording \code{score_unit} (\code{"native_weighted_mean"} for
-\code{summary = TRUE}, \code{"native_row_expected_score"} for \code{summary = FALSE}),
-\code{K_by_level}, \code{reference_weights}, \code{standardized}, and comparability notes.
-\item Adjusting \code{threshold_facet} is not supported in v1.
-}
+For heterogeneous-category PCM, \code{mean_fair_score} is a weighted mean on
+the native rubric units; v1 does not add \code{expected_total_score}. Use
+\code{standardize = TRUE} with common reference cells/weights to compare persons.
+Rescaling to 0--1 alone does not establish interval-scale comparability
+across rubrics of different lengths. Adjusting \code{threshold_facet} is unsupported.
+
+\code{attr(res, "reference_meta")} is attached to all summary and row-level
+results, including when \code{return_draws = FALSE}. It records \code{score_unit}
+(\code{"native_weighted_mean"} for summaries, \code{"native_row_expected_score"} for
+rows), \code{K_by_level}, \code{reference_weights}, \code{standardized}, and comparability notes.
 }

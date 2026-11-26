@@ -441,8 +441,17 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #'     identical to averaging over a new rater drawn from the rater population.
 #' }
 #'
-#' Metadata describing the prediction target, adjusted facets, and any unseen
-#' levels is attached as `attr(res, "bmfrm_prediction_meta")`.
+#' Metadata describing the prediction target, adjusted facets, unseen levels,
+#' and `K_obs`, `K_by_level`, `K_heterogeneous` is attached as
+#' `attr(res, "bmfrm_prediction_meta")`.
+#'
+#' For heterogeneous-category PCM, `type = "probs"` returns `NA_real_` for
+#' categories above a level's `K_j`, while existing-but-unobserved categories
+#' retain positive probability. Summarized probabilities include `K_obs`.
+#' Unseen levels of `threshold_facet` are unsupported in v1 even with
+#' `allow_new_levels = TRUE` or `sample_new_levels = "zero"`, because their
+#' rubric and step distribution are undefined. Adjusting `threshold_facet`
+#' via `adjust_facets` is also unsupported.
 #'
 #' @param object A `bmfrm_fit` object.
 #' @param newdata Optional data.frame of facet combinations to predict for.
@@ -549,8 +558,19 @@ predict.bmfrm_fit <- function(object,
 #' subtracting marginal credible intervals.
 #'
 #' For non-hierarchical PCM with steps on an adjusted facet, no reference step
-#' profile exists and an error is raised. For hierarchical PCM
+#' profile exists and an error is raised. For uniform hierarchical PCM
 #' (`hierarchical = "tau"`), the shared `tau_common` profile is used.
+#'
+#' For heterogeneous-category PCM, `mean_fair_score` is a weighted mean on
+#' the native rubric units; v1 does not add `expected_total_score`. Use
+#' `standardize = TRUE` with common reference cells/weights to compare persons.
+#' Rescaling to 0--1 alone does not establish interval-scale comparability
+#' across rubrics of different lengths. Adjusting `threshold_facet` is unsupported.
+#'
+#' `attr(res, "reference_meta")` is attached to all summary and row-level
+#' results, including when `return_draws = FALSE`. It records `score_unit`
+#' (`"native_weighted_mean"` for summaries, `"native_row_expected_score"` for
+#' rows), `K_by_level`, `reference_weights`, `standardized`, and comparability notes.
 #'
 #' @param object bmfrm_fit object
 #' @param summary whether to return person-level summaries or row-level scores

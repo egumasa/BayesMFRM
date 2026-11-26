@@ -43,7 +43,7 @@ fit2 <- bmfrm(
 )
 
 # Model checking
-pp_check(fit2)
+bayesplot::pp_check(fit2)
 
 # Residual analysis
 resid_tbl <- residuals(fit2)
@@ -64,7 +64,7 @@ print("Fair scores (person-level summary):")
 print(head(fair_scores_result))
 
 # Cross-criteria correlations
-crit_cor <- residual_cor_criteria(resid_tbl)
+crit_cor <- residual_cor_criteria(resid_tbl, unit_facets = c("person", "rater"))
 print(crit_cor)
 
 cat("\\nWorkflow complete! Check results above.\\n")

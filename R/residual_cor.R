@@ -33,10 +33,11 @@ residual_cor_criteria <- function(resid_tbl, person_facet = "person", item_facet
   counts <- crossprod(!is.na(values))
   labels <- sub("^item_", "", colnames(values))
   dimnames(cors) <- dimnames(counts) <- list(labels, labels)
-  tidy <- as.data.frame(cors) %>% tibble::rownames_to_column("item1") %>%
-    tidyr::pivot_longer(cols = -item1, names_to = "item2", values_to = "correlation") %>%
-    dplyr::filter(item1 != item2)
-  tidy$n_pairs <- counts[cbind(match(tidy$item1, labels), match(tidy$item2, labels))]
+  pairs <- which(row(cors) != col(cors), arr.ind = TRUE)
+  tidy <- tibble::tibble(
+    item1 = labels[pairs[, 1L]], item2 = labels[pairs[, 2L]],
+    correlation = cors[pairs], n_pairs = counts[pairs]
+  )
   structure(list(cor_matrix = cors, cor_tidy = tidy, n_pairs = nrow(values),
                  pair_counts = counts, unit_facets = unit_facets, aggregation = aggregate,
                  method = "Descriptive Pearson correlation of residuals"), class = "residual_cor")

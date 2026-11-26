@@ -337,7 +337,7 @@ test_that("predict.bmfrm_fit supports hierarchical interactions (Gaussian, Stude
   )
 
   # Unverified custom Stan model is blocked
-  obj_cust <- make_mock_predict_fit(D = 40L, custom_stan = TRUE)
+  obj_cust <- make_mock_predict_fit(D = 40L, custom_stan = TRUE, hierarchical = character())
   expect_error(predict(obj_cust), "Unverified custom Stan model")
 })
 

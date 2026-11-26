@@ -2,14 +2,16 @@
 # Generates the exact JSON summary embedded in docs/index.html.
 #
 # Usage:
-#   Rscript --vanilla docs/reproduce-ratings1.R [cache_dir] [output_json]
+#   From the repository root: Rscript --vanilla docs/reproduce-ratings1.R [cache_dir] [output_json]
 
 args <- commandArgs(trailingOnly = TRUE)
 cache_dir <- if (length(args) >= 1L) args[1L] else file.path("stan_cache_ratings1")
 out_json  <- if (length(args) >= 2L) args[2L] else file.path("docs", "ratings1_results.json")
 
+# Match the implementation and templates in this checkout, not an older installed build.
+suppressPackageStartupMessages(pkgload::load_all(".", quiet = TRUE,
+                                                export_all = FALSE, export_imports = FALSE))
 suppressPackageStartupMessages({
-  library(BayesMFRM)
   library(sirt)
   library(tidyr)
   library(jsonlite)

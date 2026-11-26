@@ -4,7 +4,8 @@
 #' imposing the same sum-to-zero constraints as the generated model. Connectivity
 #' alone does not establish identification. This is a numerical structural rank
 #' check, not a test for separation, practical precision, or adequate categories.
-#' Unused levels of factor columns are retained as planned levels.
+#' All supplied facet levels are retained as planned levels, including levels
+#' with no observed responses when `observed_only = TRUE`.
 #'
 #' For small/medium designs (`n * p <= max_cells` and `p * p <= max_cells`),
 #' uses dense SVD. For large designs (e.g., thousands of persons), `method = "auto"`
@@ -15,7 +16,9 @@
 #'
 #' @param formula Model formula, e.g. score ~ person + item + rater.
 #' @param data Planned rating rows; the response column is optional.
-#' @param K Number of categories, at least two.
+#' @param K Number of categories (`>= 2`): scalar integer for RSM or uniform
+#'   PCM, or a named integer vector matching `threshold_facet` levels for
+#'   heterogeneous-category PCM.
 #' @param family "rsm" or "pcm".
 #' @param observed_only Drop rows with missing responses before checking.
 #' @param tol Relative singular-value tolerance.
@@ -36,8 +39,7 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
   if (!is.data.frame(data) || !nrow(data)) stop("data must contain planned rating rows")
   if (length(tol) != 1L || !is.finite(tol) || tol <= 0) stop("tol must be positive")
   if (length(max_cells) != 1L || !is.finite(max_cells) || max_cells <= 0) stop("max_cells must be positive")
-  vars <- all.vars(formula)
-  response <- vars[1L]
+  response <- bmfrm_response_name(formula)
   terms <- attr(stats::terms(formula), "term.labels")
   interactions <- terms[grepl(":", terms, fixed = TRUE)]
   facets <- terms[!grepl(":", terms, fixed = TRUE)]
@@ -56,7 +58,7 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
     threshold_facet = threshold_facet,
     response_name = if (response %in% names(data)) response else NULL,
     check_response = FALSE,
-    drop_na_response_levels = isTRUE(observed_only)
+    drop_na_response_levels = FALSE
   )
   n_planned <- nrow(data)
   fs <- lapply(data[facets], function(x) if (is.factor(x)) x else factor(x))

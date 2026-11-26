@@ -21,8 +21,9 @@ check_design_bmfrm(
 
 \item{data}{Planned rating rows; the response column is optional.}
 
-\item{K}{Number of categories (\code{>= 2}): scalar integer for RSM or uniform PCM,
-or a named integer vector matching \code{threshold_facet} levels for heterogeneous-category PCM.}
+\item{K}{Number of categories (\verb{>= 2}): scalar integer for RSM or uniform
+PCM, or a named integer vector matching \code{threshold_facet} levels for
+heterogeneous-category PCM.}
 
 \item{family}{"rsm" or "pcm".}
 
@@ -47,7 +48,8 @@ Checks the facet incidence graph and the rank of the linear predictor after
 imposing the same sum-to-zero constraints as the generated model. Connectivity
 alone does not establish identification. This is a numerical structural rank
 check, not a test for separation, practical precision, or adequate categories.
-Unused levels of factor columns are retained as planned levels.
+All supplied facet levels are retained as planned levels, including levels
+with no observed responses when \code{observed_only = TRUE}.
 }
 \details{
 For small/medium designs (\code{n * p <= max_cells} and \code{p * p <= max_cells}),
