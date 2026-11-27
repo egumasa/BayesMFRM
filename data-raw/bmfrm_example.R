@@ -29,10 +29,12 @@ save(bmfrm_example, file = "data/bmfrm_example.rda", version = 2, compress = "gz
 on_content <- data.frame(item = "Content", rater = c("A", "B"))
 at_A <- data.frame(item = items, rater = "A")
 figures <- list("category-curves" = plot_category_curves(fit, on_content),
+                "category-contrast" = plot_category_contrast(fit, on_content, margin_pp = 5),
                 "wright-map" = plot_wright_map(fit, at_A),
                 "pathway-map" = plot_pathway_map(fit, "rater"))
 for (name in names(figures)) {
   ggplot2::ggsave(file.path("man/figures", paste0("writing-", name, ".png")),
-                  figures[[name]], width = 8.5, height = if (name == "wright-map") 5.6 else 4.6,
+                  figures[[name]], width = 8.5, height = switch(name, "wright-map" = 5.6,
+                                                          "category-contrast" = 5.4, 4.6),
                   dpi = 140, bg = "white")
 }

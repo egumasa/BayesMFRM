@@ -69,6 +69,45 @@ At zero logits, the posterior mean probability of a 4 is 0.602 with A
 The bands describe uncertainty about each category probability at each
 ability. A new rating is a single integer from 1 to 4.
 
+#### How similar are the two raters' score probabilities?
+
+Subtract B's probability from A's within each posterior draw. Pairing the
+draws preserves the dependence between predictions made with the same fitted
+model. For this illustration, take five percentage points as the largest
+practically negligible difference. An assessment program should choose this
+margin in light of how the scores are used.
+
+```{r writing-contrast-code, eval=FALSE}
+d <- category_contrast(fit, on_content, theta = 0, margin_pp = 5)
+d[d$category %in% 3:4, c("category", "difference_pp", "lower_pp", "upper_pp",
+                          "prob_within_margin", "n_1", "n_2")]
+plot_category_contrast(fit, on_content, margin_pp = 5)
+```
+
+```{r writing-contrast-figure, echo=FALSE, out.width="100%", fig.alt="Probability differences for Content, A minus B. The top-score curve lies well above the five-point margin at ability zero."}
+knitr::include_graphics(system.file("help", "figures", "writing-category-contrast.png",
+                                    package = "BayesMFRM"))
+```
+
+At ability zero the chance of a **4** is **55.9 percentage points higher**
+with A (95% credible interval 39.2 to 71.0). None of the 4,000 paired draws
+fell within the chosen margin. For a **3**, the mean difference is **10.9
+points** (−2.4 to 23.2). This interval crosses zero, yet only **16.7%** of
+draws fall within ±5 points. The data leave appreciable differences plausible.
+The subtitle gives the number of Content ratings used in the fit (22 for A,
+26 for B). A profile with zero ratings is labeled as a model extrapolation.
+
+*Homogeneity depends on the question.* Common RSM steps describe the rubric's
+structure. Homogeneity of overall rater severity concerns the rater main
+effects across the panel. The figure answers a third, local question about
+the practical similarity of two score probabilities for a specific criterion
+and ability. It includes both severity and the fitted criterion-by-rater
+interaction. Each band and margin probability applies to one score at one
+ability. A claim about a whole rubric or panel requires a criterion covering
+all the comparisons of interest jointly. Linacre illustrates the distinction
+between shared steps and overall severity in an assessment scored by 15 judges.
+[Facets model for judgmental scoring](https://www.rasch.org/memo61.htm).
+
 ```{r writing-wright-code, eval=FALSE}
 at_A <- data.frame(item = c("Content", "Evidence", "Structure"), rater = "A")
 plot_wright_map(fit, at_A)

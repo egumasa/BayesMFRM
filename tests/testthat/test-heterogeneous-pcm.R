@@ -828,3 +828,22 @@ test_that("mixed-rubric curves and ridges agree with independently indexed adjac
     expect_no_warning(ggplot2::ggplot_build(p))
   }
 })
+
+test_that("category contrasts respect mixed rubrics and count retained profile ratings", {
+  base <- make_mock_hetero_pcm_fit()
+  d <- base$data_info$data_clean
+  d$score[d$item == "I3" & d$rater == "R2"] <- NA_integer_
+  d$score[d$item == "I3" & d$rater == "R1" & d$person == "P1"] <- NA_integer_
+  obj <- suppressMessages(make_mock_hetero_pcm_fit(d, include_bias = TRUE))
+  ab <- data.frame(item = "I3", rater = c("R1", "R2"))
+  contrast <- plot_category_contrast(obj, ab, theta = 0, margin_pp = 5)
+  expect_identical(contrast$data$category, 1:6)
+  expect_true(all(contrast$data$n_1 == 5L & contrast$data$n_2 == 0L & contrast$data$extrapolated))
+  expect_match(contrast$labels$subtitle, "R2 .n = 0, model extrapolation")
+  expect_no_warning(ggplot2::ggplot_build(contrast))
+  ccc <- category_curves(obj, ab, theta = 0)
+  expect_equal(contrast$data$difference_pp,
+               100 * (ccc$probability[ccc$profile == 1] - ccc$probability[ccc$profile == 2]))
+  expect_identical(category_contrast(obj, transform(ab, item = "I1"), theta = 0)$category, 1:2)
+  expect_error(category_contrast(obj, transform(ab, item = c("I1", "I3"))), "rubric categories")
+})

@@ -659,3 +659,54 @@ test_that("fixed-ability curves use fitted interactions and the declared RSM or 
   expect_equal(person_cuts$median[person_cuts$from == 1L],
                unname(apply(tau[, c("tau[1,1]", "tau[4,1]")] + loc, 2L, median)))
 })
+
+test_that("paired probability contrasts preserve joint draws and direction", {
+  ab <- data.frame(item = "I2", rater = c("R1", "R2"))
+  grid <- c(-2, 0, 2)
+  for (family in c("rsm", "pcm")) {
+    obj <- make_mock_predict_fit(family = family, threshold_facet = if (family == "pcm") "item",
+                                 include_bias = TRUE)
+    # Independent adjacent-category weights at theta = 0, paired in original draw order.
+    raw <- obj$fit$draws
+    tau <- raw("tau")
+    if (family == "pcm") tau <- tau[, sprintf("tau[2,%d]", 1:3)]
+    p4 <- function(r) {
+      loc <- raw("item")[, 2] + raw("rater")[, r] - raw("itemrater")[, sprintf("itemrater[2,%d]", r)]
+      w <- exp(-tau - loc)
+      w2 <- w[, 1] * w[, 2]
+      w3 <- w2 * w[, 3]
+      w3 / (1 + w[, 1] + w2 + w3)
+    }
+    delta <- 100 * (p4(1) - p4(2))
+    margin <- median(abs(delta))
+    d <- category_contrast(obj, ab, grid, ci_level = 0.8, margin_pp = margin)
+    top <- d[d$theta == 0 & d$category == 4, ]
+    expect_equal(top$difference_pp, mean(delta), tolerance = 1e-12)
+    expect_equal(c(top$lower_pp, top$upper_pp), unname(quantile(delta, c(0.1, 0.9))), tolerance = 1e-12)
+    expect_equal(top$prob_within_margin, mean(abs(delta) <= margin))
+    expect_equal(as.numeric(tapply(d$difference_pp, d$theta, sum)), rep(0, 3), tolerance = 1e-12)
+    expect_true(all(d$n_1 == 4L & d$n_2 == 4L & !d$extrapolated))
+
+    ba <- category_contrast(obj, ab[2:1, ], grid, ci_level = 0.8, margin_pp = margin)
+    expect_equal(ba$difference_pp, -d$difference_pp)
+    expect_equal(ba$lower_pp, -d$upper_pp)
+    expect_equal(ba$upper_pp, -d$lower_pp)
+    expect_equal(ba$prob_within_margin, d$prob_within_margin)
+    same <- category_contrast(obj, ab[c(1, 1), ], grid, margin_pp = 5)
+    expect_true(all(same$difference_pp == 0 & same$lower_pp == 0 & same$upper_pp == 0))
+    expect_true(all(same$prob_within_margin == 1))
+  }
+  p <- plot_category_contrast(obj, ab, grid, ci_level = 0.8, margin_pp = margin)
+  expect_identical(p$data, d)
+  expect_no_warning(ggplot2::ggplot_build(p))
+  single <- plot_category_contrast(obj, ab, theta = 0)
+  expect_true(all(is.na(single$data$margin_pp) & is.na(single$data$prob_within_margin)))
+  expect_no_warning(ggplot2::ggplot_build(single))
+  expect_error(category_contrast(obj, ab[1, ]), "exactly two")
+  expect_error(category_contrast(obj, transform(ab, rater = "unseen")), "Unknown level")
+  for (bad in list(0, -1, 101, NA_real_, Inf, c(1, 2), matrix(5), "5")) {
+    expect_error(category_contrast(obj, ab, margin_pp = bad), "margin_pp")
+  }
+  testthat::local_mocked_bindings(default_bmfrm_chunk_size = function(...) 1L, .package = "BayesMFRM")
+  expect_equal(category_contrast(obj, ab, rev(grid), ci_level = 0.8, margin_pp = margin), d)
+})

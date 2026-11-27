@@ -63,6 +63,14 @@ p <- category_curves(fit, profiles, theta = 0)
 p[p$category == 4, c("facet_rater", "probability", "lower", "upper")]
 ```
 
+To compare A and B directly, use `category_contrast(fit, profiles, theta = 0)`.
+For a 4 on Content, the posterior mean difference is **55.9 percentage points**
+(95% credible interval 39.2–71.0). The interval comes from subtracting B's
+probability from A's in each draw. To examine practical similarity, supply a
+margin in percentage points, for example `margin_pp = 5`. Each row then gives
+the probability that the absolute difference lies within that margin for the
+specified score and ability. [View the contrast across abilities](man/figures/writing-category-contrast.png).
+
 - **Where are the rubric steps relative to the writers?** The ridgeline Wright
   map places writer posterior means and the distributions of adjacent-category
   thresholds on one logit scale. [View the Wright map](man/figures/writing-wright-map.png).

@@ -28,7 +28,8 @@
 #'   `from`, `to`, and posterior `median`, `lower`, `upper` in logits.
 #'   Both tables can be used directly with ggplot2 or exported with
 #'   `utils::write.csv()`.
-#' @seealso [plot_category_curves()], [plot_wright_map()], [predict.bmfrm_fit()]
+#' @seealso [plot_category_curves()], [category_contrast()], [plot_wright_map()],
+#'   [predict.bmfrm_fit()]
 #' @examples
 #' \donttest{
 #' if (check_cmdstan()) {
@@ -56,10 +57,7 @@
 #' @export
 category_curves <- function(object, newdata, theta = seq(-4, 4, length.out = 81),
                             ci_level = 0.95) {
-  if (!is.numeric(theta) || !is.null(dim(theta)) || !length(theta) || any(!is.finite(theta))) {
-    stop("theta must be a nonempty vector of finite abilities")
-  }
-  theta <- sort(unique(theta))
+  theta <- bmfrm_curve_grid(theta)
   profiles <- bmfrm_curve_profiles(object, newdata, ci_level)
   tables <- lapply(seq_len(nrow(newdata)), function(i) {
     ct <- bmfrm_profile_cumulative(profiles, i)
@@ -68,10 +66,7 @@ category_curves <- function(object, newdata, theta = seq(-4, 4, length.out = 81)
     size <- default_bmfrm_chunk_size(D * as.double(K), length(theta))
     chunks <- split(theta, ceiling(seq_along(theta) / size))
     dplyr::bind_rows(lapply(chunks, function(grid) {
-      eta <- matrix(rep(grid, each = D), nrow = D)
-      p <- eval_bmfrm_categories(eta, K, list(mode = "shared", cum_tau = ct), NULL,
-                                 compute_mu = FALSE, compute_probs = TRUE)$probs
-      dim(p) <- c(D, length(grid) * K)
+      p <- bmfrm_curve_draws(ct, grid)
       bounds <- apply(p, 2L, stats::quantile, probs = profiles$probs, names = FALSE)
       tibble::tibble(profile = i, theta = rep(grid, K),
                      category = rep(seq_len(K), each = length(grid)),
@@ -80,6 +75,24 @@ category_curves <- function(object, newdata, theta = seq(-4, 4, length.out = 81)
     }))
   })
   add_curve_profile_levels(dplyr::bind_rows(tables), newdata)
+}
+
+bmfrm_curve_grid <- function(theta) {
+  if (!is.numeric(theta) || !is.null(dim(theta)) || !length(theta) || any(!is.finite(theta))) {
+    stop("theta must be a nonempty vector of finite abilities")
+  }
+  sort(unique(theta))
+}
+
+# Columns run through the ability grid for each successive score category.
+bmfrm_curve_draws <- function(ct, grid) {
+  D <- nrow(ct)
+  K <- ncol(ct)
+  eta <- matrix(rep(grid, each = D), nrow = D)
+  p <- eval_bmfrm_categories(eta, K, list(mode = "shared", cum_tau = ct), NULL,
+                             compute_mu = FALSE, compute_probs = TRUE)$probs
+  dim(p) <- c(D, length(grid) * K)
+  p
 }
 
 #' @rdname category_curves
