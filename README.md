@@ -46,6 +46,35 @@ The dashed lines mark the practical threshold of 0.3 logits. Filled points
 identify the four cells selected at a Bayesian false discovery rate of 5%.
 Use `?bmfrm` to fit these data and `?fair_scores` to plot adjusted scores.
 
+### How do ratings change with ability and rater?
+
+In the same simulated assessment, a writer at ability zero has a **60.2%**
+posterior mean chance of receiving a 4 on Content from A (95% credible
+interval 45.0–74.6%). With B the chance is **4.3%** (1.3–9.8%).
+Read each probability at the same horizontal position in the two panels.
+
+![Category characteristic curves for Content with raters A and B. The score-four curve is higher for A at ability zero.](man/figures/writing-category-curves.png)
+
+```r
+source(system.file("examples", "fit-writing.R", package = "BayesMFRM"))
+profiles <- data.frame(item = "Content", rater = c("A", "B"))
+plot_category_curves(fit, profiles)
+p <- category_curves(fit, profiles, theta = 0)
+p[p$category == 4, c("facet_rater", "probability", "lower", "upper")]
+```
+
+- **Where are the rubric steps relative to the writers?** The ridgeline Wright
+  map places writer posterior means and the distributions of adjacent-category
+  thresholds on one logit scale. [View the Wright map](man/figures/writing-wright-map.png).
+- **Is a severe rater also unpredictable?** The Pathway map puts rater
+  severity on the vertical axis and infit or outfit on the horizontal axis.
+  Compare each point with that rater's replicated fit range.
+  [View the Pathway map](man/figures/writing-pathway-map.png).
+
+Each plot is a ggplot2 object. Use `category_thresholds()` for a table of
+crossings, including item-specific rubrics. The getting-started vignette shows
+how to pass these thresholds to WrightMap.
+
 ## Quick Start (Self-Contained & Runnable)
 
 Always pass `K` explicitly as the **intended rubric maximum** (e.g., `K = 6` for a 1–6 scale), not just the highest score observed in a sample. By default, `bmfrm()` partially pools examinee abilities (`hierarchical = person_facet`), uses compact streaming outputs (`save_gq = "minimal"`), and caches temporary Stan files in `tempdir()` (pass `cache_dir = tools::R_user_dir("BayesMFRM", "cache")` for persistent cross-session caching).

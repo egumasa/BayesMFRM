@@ -45,6 +45,80 @@ the practical threshold. The filled symbol reports the BFDR selection across
 eligible cells. To focus on one rater while retaining the original comparison
 across nine cells, use `plot_bias(b[b$level2 == "A", ])`.
 
+### Read the rating scale, targeting, and rater fit
+
+For the same writing assessment, hold the criterion fixed at Content and vary
+the rater. The two panels answer the same question for A and B: at a given
+ability, how likely is each score?
+
+```{r writing-curves-code, eval=FALSE}
+source(system.file("examples", "fit-writing.R", package = "BayesMFRM"))
+on_content <- data.frame(item = "Content", rater = c("A", "B"))
+plot_category_curves(fit, on_content)
+p <- category_curves(fit, on_content, theta = 0)
+p[p$category == 4, c("facet_rater", "probability", "lower", "upper")]
+```
+
+```{r writing-curves-figure, echo=FALSE, out.width="100%", fig.alt="Four score probabilities over ability for Content, conditional on rater A or B."}
+knitr::include_graphics(system.file("help", "figures", "writing-category-curves.png",
+                                    package = "BayesMFRM"))
+```
+
+At zero logits, the posterior mean probability of a 4 is 0.602 with A
+(95% credible interval 0.450–0.746) and 0.043 with B (0.013–0.098).
+The bands describe uncertainty about each category probability at each
+ability. A new rating is a single integer from 1 to 4.
+
+```{r writing-wright-code, eval=FALSE}
+at_A <- data.frame(item = c("Content", "Evidence", "Structure"), rater = "A")
+plot_wright_map(fit, at_A)
+steps <- category_thresholds(fit, at_A)
+steps[steps$from == 3, c("facet_item", "median", "lower", "upper")]
+```
+
+```{r writing-wright-figure, echo=FALSE, out.width="100%", fig.alt="Writer abilities and nine posterior distributions of adjacent-category crossings conditional on rater A."}
+knitr::include_graphics(system.file("help", "figures", "writing-wright-map.png",
+                                    package = "BayesMFRM"))
+```
+
+For A, the median 3-to-4 crossing is −0.61 logits for Content and 1.69 for
+Evidence. A writer needs appreciably higher ability for scores 3 and 4 to be
+equally likely on Evidence. The top ticks locate the 36 writers by posterior
+mean ability. The lower ridges show uncertainty about each crossing. For a
+PCM, a binary item gets one crossing and a six-category item gets five.
+`?category_curves` fits an example with two-, four-, and six-category items.
+
+With the optional **WrightMap** package, pass the same point estimates to its
+native display. In this four-category example each row of the matrix is one
+criterion and each column is one adjacent pair. The ridgeline display above
+also retains the uncertainty in these estimates.
+
+```{r writing-wrightmap-interop, eval=FALSE}
+step_matrix <- as.matrix(stats::xtabs(median ~ facet_item + from, data = steps))
+WrightMap::wrightMap(facet_summary(fit, "person")$mean, step_matrix,
+                    label.items = rownames(step_matrix), main.title = "Writing assessment at rater A")
+```
+
+```{r writing-pathway-code, eval=FALSE}
+path <- plot_pathway_map(fit, "rater", statistic = "infit")
+print(path)
+path$data[, c("level", "n_obs", "msq", "rep_lower", "rep_upper", "ppp")]
+```
+
+```{r writing-pathway-figure, echo=FALSE, out.width="100%", fig.alt="Rater severity against observed infit, with separate intervals for severity and replicated infit."}
+knitr::include_graphics(system.file("help", "figures", "writing-pathway-map.png",
+                                    package = "BayesMFRM"))
+```
+
+C has the highest estimated severity (0.31 logits). Its observed infit is 0.93,
+within the 0.73–1.30 reference interval from replicated ratings. Severity tells
+us the direction of C's scoring tendency. Infit asks whether the ratings vary
+more or less than the model expects after accounting for that tendency. The
+vertical bar is the credible interval for severity. The horizontal bar is the
+replicated range for fit. For a draw-matched comparison use `ppp`, the posterior
+predictive probability that replicated fit exceeds realized fit, with half
+weight for ties.
+
 The six-category assessment below shows the full workflow, starting with the
 rating plan.
 

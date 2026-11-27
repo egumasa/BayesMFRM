@@ -611,3 +611,51 @@ test_that("chunked new-level generation avoids upfront D x n_new allocation and 
                    summary = TRUE, chunk_size = 50L, seed = 77L)
   expect_equal(p_c1, p_c50, tolerance = 1e-12)
 })
+
+test_that("fixed-ability curves use fitted interactions and the declared RSM or PCM steps", {
+  profiles <- data.frame(item = "I2", rater = c("R2", "R1"))
+  for (family in c("rsm", "pcm")) {
+    obj <- make_mock_predict_fit(family = family, threshold_facet = if (family == "pcm") "item",
+                                 include_bias = TRUE)
+    draws <- obj$fit$draws
+    curves <- category_curves(obj, profiles, theta = c(-1000, 0, 1000), ci_level = 0.8)
+    cuts <- category_thresholds(obj, profiles, ci_level = 0.8)
+    for (i in 1:2) {
+      r <- match(profiles$rater[i], obj$data_info$facet_labels$rater)
+      loc <- draws("item")[, 2L] + draws("rater")[, r] -
+        draws("itemrater")[, sprintf("itemrater[2,%d]", r)]
+      tau <- draws("tau")
+      if (family == "pcm") tau <- tau[, sprintf("tau[2,%d]", 1:3)]
+      steps <- tau + loc
+      log_weights <- cbind(0, -steps[, 1L], -rowSums(steps[, 1:2]), -rowSums(steps))
+      weights <- exp(log_weights)
+      p <- weights / rowSums(weights)
+      got <- curves[curves$theta == 0 & curves$profile == i, ]
+      expect_equal(got$probability, unname(colMeans(p)), tolerance = 1e-12)
+      expect_equal(got$upper, unname(apply(p, 2, quantile, 0.9)), tolerance = 1e-12)
+      expect_equal(cuts$median[cuts$profile == i], unname(apply(steps, 2, median)), tolerance = 1e-12)
+    }
+    expect_true(all(is.finite(curves$probability)))
+    expect_equal(curves$probability[curves$theta == -1000 & curves$category == 1], c(1, 1))
+    expect_equal(curves$probability[curves$theta == 1000 & curves$category == 4], c(1, 1))
+    p <- plot_category_curves(obj, profiles, theta = 0)
+    expect_equal(p$data, category_curves(obj, profiles, theta = 0))
+    expect_no_warning(ggplot2::ggplot_build(p))
+    expect_no_warning(ggplot2::ggplot_build(plot_category_curves(obj, profiles, theta = -2:2)))
+    expect_equal(plot_wright_map(obj, profiles)$data, category_thresholds(obj, profiles))
+  }
+  expect_error(category_curves(obj, profiles["rater"]), "exactly these facets")
+  expect_error(category_curves(obj, transform(profiles, item = "absent")), "Unknown level")
+  expect_error(category_curves(obj, profiles, theta = NA_real_), "finite abilities")
+  expect_error(category_thresholds(obj, profiles, ci_level = 1), "ci_level")
+  custom <- make_mock_predict_fit(custom_stan = TRUE, hierarchical = character())
+  expect_error(category_curves(custom, profiles), "verified")
+  person_pcm <- make_mock_predict_fit(family = "pcm", threshold_facet = "person")
+  expect_error(category_curves(person_pcm, profiles), "exactly these facets")
+  conditional <- data.frame(person = c("P1", "P4"), item = "I1", rater = "R1")
+  person_cuts <- category_thresholds(person_pcm, conditional)
+  tau <- person_pcm$fit$draws("tau")
+  loc <- person_pcm$fit$draws("item")[, 1L] + person_pcm$fit$draws("rater")[, 1L]
+  expect_equal(person_cuts$median[person_cuts$from == 1L],
+               unname(apply(tau[, c("tau[1,1]", "tau[4,1]")] + loc, 2L, median)))
+})

@@ -688,18 +688,8 @@ eval_softmax_ragged <- function(eta, tau_info, t_idx, resp_chunk = NULL,
   out
 }
 
-#' Evaluate posterior moments, linear predictors, probabilities, or draws for one chunk
-#' @keywords internal
-eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
-                             compute_mu = TRUE,
-                             compute_linpred = FALSE,
-                             compute_probs = FALSE,
-                             compute_kurtosis = FALSE,
-                             compute_log_lik = FALSE,
-                             compute_y_rep = FALSE) {
-  pf <- params$person_facet %||% "person"
-
-  eta <- params$theta[, ids[[pf]][rows], drop = FALSE]
+# Add the fitted facet and interaction terms to an ability matrix.
+bmfrm_add_facet_effects <- function(eta, params, ids, rows) {
   for (f in names(params$facet_draws)) {
     eta <- eta - params$facet_draws[[f]][, ids[[f]][rows], drop = FALSE]
   }
@@ -711,7 +701,21 @@ eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
     }
     eta <- eta + b$draws[, cell_idx, drop = FALSE]
   }
+  eta
+}
 
+#' Evaluate posterior moments, linear predictors, probabilities, or draws for one chunk
+#' @keywords internal
+eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
+                             compute_mu = TRUE,
+                             compute_linpred = FALSE,
+                             compute_probs = FALSE,
+                             compute_kurtosis = FALSE,
+                             compute_log_lik = FALSE,
+                             compute_y_rep = FALSE) {
+  pf <- params$person_facet %||% "person"
+  eta <- bmfrm_add_facet_effects(params$theta[, ids[[pf]][rows], drop = FALSE],
+                                params, ids, rows)
   tau_info <- params$tau_info
   t_idx <- if (tau_info$mode != "shared") ids[[tau_info$threshold_facet]][rows]
   eval_bmfrm_categories(eta, params$K, tau_info, t_idx, resp_chunk,

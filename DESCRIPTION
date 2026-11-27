@@ -30,6 +30,7 @@ Imports:
     purrr,
     magrittr,
     bayesplot,
+    ggplot2 (>= 3.4.0),
     loo,
     stats,
     utils,

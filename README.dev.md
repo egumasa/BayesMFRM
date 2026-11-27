@@ -2,6 +2,8 @@
 
 The repository root is the **single canonical Git working tree** for package development, testing, simulation benchmarks, and `R CMD check`. Release history is maintained in [NEWS.md](NEWS.md), and user-facing documentation lives in [README.md](README.md), `vignette("getting-started", package = "BayesMFRM")` ([vignettes/getting-started.Rmd](vignettes/getting-started.Rmd)), and [docs/model-comparison-ratings1.md](docs/model-comparison-ratings1.md).
 
+Use English for figure titles, axes, legends, annotations, tooltips, and captions in the package, examples, and interactive guide.
+
 ## Verification & Test Suite Commands
 
 ```sh

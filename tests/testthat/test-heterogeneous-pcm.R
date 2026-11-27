@@ -775,3 +775,56 @@ test_that("Stage 3b: Regression tests for review boundary cases (CV K-mismatch, 
   expect_true(isTRUE(rm_stan_row$K_heterogeneous))
   expect_identical(as.integer(rm_stan_row$K_by_level[c("I1", "I2", "I3")]), c(2L, 4L, 6L))
 })
+
+test_that("mixed-rubric curves and ridges agree with independently indexed adjacent odds", {
+  K <- c(I1 = 2L, I2 = 4L, I3 = 6L)
+  obj <- make_mock_hetero_pcm_fit(K = K, include_bias = TRUE)
+  profiles <- data.frame(item = c("I3", "I1", "I2"), rater = c("R1", "R2", "R3"))
+  grid <- seq(-4, 4, length.out = 33)
+  curves <- category_curves(obj, profiles, theta = grid)
+  cuts <- category_thresholds(obj, profiles)
+  expect_equal(nrow(cuts), 9L)
+  all_draws <- obj$fit$draws()
+  tau_start <- c(1L, 2L, 5L)
+  for (i in 1:3) {
+    j <- match(profiles$item[i], names(K))
+    r <- match(profiles$rater[i], obj$data_info$facet_labels$rater)
+    Kj <- K[[j]]
+    s <- seq_len(Kj - 1L)
+    pos <- all_draws[, sprintf("item[%d]", j)] + all_draws[, sprintf("rater[%d]", r)] -
+      all_draws[, sprintf("itemrater[%d,%d]", j, r)]
+    steps <- all_draws[, sprintf("tau[%d]", tau_start[j] + s - 1L), drop = FALSE] + pos
+    got <- curves[curves$profile == i, ]
+    expect_equal(sort(unique(got$category)), seq_len(Kj))
+    expect_equal(cuts$median[cuts$profile == i], unname(apply(steps, 2, median)), tolerance = 1e-12)
+    # The probability ratio between neighbors is exp(theta - threshold).
+    ref_prob <- function(ability) {
+      w <- matrix(1, nrow(steps), Kj)
+      for (k in s) w[, k + 1L] <- w[, k] * exp(ability - steps[, k])
+      w / rowSums(w)
+    }
+    expected <- t(vapply(grid, function(x) colMeans(ref_prob(x)), numeric(Kj)))
+    expect_equal(got$probability, as.vector(expected), tolerance = 1e-12)
+    expect_equal(rowSums(expected), rep(1, length(grid)), tolerance = 1e-12)
+    # Compare the draw-level crossings used for the ridges, including every binary step.
+    ct <- bmfrm_profile_cumulative(bmfrm_curve_profiles(obj, profiles, 0.95), i)
+    actual_steps <- bmfrm_step_draws(ct)
+    for (k in s) {
+      at_crossing <- ref_prob(actual_steps[, k])
+      expect_lt(max(abs(at_crossing[, k] - at_crossing[, k + 1L])), 1e-12)
+    }
+  }
+  expect_no_warning(ggplot2::ggplot_build(plot_wright_map(obj, profiles)))
+  for (stat in c("infit", "outfit")) {
+    f <- facet_fit(obj, "rater", seed = 17)
+    m <- facet_summary(obj, "rater", probs = c(0.025, 0.975))
+    p <- plot_pathway_map(obj, "rater", statistic = stat, seed = 17)
+    expect_equal(p$data$level, m$level)
+    expect_equal(p$data$lower, m$q2.5)
+    expect_equal(p$data$msq, f[[paste0(stat, "_msq")]])
+    expect_equal(p$data$rep_lower, f[[paste0(stat, "_rep_lo")]])
+    expect_equal(p$data$rep_upper, f[[paste0(stat, "_rep_hi")]])
+    expect_equal(p$data$ppp, f[[paste0(stat, "_ppp")]])
+    expect_no_warning(ggplot2::ggplot_build(p))
+  }
+})

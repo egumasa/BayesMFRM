@@ -7,6 +7,8 @@
 - Added a worked simulated rating study, runnable help examples and `plot_bias()` for interaction means, credible intervals, practical thresholds and screening decisions.
 - Observed ratings, predictions and standardized fair scores now share the chunked posterior category calculations. Standardized fair scores request only the expected score.
 
+- Added `category_curves()` and `category_thresholds()` for probabilities at fixed abilities and adjacent-category crossings, including fitted interactions and item-specific PCM rubrics. The three ggplot2 displays are `plot_category_curves()`, the ridgeline `plot_wright_map()`, and `plot_pathway_map()` with separate intervals for facet measures and replicated fit.
+
 ### Breaking Default & API Improvements
 - **Hierarchical ability by default**: `bmfrm()`, `parse_bmfrm_formula()`, `get_default_priors()`, and `simulate_bmfrm()` now default to `hierarchical = person_facet` (partial pooling of examinee abilities with posterior uncertainty in the population mean and SD). Pass `hierarchical = character(0)` (or supply `prior(..., class = "theta")`) for unpooled fixed-scale priors.
 - **Compact CSV outputs by default**: `save_gq` now defaults to `"minimal"`, omitting observation-level Stan `generated quantities` and streaming residuals, fit statistics, fair scores, PSIS-LOO, and PPC on demand in R.
