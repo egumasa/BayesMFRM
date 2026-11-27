@@ -10,14 +10,16 @@ parse_bmfrm_formula(
   K = NULL,
   family = "rsm",
   threshold_facet = NULL,
+  person_facet = "person",
+  adjust_facets = NULL,
   model_name = NULL,
-  cache_dir = "stan_cache",
-  hierarchical = character(),
-  save_gq = c("full", "minimal")
+  cache_dir = tempdir(),
+  hierarchical = person_facet,
+  save_gq = c("minimal", "full")
 )
 }
 \arguments{
-\item{formula}{R formula (e.g., score ~ person + item + rater + (rater:item)).
+\item{formula}{R formula (e.g., \code{score ~ person + item + rater + rater:item}).
 The response must be a single column name; transform scores in \code{data} first.}
 
 \item{data}{data.frame containing variables}
@@ -26,26 +28,36 @@ The response must be a single column name; transform scores in \code{data} first
 integer vector matching \code{threshold_facet} levels for heterogeneous PCM,
 or \code{NULL} (inferred from \code{max(score)}).}
 
-\item{family}{model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)}
+\item{family}{model family: \code{"rsm"} (Rating Scale Model) or \code{"pcm"} (Partial Credit Model)}
 
-\item{threshold_facet}{for PCM only: which facet gets item-specific thresholds (e.g., "item")}
+\item{threshold_facet}{for PCM only: which facet gets level-specific step thresholds}
+
+\item{person_facet}{Name of the unconstrained examinee / ability main facet in
+\code{formula} (default \code{"person"}). Allows custom column names such as
+\code{"student"} or \code{"candidate"} without renaming input data.}
+
+\item{adjust_facets}{Optional character vector of nuisance main facets (e.g.,
+\code{"judge"}, \code{"rater"}) to set to zero in built-in fair-score calculations
+and as the default for \code{\link[=fair_scores]{fair_scores()}}. When \code{NULL}, auto-detects \code{"rater"}
+and \code{"interlocutor"} if present.}
 
 \item{model_name}{optional model name for caching}
 
-\item{cache_dir}{cache directory}
+\item{cache_dir}{directory for compiled Stan binaries and fit caches. Defaults
+to \code{tempdir()} so package functions never write into the working directory
+by default; pass \code{tools::R_user_dir("BayesMFRM", "cache")} for persistent
+cross-session caching.}
 
 \item{hierarchical}{Names of facets or terms with hierarchical distributions
-(e.g., \code{"person"}, centered main facets such as \code{"rater"} / \code{"item"},
-two-way interactions such as \code{"item:rater"}, or \code{"tau"} for hierarchical
-PCM). Component order in interaction names does not affect prior matching.}
+(default \code{person_facet}; pass \code{character(0)} for non-hierarchical priors).}
 
-\item{save_gq}{Either \code{"full"} (default; generate observation-level
-\code{log_lik}, \code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan \verb{generated quantities})
-or \code{"minimal"} (omit observation-level \verb{generated quantities} and compute
-downstream quantities in memory-bounded R chunks).}
+\item{save_gq}{Either \code{"minimal"} (default; omits observation-level Stan
+\verb{generated quantities} and computes residuals, fit statistics, fair scores,
+LOO, and PPC in memory-bounded R chunks) or \code{"full"} (saves \code{log_lik},
+\code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan CSV outputs).}
 }
 \value{
-bmfrm_spec object with model specification
+\code{bmfrm_spec} object with model specification
 }
 \description{
 Parse bmfrm formula to extract facets and model structure

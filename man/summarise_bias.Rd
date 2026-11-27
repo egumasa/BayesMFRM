@@ -2,82 +2,64 @@
 % Please edit documentation in R/methods.R
 \name{summarise_bias}
 \alias{summarise_bias}
-\title{Summarise bias effects (wrapper)}
+\title{Summarise two-way interaction (bias) effects with BFDR multiplicity control}
 \usage{
 summarise_bias(
   object,
   facet = NULL,
   prob_thresh = 0.95,
   delta = 0,
+  flag_method = c("bfdr", "prob"),
+  fdr_thresh = 0.05,
+  ci_level = 0.95,
   diagnostics = TRUE,
   mcse_multiplier = 2,
   ...
 )
 }
 \arguments{
-\item{object}{bmfrm_fit object}
+\item{object}{\code{bmfrm_fit} object}
 
-\item{facet}{Two-way interaction name in either component order (if NULL,
-uses the first interaction). The generated parameter name and original
-level labels are used. For legacy raw CmdStan fits named \code{bias[I,R]}, use
-summarise_bias_ir().}
+\item{facet}{Two-way interaction name in either component order (defaults to first interaction).}
 
-\item{prob_thresh}{Posterior directional probability threshold for flagging
-bias beyond \verb{+/-delta} (default 0.95; e.g., use 0.975 to match a two-sided
-95\% credible interval excluding \verb{[-delta, delta]}).}
+\item{prob_thresh}{Per-cell directional probability threshold in \verb{(0.5, 1]}
+(used for \code{flag_method = "prob"} and directional MCSE stability; default \code{0.95}).}
 
-\item{delta}{Nonnegative practically meaningful effect on the adjacent-logit
-scale. Reports \code{prob_gt_delta}, \code{prob_lt_neg_delta}, \code{prob_outside_delta},
-and per-cell Bayesian expected false discovery rate (\code{bfdr}) among
-likelihood-identified cells.}
+\item{delta}{Nonnegative practical effect threshold on the logit scale (default \code{0}).}
 
-\item{diagnostics}{Logical; include probability Monte Carlo standard errors
-(MCSE) and numerical decision stability (default \code{TRUE}). \code{FALSE} retains
-the original summary columns and skips these calculations.}
+\item{flag_method}{Multiplicity rule for \code{flag_bias}: \code{"bfdr"} (default; flags
+cells with \code{bfdr <= fdr_thresh}) or \code{"prob"} (per-cell \code{prob_thresh}).}
 
-\item{mcse_multiplier}{Positive multiplier for the approximate Monte Carlo
-error band \verb{probability +/- mcse_multiplier * MCSE} (default 2). This does
-not change \code{prob_thresh}, \code{delta}, or \code{flag_bias}.}
+\item{fdr_thresh}{Target Bayesian false discovery rate in \verb{(0, 0.5)} when
+\code{flag_method = "bfdr"} (default \code{0.05}).}
+
+\item{ci_level}{Credible interval probability in \verb{(0, 1)} for \code{ci_lower} and
+\code{ci_upper} (default \code{0.95}; e.g., use \code{2 * prob_thresh - 1} to align two-sided
+interval bounds with one-sided \code{prob_thresh}). \code{lower_95} and \code{upper_95} are
+also retained for backward compatibility.}
+
+\item{diagnostics}{Logical; include autocorrelation-aware probability MCSE
+and decision stability columns (default \code{TRUE}).}
+
+\item{mcse_multiplier}{Positive multiplier for MCSE error bands (default \code{2}).}
 
 \item{...}{unused}
 }
-\value{
-A tibble with original labels, posterior summaries, directional and
-practical-effect probabilities, \code{bfdr}, cell observation counts, and a
-likelihood identification indicator when a design check is available.
-Unidentified cells retain posterior summaries but receive flag
-\code{not_likelihood_identified}.
-With diagnostics, additional columns are \code{mcse_prob_gt_delta},
-\code{mcse_prob_lt_neg_delta}, \code{mcse_prob_outside_delta}, \code{prob_thresh},
-\code{mcse_multiplier}, \code{decision_stable}, and \code{decision_status}.
-}
 \description{
-Summarise bias effects (wrapper)
+Summarises posterior interaction cells while accounting for structural
+likelihood identification, zero-observation cells, and multiple testing.
 }
 \details{
-Probability MCSE uses \code{\link[posterior:mcse_mean]{posterior::mcse_mean()}} on binary indicators
-in the original iteration-by-chain layout, accounting for autocorrelation.
-Missing chain structure, fewer than four iterations, or an indicator
-constant within any chain gives unavailable MCSE (\code{NA}), never zero by
-assumption. At least two chains and passing fit-level sampler checks are
-required to assess decision stability.
-
-\code{decision_status} is \code{stable_positive_bias} or \code{stable_negative_bias} when
-the corresponding probability's lower Monte Carlo bound is strictly above
-\code{prob_thresh}; \code{stable_no_clear_bias} when both upper bounds are strictly
-below it; and \code{boundary_sensitive} otherwise. Only the relevant direction
-needs finite MCSE for a positive/negative decision; both are required for
-no clear bias. Unavailable diagnostics are reported as \code{mcse_unavailable},
-\code{chain_structure_unavailable}, \code{fit_diagnostics_unavailable}, or
-\code{fit_diagnostics_failed}. \code{decision_stable} is \code{TRUE} for stable statuses,
-\code{FALSE} for boundary sensitivity, and \code{NA} when assessment is unavailable.
-
-Stability concerns numerical error in the directional probability rule;
-inspect \code{likelihood_identified} separately even when stability is \code{TRUE}.
-These approximate error bands are not credible intervals for the bias and
-do not certify BFDR ranking/selection, equivalence, or model adequacy.
-\code{stable_no_clear_bias} does not establish absence of a meaningful effect.
-For boundary sensitivity, inspect mixing and consider longer sampling.
-For unavailable MCSE, inspect chain traces and threshold crossings; do not
-treat an estimated probability of 0 or 1 as exact certainty.
+\itemize{
+\item \strong{Zero-observation cells (\code{n_observations == 0})}: even when sum-to-zero
+constraints algebraically determine an unobserved cell from other cells,
+no ratings occurred in that cell; it is labeled \code{"unobserved_cell"} and
+excluded from \code{bfdr} and bias flagging.
+\item \strong{Multiplicity control (\code{flag_method = "bfdr"}, default)}: flags
+observed, likelihood-identified cells whose set-level Bayesian expected
+false discovery rate (\code{bfdr}, evaluated tie-invariantly over directional
+exceedance beyond \verb{+/-delta}) satisfies \code{bfdr <= fdr_thresh} (default \code{0.05}).
+Pass \code{flag_method = "prob"} to use per-cell unadjusted directional
+probabilities (\code{prob_gt_delta >= prob_thresh}).
+}
 }

@@ -24,95 +24,38 @@
 \arguments{
 \item{object}{A \code{bmfrm_fit} object.}
 
-\item{newdata}{Optional data.frame of facet combinations to predict for.
-Defaults to the cleaned fitted dataset (\code{object$data_info$data_clean}).}
+\item{newdata}{Optional data.frame of facet combinations to predict for.}
 
-\item{type}{Quantity to compute: \code{"epred"} (expected score in \verb{1..K},
-default), \code{"predict"} (replicated discrete rating in \verb{1..K}), \code{"probs"}
-(category probabilities \verb{1..K}), or \code{"linpred"} (logit linear predictor).}
+\item{type}{\code{"epred"} (default), \code{"predict"}, \code{"probs"}, or \code{"linpred"}.}
 
-\item{adjust_facets}{Character vector of non-person main facets to set to 0
-(and exclude from \code{newdata} requirements). Default \code{character(0)} predicts
-conditional on all model facets.}
+\item{adjust_facets}{Character vector of non-ability main facets to set to 0.}
 
-\item{allow_new_levels}{Logical; allow facet levels in \code{newdata} that were
-not present in the fitted data? Default \code{FALSE} (raises an error).}
+\item{allow_new_levels}{Logical; allow unseen facet levels in \code{newdata}?}
 
-\item{sample_new_levels}{How to handle unseen levels when
-\code{allow_new_levels = TRUE}: \code{"hierarchical"} (default; sample from learned
-hierarchical population distributions and error on non-hierarchical facets)
-or \code{"zero"} (explicitly set unseen effects to 0 on the logit scale).}
+\item{sample_new_levels}{\code{"hierarchical"} (default) or \code{"zero"}.}
 
-\item{summary}{Logical; if \code{TRUE} (default), return a row-aligned tibble of
-posterior summaries (\code{estimate}, \code{sd}, and \code{probs} quantiles, or
-\code{prob_1..prob_K} for \code{type = "probs"}). If \code{FALSE}, return raw posterior
-draws (\verb{D x N} matrix, or \verb{D x N x K} array for \code{type = "probs"}).}
+\item{summary}{Logical; return summary tibble (\code{TRUE}) or draw array (\code{FALSE}).}
 
-\item{probs}{Numeric vector of quantile probabilities for \code{summary = TRUE}
-(ignored for \code{type = "probs"}). Default \code{c(0.025, 0.975)}.}
+\item{probs}{Quantile probabilities for \code{summary = TRUE} (default \code{c(0.025, 0.975)}).}
 
-\item{ndraws}{Optional positive integer specifying a random subset of
-posterior draws to evaluate. Mutually exclusive with \code{draw_ids}.}
+\item{ndraws}{Optional random subset size of posterior draws.}
 
-\item{draw_ids}{Optional integer vector of specific posterior draw indices.
-Mutually exclusive with \code{ndraws}.}
+\item{draw_ids}{Optional specific posterior draw indices.}
 
-\item{seed}{Optional integer RNG seed for reproducible new-level sampling,
-\code{ndraws} subsampling, and \code{type = "predict"} replicated draws.}
+\item{seed}{Optional integer RNG seed.}
 
-\item{chunk_size}{Optional observation chunk size for memory-bounded
-streaming evaluation. Multi-chunk unseen constrained interaction centering
-offsets (\code{D * 8} bytes each) are cached up to \code{n_concurrent_offsets * D * 8}
-bounded by a 64 MiB cap and freed immediately after their final chunk
-(single-chunk levels retain 0 bytes; workloads exceeding the cap
-deterministically recompute uncached offsets per chunk to preserve the
-memory bound).}
+\item{chunk_size}{Optional observation chunk size.}
 
-\item{max_cells}{Maximum total numeric entries allowed when \code{summary = FALSE}
-(default \code{5e7}, ~400 MB) to prevent accidental memory exhaustion on large
-\verb{D x N x K} probability arrays.}
+\item{max_cells}{Maximum numeric entries allowed when \code{summary = FALSE}.}
 
 \item{...}{Unused.}
 }
 \value{
-A tibble (when \code{summary = TRUE}) or numeric/integer matrix or 3D
-array (when \code{summary = FALSE}), with attribute \code{"bmfrm_prediction_meta"}.
+A tibble (when \code{summary = TRUE}) or matrix/3D array (\code{summary = FALSE}).
 }
 \description{
 Computes posterior expectations (\code{type = "epred"}), replicated discrete
 ratings (\code{type = "predict"}), category probabilities (\code{type = "probs"}), or
 logit-scale linear predictors (\code{type = "linpred"}) on observed or new data
 using the shared memory-bounded posterior evaluation engine.
-}
-\details{
-Explicitly distinguishes three prediction targets:
-\itemize{
-\item \strong{Conditional on known levels} (default \code{adjust_facets = character(0)},
-\code{allow_new_levels = FALSE}): predicts scores for observed examinees,
-criteria, and raters.
-\item \strong{Population new levels} (\code{allow_new_levels = TRUE},
-\code{sample_new_levels = "hierarchical"}): draws unseen facet levels (e.g., a
-new examinee or a new rater) once per posterior iteration from their
-learned hierarchical population distribution, sharing the same draw across
-repeated rows of the same unseen level ID. Raises an error if an unseen
-level belongs to a non-hierarchical facet so unseen levels are never
-silently replaced with 0.
-\item \strong{Adjusted / reference-zero predictions} (e.g.,
-\code{adjust_facets = "rater"}): fixes adjusted nuisance facets (and any
-interactions involving them) to 0 on the logit scale. Note that because
-the RSM/PCM expectation is nonlinear, fixing a rater effect to 0 is not
-identical to averaging over a new rater drawn from the rater population.
-}
-
-Metadata describing the prediction target, adjusted facets, unseen levels,
-and \code{K_obs}, \code{K_by_level}, \code{K_heterogeneous} is attached as
-\code{attr(res, "bmfrm_prediction_meta")}.
-
-For heterogeneous-category PCM, \code{type = "probs"} returns \code{NA_real_} for
-categories above a level's \code{K_j}, while existing-but-unobserved categories
-retain positive probability. Summarized probabilities include \code{K_obs}.
-Unseen levels of \code{threshold_facet} are unsupported in v1 even with
-\code{allow_new_levels = TRUE} or \code{sample_new_levels = "zero"}, because their
-rubric and step distribution are undefined. Adjusting \code{threshold_facet}
-via \code{adjust_facets} is also unsupported.
 }

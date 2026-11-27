@@ -9,6 +9,7 @@ summarise_bias_ir(
   item_labels = NULL,
   rater_labels = NULL,
   prob_thresh = 0.95,
+  ci_level = 0.95,
   diagnostics = TRUE,
   mcse_multiplier = 2
 )
@@ -24,13 +25,15 @@ summarise_bias_ir(
 for flagging (default 0.95; e.g., use 0.975 to match a two-sided 95\% CrI
 excluding 0)}
 
-\item{diagnostics}{Logical; include probability Monte Carlo standard errors
-(MCSE) and numerical decision stability (default \code{TRUE}). \code{FALSE} retains
-the original summary columns and skips these calculations.}
+\item{ci_level}{Credible interval probability in \verb{(0, 1)} for \code{ci_lower} and
+\code{ci_upper} (default \code{0.95}; e.g., use \code{2 * prob_thresh - 1} to align two-sided
+interval bounds with one-sided \code{prob_thresh}). \code{lower_95} and \code{upper_95} are
+also retained for backward compatibility.}
 
-\item{mcse_multiplier}{Positive multiplier for the approximate Monte Carlo
-error band \verb{probability +/- mcse_multiplier * MCSE} (default 2). This does
-not change \code{prob_thresh}, \code{delta}, or \code{flag_bias}.}
+\item{diagnostics}{Logical; include autocorrelation-aware probability MCSE
+and decision stability columns (default \code{TRUE}).}
+
+\item{mcse_multiplier}{Positive multiplier for MCSE error bands (default \code{2}).}
 }
 \value{
 tibble with item, rater, bias_mean, sd, CrI, prob_pos, prob_neg, flag.

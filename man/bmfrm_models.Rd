@@ -2,7 +2,7 @@
 % Please edit documentation in R/hardcoded_models.R
 \name{bmfrm_models}
 \alias{bmfrm_models}
-\title{List available hardcoded Stan models}
+\title{List bundled legacy reference Stan models}
 \usage{
 bmfrm_models()
 }
@@ -10,11 +10,8 @@ bmfrm_models()
 Character vector of model names (invisibly)
 }
 \description{
-Lists all pre-defined Stan models available in the BayesMFRM package.
-These models can be used with bmfrm() via the stan_file argument.
-}
-\examples{
-\dontrun{
-bmfrm_models()
-}
+Lists legacy fixed-prior reference Stan files shipped under \verb{inst/stan/models/}.
+For new analyses, prefer \code{\link[=bmfrm]{bmfrm()}}'s unified Stan generator (which supports
+hierarchical partial pooling, marginal priors, PCM, interactions, and fast
+vectorized evaluation).
 }

@@ -2,17 +2,11 @@
 % Please edit documentation in R/hardcoded_models.R
 \name{get_hardcoded_model_path}
 \alias{get_hardcoded_model_path}
-\title{Get path to a hardcoded Stan model}
+\title{Get path to a bundled legacy reference Stan model}
 \usage{
 get_hardcoded_model_path(name)
 }
-\arguments{
-\item{name}{Model name (e.g., "three-facet/person-rater-scenario")}
-}
-\value{
-Absolute path to the .stan file
-}
 \description{
-Get path to a hardcoded Stan model
+Get path to a bundled legacy reference Stan model
 }
 \keyword{internal}

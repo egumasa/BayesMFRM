@@ -1,171 +1,120 @@
-# `sirt::data.ratings1` で学ぶベイズMFRMのモデル比較入門
+# Target-Aware Bayesian Model Comparison on `sirt::data.ratings1`
 
-このガイドは、実際の作文評定データ `sirt::data.ratings1`（受験者135名・観点5つ・評価者7名・計1,370評定、共通4カテゴリ）を使って、`BayesMFRM` のモデル比較機能（`loo::loo()` / `cv_bmfrm()` / `compare_bmfrm()`）を**正しく実行し、誤読を防ぐための実例**をまとめたものです。
+This guide demonstrates how to run and interpret `BayesMFRM`'s model-comparison workflow (`loo::loo()`, `cv_bmfrm()`, and `compare_bmfrm()`) on the empirical writing-assessment dataset `sirt::data.ratings1` (135 students $\times$ 5 analytic criteria $\times$ 7 raters; 1,370 ratings on a 4-category rubric).
 
-### 再現手順（固定分割・推定設定・パッケージ読み込み）
-- 再現スクリプト：[compare-ratings1-cv.R](compare-ratings1-cv.R)
-- 受験者5分割の固定対応表（135名）：[ratings1_person_folds.csv](ratings1_person_folds.csv)
-- パッケージ読み込み：[compare-ratings1-cv.R](compare-ratings1-cv.R) をリポジトリから実行する場合、`pkgload` があればインストール済み版より**ローカルソースを常に優先して読み込みます**（古い開発版がインストールされている環境でも今回の修正版が使われます）。リポジトリ外から実行する場合は `remotes::install_local(".")` で最新版をインストールしてください。
-- 推定設定（掲載結果と完全一致）：
-  - 全データ推定（PSIS-LOO用）：`Main` は `iter = 1500, warmup = 500, adapt_delta = 0.95, seed = 202611`、`Student-t` は `iter = 2000, warmup = 1000, adapt_delta = 0.99, seed = 202612`、`Gaussian` は `iter = 2000, warmup = 1000, adapt_delta = 0.95, seed = 202613`（いずれも `chains = 4, max_treedepth = 12, obs_id = "obs_uid"`）。
-  - 5分割CV：`Main` は全データ設定を継承（`iter = 1500, warmup = 500`）、`Gaussian` は `iter = 2500, warmup = 1000, adapt_delta = 0.98`、`Student-t` は `iter = 2500, warmup = 1000, adapt_delta = 0.995`（各フォールドのMCMC seed は `refit_seed = 20261124` から `refit_seed + fold * 1000` で固定）。
+### Reproducibility Assets & Settings
+- **Reproduction script**: [compare-ratings1-cv.R](compare-ratings1-cv.R)
+- **Fixed 5-fold student assignment (135 examinees)**: [ratings1_person_folds.csv](ratings1_person_folds.csv)
+- **Local checkout priority**: When run from the repository root, [compare-ratings1-cv.R](compare-ratings1-cv.R) loads the local source tree via `pkgload::load_all(".")` so results reflect the exact checked-out code.
+- **Sampler settings**:
+  - Full-data fits (for PSIS-LOO): `Main` (`iter = 1500, warmup = 500, adapt_delta = 0.95, seed = 202611`), `Student-t` (`iter = 2000, warmup = 1000, adapt_delta = 0.99, seed = 202612`), `Gaussian` (`iter = 2000, warmup = 1000, adapt_delta = 0.95, seed = 202613`), all with `chains = 4, max_treedepth = 12, obs_id = "obs_uid"`.
+  - 5-fold person CV: `Main` (`iter = 1500, warmup = 500`), `Gaussian` (`iter = 2500, warmup = 1000, adapt_delta = 0.98`), `Student-t` (`iter = 2500, warmup = 1000, adapt_delta = 0.995`), with fold MCMC seeds locked to `refit_seed = 20261124` (`refit_seed + fold * 1000`).
 
 ---
 
-## 0. 最初に決めること：「何を予測したいか」と「データが許す分割か」
+## 0. Define the Prediction Target First
 
-モデル比較で最初に決めるのは指標の名前ではなく、**「未知の何に対する予測性能を比べたいか（prediction target）」** です。また、`bmfrm(..., obs_id = "obs_uid")` のように前処理前から一意な観測IDを保持しておくと、`compare_bmfrm()` が観測の対応違いや行順入れ替えによる誤った対応差SEを防止できます。
+Before computing any information criterion, decide **which out-of-sample prediction task** matches your substantive question, and pass `obs_id = "obs_uid"` to `bmfrm()` so `compare_bmfrm()` verifies exact observation alignment across models.
 
-| 予測課題 | 対応する関数・指定 | 学習データとテストデータの関係 | このデータでの可否 |
+| Prediction Task | Function & Specification | Train–Test Split Structure | Feasibility on `data.ratings1` |
 |---|---|---|---|
-| **既知の受験者・観点・評価者の組合せに対する新しい評定** | `loo::loo(fit)`（PSIS-LOO） | 1評定を除いた残りで再評価（全水準が学習側に残る） | **可能**（全1,370評定で孤立水準なし） |
-| **未知の受験者（新しい受検者）への汎化** | `cv_bmfrm(fit, target = "person", folds = ...)` | 受験者単位で5分割（1フォールドあたり27名保留） | **可能**（全5学習フォールドが連結・識別可能、主効果 120/120・交互作用 144/144） |
-| **未知の評価者だけへの汎化** | `cv_bmfrm(fit, target = "rater", ...)` | 評価者単位で保留 | **不可（停止が正しい）** |
+| **New rating among known examinees, criteria, and raters** | `loo::loo(fit)` (PSIS-LOO) | Leave 1 rating out; all facet levels remain observed in training | **Valid** (all 1,370 observations leave every level connected) |
+| **Generalization to new (unseen) examinees** | `cv_bmfrm(fit, target = "person", folds = ...)` | Hold out 5 groups of 27 students | **Valid** (all 5 training folds are connected and full-rank: `120/120` main, `144/144` interaction) |
+| **Generalization strictly to new raters** | `cv_bmfrm(fit, target = "rater", ...)` | Hold out raters | **Invalid (correctly rejected)** |
 
-### なぜ `target = "rater"` は止まるのか？
+### Why `target = "rater"` Must Stop
 
-`sirt::data.ratings1` では、**135名中89名の受験者が1人の評価者からしか採点されていません**。そのため、どの評価者をテスト側に保留しても、その評価者しか採点していない受験者まで同時に学習側から消えてしまいます。これは「既知の受験者を未知の評価者が採点する予測」ではなく、**「未知の受験者 × 未知の評価者」**という別の予測課題です。`cv_bmfrm()` は意図しない未知水準の混入を検出すると自動的にエラーで停止します。
+In `sirt::data.ratings1`, **89 of 135 students are rated by only a single rater**. Holding out any rater simultaneously removes every student rated exclusively by that rater from the training fold, turning the prediction task from *"new rater on known students"* into *"new rater $\times$ new students"*. With `strict_target = TRUE` (the default), `cv_bmfrm()` detects collateral unseen facets before fitting and halts with an informative error.
 
 ---
 
-## 1. PSIS-LOO（既知水準での新規評定予測）と高 Pareto-$k$ の厳密検証
+## 1. PSIS-LOO (Known Facet Levels) & Exact-LOO Verification of High Pareto-$k$
 
-全データで推定した3モデル（いずれも収束済み：$\hat{R} \le 1.01$、発散遷移0件、E-BFMI $> 0.61$）に対し、ストリーミング計算 `loo::loo(fit, use_stan_log_lik = FALSE)` を実行しました（`actual_target = "new_rating_known_levels"`）。
+All three full-data fits converged cleanly ($\hat{R} \le 1.01$, 0 divergences, E-BFMI $> 0.61$). Streaming PSIS-LOO (`loo::loo(fit)`, `actual_target = "new_rating_known_levels"`) yields:
 
-| モデル | `elpd_loo` (SE) | `p_loo` (SE) | MCSE | Pareto-$k > 0.7$ | 最小 PSIS ESS | Topとの差 `elpd_diff` (SE) | 診断ラベル |
+| Model | `elpd_loo` (SE) | `p_loo` (SE) | MCSE | Pareto-$k > 0.7$ | Min PSIS ESS | `elpd_diff` vs. Top (SE) | Diagnostic Note |
 |---|---:|---:|---:|---:|---:|---:|---|
-| **Gaussian Bias RSM** (`item:rater`, `none`) | `-1169.8` (`26.1`) | `128.1` (`5.4`) | `0.220` | `0 / 1370` (最大 `0.687`) | `376.4` | `0.0` (`0.0`) | 良好 |
-| **Student-t Bias RSM** (`item:rater`, `student_t`) | `-1170.1` (`26.2`) | `128.5` (`5.4`) | `0.248` | `0 / 1370` (最大 `0.612`) | `565.1` | `-0.3` (`0.9`) | `\|elpd_diff\| < 4` |
-| **Main-Effects RSM**（交互作用なし） | `-1200.7` (`26.1`) | `111.7` (`5.0`) | `NA` | `1 / 1370` (`k = 0.734`, 観測39) | `404.6` | `-30.9` (`8.7`) | `1 k_psis > 0.7` |
+| **Gaussian Bias RSM** (`item:rater`, `none`) | `-1169.8` (`26.1`) | `128.1` (`5.4`) | `0.220` | `0 / 1370` (max `0.687`) | `376.4` | `0.0` (`0.0`) | Good |
+| **Student-t Bias RSM** (`item:rater`, `student_t`) | `-1170.1` (`26.2`) | `128.5` (`5.4`) | `0.248` | `0 / 1370` (max `0.612`) | `565.1` | `-0.3` (`0.9`) | `\|elpd_diff\| < 4` |
+| **Main-Effects RSM** (no interaction) | `-1200.7` (`26.1`) | `111.7` (`5.0`) | `NA` | `1 / 1370` (`k = 0.734`, obs 39) | `404.6` | `-30.9` (`8.7`) | `1 k_psis > 0.7` |
 
-### 高 Pareto-$k$（観測39）を「1点だから小さい」と決めつけず厳密LOOで確認する
+### Verifying High Pareto-$k$ (Observation 39) via Exact LOO Refit
 
-`Main` モデルの観測39（受験者 `200010210`・観点 `k4`・評価者 `db07`・評点 `3`）で `Pareto-k = 0.7338` となり、`loo` の仕様どおり全体の `MCSE` は `NA` になりました（この受験者の5評定は `4, 4, 4, 3, 4` であり、唯一の非満点評点である観測39を除くと残りがすべて満点になるため影響が大きい）。
+Observation 39 in `Main` (student `200010210`, criterion `k4`, rater `db07`, score `3`) has `Pareto-k = 0.7338` because this student's five scores are `4, 4, 4, 3, 4`: removing the single `3` leaves an all-maximum pattern (`4, 4, 4, 4`), shifting the student's posterior substantially.
 
-**高 Pareto-$k$ が1点だけであっても、近似誤差を確認する前に「大勢に影響しない」と断定してはいけません。**（また、後述の受験者5分割CVは別の予測課題であり、PSIS近似誤差の検証にはなりません。）そこで観測39を除いたデータ `ratings[-39, ]` で `Main` モデルを再推定する**厳密LOO**を実行しました（`iter = 2000, warmup = 1000`、収束確認済み：$\hat{R} = 1.0067$、`min_ess_bulk = 751.9`、発散0件）：
+Never dismiss a high Pareto-$k$ warning merely because only one observation exceeded `0.7` (and note that 5-fold person CV evaluates a different target and does not validate rating-level PSIS). Refitting `Main` directly on `ratings[-39, ]` (`iter = 2000, warmup = 1000`, $\hat{R} = 1.0067$, `min_ess_bulk = 751.9`, 0 divergences) gives:
 
-- 観測39の PSIS 近似値：`-1.3597`
-- 観測39の厳密LOO値：`-1.3438`（MCSE `0.0069`）→ **厳密値との差は `+0.0158`**
-- 観測39のみ厳密値へ置換した `Main` 合計 ELPD：`-1200.6728` → **`-1200.6569`（`SE = 26.0830`）**
-- `Main - Gaussian` の対応差：`-30.8521 (SE = 8.7066)` → **`-30.8362 (SE = 8.7064)`**
+- PSIS estimate for observation 39: `-1.3597`
+- Exact LOO refit value for observation 39: `-1.3438` (MCSE `0.0069`) — **discrepancy `+0.0158`**
+- Exact-corrected total `Main` ELPD: `-1200.6728` $\to$ **`-1200.6569` (`SE = 26.0830`)**
+- Paired difference `Main - Gaussian`: `-30.8521 (SE = 8.7066)` $\to$ **`-30.8362 (SE = 8.7064)`**
 
-この**直接検証**によって初めて、観測39のPSIS近似誤差が極めて小さく、`item:rater` 追加による改善方向が変わらないことを確認できます。一方、`Gaussian` と `Student-t` の差（`-0.3 ± 0.9`）には `|elpd_diff| < 4` の注意が付いており、**この解析では両者の明確な優劣を示す根拠が弱い**と解釈します。
+Direct refitting confirms the PSIS error on observation 39 is negligible (`0.016` nats) and that adding `item:rater` substantially improves rating-level prediction, whereas `Gaussian` and `Student-t` (`-0.3 ± 0.9`, `|elpd_diff| < 4`) show no clear predictive separation.
 
 ---
 
-## 2. 受験者5分割CV（未知受験者への汎化）と積分精度の検証
+## 2. 5-Fold Person CV (Unseen Examinees) & Monte Carlo Integration Audit
 
-135名の受験者を [ratings1_person_folds.csv](ratings1_person_folds.csv) の固定5分割（各フォールド27名）で保留し、毎回 CmdStan で学習フォールドを再推定して、未知受験者の潜在能力 $\theta_g$ を母集団分布から $M$ 回モンテカルロ周辺化して評価しました（`target = "person"`）。
+Using the fixed 5-fold split in [ratings1_person_folds.csv](ratings1_person_folds.csv) (27 held-out students per fold), each fold refits the model on training students and marginalizes unseen abilities $\theta_g \sim \mathcal{N}(\mu_\theta^{(d)}, \sigma_\theta^{2(d)})$ across $M$ Monte Carlo draws per posterior draw via double `logmeanexp`.
 
-### 2.1 主効果モデルでの各フォールド診断と $M$・seed の確認
+### 2.1 Sensitivity to Inner Draws $M$, RNG Seed, and 1D Quadrature
 
-全5フォールドで連結性・識別性（階数 `120/120`）・MCMC収束（$\hat{R} \le 1.008$、最小 `ess_bulk = 560`、発散遷移0件）を確認した上で、同じキャッシュ済みフォールドに対して内側ドロー数 $M$ と積分 seed を変えた結果です。
+On the identical cached fold posteriors (`refit_seed = 20261124`), varying `M` and the integration `seed` on `Main` gives:
 
-| $M$ | 積分 seed | グループ同時 `elpd_group` (SE) | 評定周辺 `elpd_pointwise` | 受験者クラスタ SE | ナイーブ SE（参考） | 最小グループ中央 `mc_ess_m` | 最小個別ドロー `mc_ess_m` |
+| $M$ | Integration Seed | Joint `elpd_group` (SE) | Marginal `elpd_pointwise` | Student-Clustered SE | Naive Rating SE (Ref) | Min Median `mc_ess_m` | Min Draw `mc_ess_m` |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| `20` | `20261124` | `-1301.49` (`117.38`) | `-1724.17` | `161.23` | `17.80` | `1.01`（警告あり） | `1.00` |
-| `100` | `20261124` | `-1301.41` (`117.37`) | `-1724.15` | `161.22` | `17.80` | `2.30`（警告あり） | `1.00` |
-| `300` | `20261124` | `-1301.44` (`117.38`) | `-1724.28` | `161.27` | `17.80` | `6.20`（警告なし） | `1.01` |
+| `20` | `20261124` | `-1301.49` (`117.38`) | `-1724.17` | `161.23` | `17.80` | `1.01` (warns) | `1.00` |
+| `100` | `20261124` | `-1301.41` (`117.37`) | `-1724.15` | `161.22` | `17.80` | `2.30` (warns) | `1.00` |
+| `300` | `20261124` | `-1301.44` (`117.38`) | `-1724.28` | `161.27` | `17.80` | `6.20` (no warning) | `1.01` |
 | `300` | `20261199` | `-1301.47` (`117.38`) | `-1724.26` | `161.26` | `17.80` | — | — |
 
-### 警告が消えただけでは精度保証にならない：3モデル横断の $M$ / seed / 1次元数値積分監査
+Across all three models, `M = 300` agrees closely across independent seeds and deterministic 1D numerical quadrature:
 
-`cv_bmfrm()` の低ESS警告は**「各グループ内の事後標本にわたる内側ESSの中央値が5未満か」**を見る診断であり、`M = 300` でも個々の事後標本では最小ESSが約 `1.01` になる受験者が存在します。したがって、**警告が消えたこと自体を積分精度の保証として扱ってはいけません。**
-
-今回は未知能力 $\theta_g$ の周辺化が1次元積分であるため、固定した15フォールド事後標本に対して **複数 $M$・複数 seed・1次元数値積分参照値** を直接照合しました：
-
-| モデル | `M = 100` (seed 1) | `M = 300` (seed 1) | `M = 300` (seed 2) | 2 seed 間の最大受験者差 (`M=300`) |
+| Model | `M = 100` (seed 1) | `M = 300` (seed 1) | `M = 300` (seed 2) | Max Per-Student Diff (`M = 300`) |
 |---|---:|---:|---:|---:|
 | `Main` | `-1301.408` | `-1301.441` | `-1301.474` | `0.0133` |
 | `Gaussian` | `-1272.508` | `-1272.501` | `-1272.460` | `0.0160` |
 | `Student-t` | `-1271.737` | `-1271.786` | `-1271.743` | `0.0133` |
 
-- **モデル間差の安定性**（`M=100`, `M=300` seed 1/2, 61点 Gauss-Hermite 積分）：
-  - `Gaussian - Main`：`+28.900`〜`+29.014`（変動幅 `< 0.12`、対比 SE `7.36`）
-  - `Student-t - Gaussian`：`+0.715`〜`+0.771`（変動幅 `< 0.06`、対比 SE `0.74`）
-- **最難関受験者の厳密1次元数値積分（801点細密台形則、`stats::integrate()` 照合済み）との誤差**：
-  - 最小ESS受験者 `400130105`（30評定、`ess_med = 6.20, ess_min = 1.01`）：厳密値 `-18.5508` vs `M = 300` `-18.5560`（誤差 **`-0.0053`**）
-  - 最大評定数35評定の3受験者（`700030217`, `300040123`, `400220106`）：厳密値との誤差はいずれも **`0.0019`〜`0.0051`**
+- **Model contrast stability** (`M = 100`, `M = 300` seeds 1 & 2, and 61-node Gauss-Hermite quadrature):
+  - `Gaussian - Main`: `+28.900` to `+29.014` (spread `< 0.12` vs. paired SE `7.36`)
+  - `Student-t - Gaussian`: `+0.715` to `+0.771` (spread `< 0.06` vs. paired SE `0.74`)
+- **Hardest individual students vs. 801-point deterministic quadrature** (`stats::integrate()` verified):
+  - Lowest-ESS student `400130105` (30 ratings): exact `-18.5508` vs. `M = 300` `-18.5560` (error **`-0.0053`**)
+  - Three 35-rating students (`700030217`, `300040123`, `400220106`): errors **`0.0019`–`0.0051`**
 
-このように、警告の有無ではなく**複数 $M$・独立 seed・（1次元なら）数値積分との直接比較**によって精度を確認します。
-
-### グループ同時スコア・受験者クラスタSEと、その近似限界
-1. **グループ同時スコア（`-1301.4`）と評定周辺スコア（`-1724.3`）は別物**：1人の未知受験者の複数評定は共通の能力 $\theta_g$ を通じて相関するため、未知受験者全体の予測評価では `score = "group"` を主指標にします。
-2. **受験者クラスタ SE は改善だが「真のSE」ではない**：同一受験者の評定を独立とみなすナイーブSE（`17.8`）は受験者内相関を無視するため、受験者単位に集計したクラスタSE（`161.3`）に比べて約9分の1の小さな値になります。ただし、**受験者クラスタSEにも近似限界が残ります**（未知受験者同士が同じ評価者・観点を共有していること、5分割CVの学習集合が互いに約75%重複していることによる残余依存は捉えきれません）。`compare_bmfrm()` の出力注記も必ず併せて確認してください。
+### Group-Joint Scores vs. Rating-Marginal Scores
+1. **Use `score = "group"` as primary for unseen examinees**: Multiple ratings of the same unseen student share $\theta_g$, so joint group log predictive density (`-1301.4`) captures within-examinee dependence whereas marginal pointwise sums (`-1724.3`) do not.
+2. **Clustered SEs vs. naive rating SEs**: Treating 1,370 ratings as independent (`SE = 17.8`) understates uncertainty by nearly an order of magnitude relative to student-clustered SEs (`161.3`), though clustered SEs remain finite-sample approximations because held-out folds still share raters, items, and overlapping training sets.
 
 ---
 
-## 3. 同一5分割での3モデル比較（Main vs. Gaussian vs. Student-t）
+## 3. Comparing All Three Models on the Shared 5-Fold Split
 
-同じ受験者5分割を `Gaussian Bias` と `Student-t Bias` に適用し（全フォールドで階数 `144/144`・識別可能、`iter = 2500, warmup = 1000`、`M = 300`）、まず各フォールドの収束を確認しました。
-
-### 3.1 各モデルの5フォールド要約（共通分割・$M = 300$）
-
-| モデル | 階数（全フォールド） | 収束状況（5フォールド） | `elpd_group` (SE, $G=135$) | `elpd_pointwise` (受験者クラスタSE / ナイーブSE) |
+| Model | Rank (All Folds) | Convergence (5 Folds) | `elpd_group` (SE, $G=135$) | `elpd_pointwise` (Clustered / Naive SE) |
 |---|---|---|---|---|
-| **Main-Effects RSM** | `120/120` | **5/5 収束**（$\hat{R} \le 1.008$, ESS $\ge 560$, 発散0） | `-1301.44` (`117.38`) | `-1724.28` (`161.27` / `17.80`) |
-| **Gaussian Bias RSM** (`adapt_delta = 0.98`) | `144/144` | **5/5 収束**（$\hat{R} \le 1.008$, ESS $\ge 559$, 発散0） | `-1272.50` (`115.32`) | `-1711.31` (`160.48` / `18.29`) |
-| **Student-t Bias RSM** (`adapt_delta = 0.995`) | `144/144` | **4/5 収束**（Fold 5で 1/6,000 発散遷移、$\hat{R} \le 1.009$, ESS $\ge 707$） | `-1271.79` (`115.33`) | `-1711.02` (`160.50` / `18.32`) |
+| **Main-Effects RSM** | `120/120` | **5/5 converged** ($\hat{R} \le 1.008$, ESS $\ge 560$, 0 div) | `-1301.44` (`117.38`) | `-1724.28` (`161.27` / `17.80`) |
+| **Gaussian Bias RSM** (`adapt_delta = 0.98`) | `144/144` | **5/5 converged** ($\hat{R} \le 1.008$, ESS $\ge 559$, 0 div) | `-1272.50` (`115.32`) | `-1711.31` (`160.48` / `18.29`) |
+| **Student-t Bias RSM** (`adapt_delta = 0.995`) | `144/144` | **4/5 converged** (1/6,000 divergence on Fold 5; $\hat{R} \le 1.009$, ESS $\ge 707$) | `-1271.79` (`115.33`) | `-1711.02` (`160.50` / `18.32`) |
 
-### 3.2 厳格比較（既定 `allow_unconverged = FALSE`）
+### Strict Comparison (`allow_unconverged = FALSE`, Default)
 
-全フォールドが収束基準を満たした `Main` と `Gaussian` の対応比較：
+Comparing the fully converged `Main` and `Gaussian` models:
+- **Group joint (`score = "group"`)**: `Main - Gaussian = -28.9 (SE = 7.4)` (~3.9 SE, `+0.215` nats/student).
+- **Pointwise (`score = "pointwise"`)**: `Main - Gaussian = -13.0 (SE = 3.6)` (~3.6 SE, `+0.0095` nats/rating).
+- Including `Student-t` under default `allow_unconverged = FALSE` raises an explicit error because Fold 5 recorded 1 divergent transition; passing `allow_unconverged = TRUE` for sensitivity inspection shows `Gaussian - Student-t = -0.7 (SE = 0.7)` (`|elpd_diff| < 4`).
 
-| スコア単位 | 比較 | `elpd_diff` | `se_diff`（$G=135$ グループ単位） | `p_worse`（正規近似・丸め値） | 解釈 |
-|---|---|---:|---:|---:|---|
-| **グループ同時** (`score = "group"`) | `Main` vs. `Gaussian` | `-28.9` | `7.4` | `1.00` | 未知受験者の同時予測で `item:rater` 追加を支持（約3.9 SE、1受験者当たり `+0.215` nat） |
-| **評定周辺** (`score = "pointwise"`) | `Main` vs. `Gaussian` | `-13.0` | `3.6` | `1.00` | 同じ方向で一貫（約3.6 SE、1評定当たり `+0.0095` nat） |
+### Separating Predictive Support from Practical Fair-Score Impact
 
-一方、Fold 5 に 1 件の発散遷移が残った `Student-t` を含めて `compare_bmfrm(main, student_t, gaussian)` を既定値で実行すると、**意図どおり比較が拒否**されます。
-
-```text
-Error: Cannot compare 'student_t': one or more CV folds did not converge.
-Inspect $fold_diagnostics or pass allow_unconverged = TRUE deliberately.
-```
-
-### 3.3 感度参考としての3モデル比較（明示的に `allow_unconverged = TRUE`）
-
-診断未解消を明示した上で参考値として3モデルを並べると次のとおりです。
-
-| スコア単位 | モデル | `elpd_diff` | `se_diff` | `p_worse`（正規近似） | 診断ラベル |
-|---|---|---:|---:|---:|---|
-| `score = "group"` | `student_t`（Fold 5 発散1件未解消） | `0.0` | `0.0` | `NA` | — |
-| | `gaussian`（全5フォールド収束） | `-0.7` | `0.7` | `0.83` | `\|elpd_diff\| < 4` |
-| | `main`（全5フォールド収束） | `-29.7` | `7.6` | `1.00` | — |
-| `score = "pointwise"` | `student_t`（Fold 5 発散1件未解消） | `0.0` | `0.0` | `NA` | — |
-| | `gaussian`（全5フォールド収束） | `-0.3` | `0.6` | `0.70` | `\|elpd_diff\| < 4` |
-| | `main`（全5フォールド収束） | `-13.3` | `3.7` | `1.00` | — |
-
-### 3.4 統計的な予測改善の支持と、言語テスト実務への影響を分けて解釈する
-
-「3.6〜3.9 SE の差」は「予測対数密度が改善する方向を安定して支持している」という意味であって、**そのまま「実務上の採点結果が大きく変わる」という意味ではありません**。実際に `Main` と `Gaussian` を比べると：
-
-- **1単位あたりの予測改善**：
-  - 5分割CVの評定周辺スコア差：`+13.0 / 1370 ≈ +0.0095` nat/評定（幾何平均予測確率比 `exp(0.0095) ≈ 1.0096`、約1.0%）
-  - 5分割CVのグループ同時スコア差：`+28.9 / 135 ≈ +0.215` nat/受験者（平均10.1評定の同時確率）
-  - PSIS-LOO（観測39厳密補正後）：`+30.84 / 1370 ≈ +0.0225` nat/評定（幾何平均確率比 `1.0228`）
-- **標準化公平得点（`fair_scores(..., standardize = TRUE)`、1〜4点尺度）への影響**：
-  - 135名にわたる `Gaussian - Main` の差は **RMS = `0.0090` 点、中央値 `|差| = 0.0044` 点、最大 `|差| = 0.0314` 点**
-  - 受験者間の相関は **Pearson $r = 0.99996$、Spearman $\rho = 0.99953$**
-
-つまりこのデータでは、`item:rater` 交互作用の導入は**評価者×観点のバイアス診断や評価者研修へのフィードバック**という目的には明確な根拠がある一方、**受験者全体の標準化公平得点や順位を大きく書き換える規模ではない**ことが分かります。
+A 3.9-SE predictive improvement confirms genuine `item:rater` structure, **not** that examinee fair scores change substantially:
+- Across all 135 students on the 1–4 scale, `fair_scores(..., standardize = TRUE)` differs between `Gaussian` and `Main` by **RMS = `0.0090` score points** (median `|diff| = 0.0044`, max `|diff| = 0.0314`), with **Pearson $r = 0.99996$** and **Spearman $\rho = 0.99953$**.
+- Substantive takeaway: modeling `item:rater` interactions is well-supported for **rater-by-criterion bias diagnostics and rater training**, while main-effects standardized fair scores already provide practically identical student rankings on this dataset.
 
 ---
 
-## 4. 初心者が陥りやすい4つの誤読と、安全な報告の書き方
+## 4. Four Common Pitfalls to Avoid in Manuscripts
 
-1. **「差が小さいので2モデルは同等（互角）と証明された」と書いてしまう**
-   - **誤読**：差を明確に検出できないこと（例：`Gaussian` vs `Student-t` の `0.3〜0.7` 点差）を「実質的同等性の証明」と結び付けること、あるいは `|elpd_diff| < 4` を普遍的な同等性基準とみなすこと。
-   - **正しい判断**：`loo` における `|elpd_diff| < 4` は「差が小さい領域では正規近似に基づく SE 評価の信頼性に注意が必要」という警告であり（`?loo::loo_compare` / `loo-glossary`）、同等性検定ではありません。また `p_worse = 1.00` も正規近似の丸め値です。小さな差のときは「同等と確認できた」ではなく、**「この解析では明確な優劣を示す根拠が弱い」**と報告し、収束状況（ここでは `Student-t` の Fold 5 発散1件）やモデルの解釈可能性と併せて判断します。
-
-2. **収束していないフォールドがあるモデルの1位をそのまま採用してしまう**
-   - **誤読**：発散遷移や高 $\hat{R}$ を無視して比較表の1行目を勝者として報告すること。
-   - **正しい判断**：`compare_bmfrm()` は既定値 `allow_unconverged = FALSE` で収束不良を含む比較を拒否します。まずサンプラー設定を見直して収束させ、未解消のモデルがある場合は「そのモデルを優位と主張しない」か、診断未解消の参考値であることを明記します。
-
-3. **PSIS-LOO の ELPD（約 `-1170`）と 5分割受験者CV の ELPD（約 `-1272`）を直接比べてしまう**
-   - **誤読**：「PSIS-LOOの方が高いからLOOモデルの方が良い」「数値が一致しないから計算ミスだ」と解釈すること。
-   - **正しい判断**：PSIS-LOO は「既知の受験者に対する1評定の予測（学習サイズ $N-1$）」、受験者5分割CVは「未知の受験者の全評定を能力 $\theta_g$ から周辺化して予測する課題（学習サイズ約80%の受験者）」です。予測課題も学習量も異なるため絶対値の比較には意味がなく、見るべきなのは各課題内での相対比較です。
-
-4. **高 Pareto-$k$ の未検証放置や、低ESS警告の消失をそのまま精度保証とみなす**
-   - **誤読**：「Pareto-$k > 0.7$ は1点だけだから無視してよい」「`M = 300` で警告が消えたからモンテカルロ誤差ゼロ」と決めつけること。
-   - **正しい判断**：高 Pareto-$k$ は対象観測を除いた**厳密LOO再推定**で近似誤差を直接確認します。また CV の周辺化精度は、警告の有無だけでなく**固定したフォールド事後標本上で $M$ や積分 seed を変え、合計値・個別受験者・モデル間差の変動を確認する**（1次元積分なら数値積分とも照合する）ことで検証します。
+1. **Do not claim `|elpd_diff| < 4` proves model equivalence**: Small ELPD differences indicate weak evidence to prefer one specification over another (and noisy normal-theory SE approximations), not proof of zero difference.
+2. **Do not report unconverged CV folds as winners**: Resolve sampler warnings first or report unconverged runs solely as labeled sensitivity checks.
+3. **Never compare raw ELPD totals across PSIS-LOO (`-1170`) and 5-fold Person CV (`-1272`)**: They evaluate different conditioning sets and training sample sizes; compare models only *within* the same prediction target.
+4. **Verify high Pareto-$k$ observations and inner Monte Carlo ESS directly**: Use exact LOO refits for $k > 0.7$ and check multiple `M` / `seed` settings on fixed `folds` and `refit_seed`.

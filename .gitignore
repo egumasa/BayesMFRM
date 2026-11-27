@@ -12,3 +12,5 @@ stan_cache/
 renv/library/
 renv/staging/
 simulations/results/
+local-work/
+.playwright-mcp/

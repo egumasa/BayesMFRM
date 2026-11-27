@@ -513,8 +513,9 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
   labels <- params$labels
   cl <- extract_verified_chain_layout(fold_fit$fit, D)
 
+  pf <- spec_person_facet(spec)
   # Pre-extract compact hyperprior vectors for target_facet (anchored to training fold!)
-  if (identical(target_facet, "person")) {
+  if (identical(target_facet, pf)) {
     mu_main <- extract_scalar_draws(fold_fit$fit, "mu_theta")
     sd_main <- extract_scalar_draws(fold_fit$fit, "sigma_theta")
   } else {
@@ -614,8 +615,8 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
 
         # Known-facet base linear predictor strictly for this observation chunk (D x nc)
         eta_known_c <- matrix(0, nrow = D, ncol = nc)
-        if (!identical(target_facet, "person")) {
-          eta_known_c <- eta_known_c + params$theta[, known_ids$person[rows_c], drop = FALSE]
+        if (!identical(target_facet, pf)) {
+          eta_known_c <- eta_known_c + params$theta[, known_ids[[pf]][rows_c], drop = FALSE]
         }
         for (f in intersect(names(params$facet_draws), known_facets)) {
           eta_known_c <- eta_known_c - params$facet_draws[[f]][, known_ids[[f]][rows_c], drop = FALSE]
@@ -654,7 +655,7 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
           })
 
           eta_c <- eta_known_c
-          if (identical(target_facet, "person")) {
+          if (identical(target_facet, pf)) {
             eta_c <- eta_c + u_draw$u_main
           } else {
             eta_c <- eta_c - u_draw$u_main
@@ -1038,6 +1039,234 @@ score_general_unseen_fold <- function(fold_fit, test_df, target_facet = NULL,
   if (!is.null(seed)) with_bmfrm_seed(seed, run_all()) else run_all()
 }
 
+#' Build and pre-validate all K-fold train/test plans before running any MCMC refits
+#' @keywords internal
+build_validated_cv_fold_plans <- function(obs_data, spec, folds, K_folds,
+                                          target_facet, strict_target,
+                                          allow_degenerate_interaction) {
+  fold_plans <- vector("list", K_folds)
+  all_unseen_facets <- character(0)
+  for (k in seq_len(K_folds)) {
+    train_idx <- which(folds != k)
+    test_idx <- which(folds == k)
+    if (!length(train_idx) || !length(test_idx)) {
+      stop("Fold ", k, " has empty training or test split")
+    }
+    train_df <- drop_unused_facet_levels(obs_data[train_idx, , drop = FALSE], spec$facets_main)
+    test_df <- obs_data[test_idx, , drop = FALSE]
+
+    unseen_k <- list()
+    for (f in spec$facets_main) {
+      tr_lv <- levels(train_df[[f]])
+      te_lv <- unique(as.character(test_df[[f]]))
+      u_lv <- setdiff(te_lv, tr_lv)
+      if (length(u_lv)) unseen_k[[f]] <- u_lv
+    }
+    all_unseen_facets <- union(all_unseen_facets, names(unseen_k))
+
+    if (!is.null(target_facet)) {
+      overlap_t <- intersect(levels(train_df[[target_facet]]), unique(as.character(test_df[[target_facet]])))
+      if (length(overlap_t)) {
+        stop("Fold ", k, " has overlapping '", target_facet, "' levels between train and test: ",
+             paste(utils::head(overlap_t, 5L), collapse = ", "))
+      }
+    }
+
+    if (isTRUE(strict_target)) {
+      if (is.null(target_facet) && length(unseen_k)) {
+        details <- paste(vapply(names(unseen_k), function(f) {
+          paste0(f, " (", paste(utils::head(unseen_k[[f]], 3L), collapse = ", "), ")")
+        }, character(1)), collapse = "; ")
+        stop(
+          "Fold ", k, " in target = 'rating' drops all training observations for facet(s): ",
+          details, ". Supply custom folds keeping all facet levels in training or choose a grouped target."
+        )
+      } else if (!is.null(target_facet)) {
+        collateral <- setdiff(names(unseen_k), target_facet)
+        if (length(collateral)) {
+          details <- paste(vapply(collateral, function(f) {
+            paste0(f, " (", paste(utils::head(unseen_k[[f]], 3L), collapse = ", "), ")")
+          }, character(1)), collapse = "; ")
+          stop(
+            "Fold ", k, " holding out '", target_facet, "' also makes other facet(s) unseen in training: ",
+            details, ". This changes the prediction target; adjust the rating plan or fold split, ",
+            "or handle joint unseen facets explicitly."
+          )
+        }
+      }
+    }
+
+    if (isTRUE(spec$K_heterogeneous) && identical(spec$family, "pcm") &&
+        !is.null(spec$threshold_facet) && (spec$threshold_facet %in% names(unseen_k))) {
+      u_tf <- unseen_k[[spec$threshold_facet]]
+      stop(
+        "Fold ", k, " leaves threshold_facet '", spec$threshold_facet, "' level(s) (",
+        paste(utils::head(u_tf, 5L), collapse = ", "),
+        ") unseen in training, which is not supported in v1 heterogeneous-category PCM ",
+        "(even when strict_target = FALSE), because their rubric category count and step distribution are undefined."
+      )
+    }
+
+    for (uf in names(unseen_k)) validate_cv_hierarchy(spec, uf)
+
+    if (!isTRUE(allow_degenerate_interaction) && length(spec$facets_bias) > 0L) {
+      for (term in spec$facets_bias) {
+        comps <- strsplit(term, ":", fixed = TRUE)[[1L]]
+        degen <- comps[vapply(comps, function(f) nlevels(train_df[[f]]) <= 1L, logical(1))]
+        if (length(degen)) {
+          stop(
+            "Fold ", k, " reduces training facet(s) ", paste(degen, collapse = ", "),
+            " to <= 1 observed level, collapsing interaction '", term,
+            "' to 0 degrees of freedom. Use fewer folds or set allow_degenerate_interaction = TRUE deliberately."
+          )
+        }
+      }
+    }
+
+    K_fold_dc <- if (isTRUE(spec$K_heterogeneous) && !is.null(spec$K_by_level)) {
+      spec$K_by_level[levels(train_df[[spec$threshold_facet]])]
+    } else {
+      spec$K
+    }
+    dc_k <- check_design_bmfrm(
+      spec$formula, train_df, K = K_fold_dc,
+      family = spec$family, threshold_facet = spec$threshold_facet,
+      person_facet = spec_person_facet(spec)
+    )
+    fold_plans[[k]] <- list(
+      fold = k, train_idx = train_idx, test_idx = test_idx,
+      train_df = train_df, test_df = test_df, unseen_k = unseen_k, design = dc_k
+    )
+  }
+  list(fold_plans = fold_plans, all_unseen_facets = all_unseen_facets)
+}
+
+#' Build default single-compile fold refitter for cv_bmfrm
+#' @keywords internal
+make_default_cv_refitter <- function(object, fold_plans, overrides, refit_seed, seed,
+                                     iter_cv, warmup_cv, chains_cv, cores_cv,
+                                     refit_mode_cv, cache_dir_cv) {
+  compiled_cv_model <- NULL
+  function(train_df, fold, spec, fit_args) {
+    fold_spec <- spec
+    if (!isTRUE(fold_spec$custom_stan)) fold_spec$save_gq <- "minimal"
+    if (!is.null(spec$K_by_level) && !is.null(spec$threshold_facet)) {
+      tr_tf <- levels(train_df[[spec$threshold_facet]])
+      fold_spec$K_by_level <- spec$K_by_level[tr_tf]
+      fold_spec$K_max <- as.integer(max(fold_spec$K_by_level))
+      fold_spec$K_heterogeneous <- length(unique(fold_spec$K_by_level)) > 1L
+      fold_spec$K <- if (fold_spec$K_heterogeneous) fold_spec$K_by_level else as.integer(fold_spec$K_by_level[1L])
+    }
+    fold_spec <- resolve_bmfrm_spec(fold_spec, object$priors)
+    stan_code <- if (isTRUE(fold_spec$custom_stan)) {
+      if (!is.null(fit_args$stan_file) && file.exists(fit_args$stan_file)) {
+        paste(readLines(fit_args$stan_file, warn = FALSE), collapse = "\n")
+      } else if (!is.null(object$stan_code) && is.character(object$stan_code) && nzchar(object$stan_code)) {
+        object$stan_code
+      } else {
+        stop("Custom Stan code is unavailable for CV refit (missing both stan_file on disk and object$stan_code)")
+      }
+    } else if (!is.null(fit_args$stan_file)) {
+      paste(readLines(fit_args$stan_file, warn = FALSE), collapse = "\n")
+    } else {
+      build_stan_code(fold_spec, object$priors, save_gq = "minimal")
+    }
+    fold_spec$eval_contract <- resolve_eval_contract(fold_spec, stan_code)
+
+    if (is.null(compiled_cv_model)) {
+      compiled_cv_model <<- compile_bmfrm(
+        stan_code = stan_code,
+        model_name = overrides$model_name %||% fold_spec$model_name,
+        cache_dir = cache_dir_cv,
+        cpp_options = overrides$cpp_options %||% fit_args$cpp_options %||% list()
+      )
+    }
+
+    data_info_k <- prepare_data_bmfrm(fold_spec, train_df, priors = object$priors)
+    base_refit_seed <- if (!is.null(refit_seed)) refit_seed else seed
+    fold_seed <- if (!is.null(base_refit_seed)) {
+      offset_bmfrm_seed(base_refit_seed, fold * 1000L)
+    } else if (!is.null(fit_args$seed)) {
+      offset_bmfrm_seed(fit_args$seed, fold * 1000L)
+    } else {
+      NULL
+    }
+    iter_k <- as.integer(iter_cv)
+    warmup_k <- as.integer(warmup_cv)
+    chains_k <- as.integer(chains_cv)
+    cores_k <- as.integer(cores_cv)
+    base_fold_rds <- file.path(
+      cache_dir_cv, "cv_folds",
+      paste0(overrides$model_name %||% fold_spec$model_name, "_fold", fold, "_", compiled_cv_model$hash, ".rds")
+    )
+
+    sampler_args <- fit_args$sampler_args %||% list()
+    reserved_ov <- c("cpp_options", "iter", "warmup", "chains", "cores", "refit", "cache_dir", "design_check", "model_name")
+    for (nm in setdiff(names(overrides), reserved_ov)) sampler_args[[nm]] <- overrides[[nm]]
+    extra_sampling_k <- c(list(iter_sampling = iter_k - warmup_k, iter_warmup = warmup_k, save_warmup = FALSE), sampler_args)
+
+    fold_rds <- resolve_fit_cache_file(
+      base_cache_file = base_fold_rds, code = compiled_cv_model$model$code(),
+      data = data_info_k$stan_data, seed = fold_seed, chains = chains_k,
+      parallel_chains = min(chains_k, cores_k), extra_sampling = extra_sampling_k
+    )
+    fit_k <- do.call(
+      fit_cmdstan_cached,
+      c(list(model = compiled_cv_model$model, data = data_info_k$stan_data, file = fold_rds,
+             refit = refit_mode_cv, seed = fold_seed, chains = chains_k,
+             parallel_chains = min(chains_k, cores_k)), extra_sampling_k)
+    )
+    out_k <- postprocess_bmfrm(
+      fit = fit_k, spec = fold_spec, data_info = data_info_k,
+      priors = object$priors, stan_code = stan_code, stan_code_hash = compiled_cv_model$hash
+    )
+    out_k$design <- fold_plans[[fold]]$design
+    out_k
+  }
+}
+
+#' Verify fold refit preserves training levels and category definitions
+#' @keywords internal
+validate_cv_fold_refit <- function(fold_fit, fp, spec, orig_data_info, k) {
+  for (f in spec$facets_main) {
+    if (!setequal(fold_fit$data_info$facet_labels[[f]], levels(fp$train_df[[f]]))) {
+      stop(
+        "Fold ", k, " refit retained facet labels not observed in training for '", f,
+        "'. Training fold preprocessing must drop unused factor levels."
+      )
+    }
+  }
+  resolve_fold_K_obs <- function(f_spec, f_di, df_check) {
+    tf_f <- f_spec$threshold_facet
+    k_map_f <- f_di$K_by_level %||% f_spec$K_by_level
+    if (identical(f_spec$family, "pcm") && !is.null(tf_f) && !is.null(k_map_f)) {
+      out_k <- as.integer(unname(k_map_f[as.character(df_check[[tf_f]])]))
+      if (anyNA(out_k)) stop("Fold ", k, " refit is missing per-level category count(s) for '", tf_f, "'")
+      return(out_k)
+    }
+    rep(as.integer(get_spec_K_max(f_spec)), nrow(df_check))
+  }
+  if (!identical(resolve_fold_K_obs(fold_fit$spec, fold_fit$data_info, fp$train_df),
+                 resolve_fold_K_obs(spec, orig_data_info, fp$train_df))) {
+    stop("Fold ", k, " refit changed per-level/per-observation category counts K relative to the original fit")
+  }
+  if (isTRUE(fold_fit$spec$K_heterogeneous) && !isTRUE(spec$K_heterogeneous)) {
+    stop("Fold ", k, " refit changed category definition from uniform K to heterogeneous K_by_level")
+  }
+  if (!isTRUE(fold_fit$spec$K_heterogeneous) && isTRUE(spec$K_heterogeneous)) {
+    tr_tf <- levels(fp$train_df[[spec$threshold_facet]])
+    exp_tr_u <- unique(as.integer(unname((orig_data_info$K_by_level %||% spec$K_by_level)[tr_tf])))
+    if (length(exp_tr_u) > 1L) {
+      stop("Fold ", k, " refit changed category definition from heterogeneous K_by_level to uniform K")
+    }
+  }
+  if (!isTRUE(spec$K_heterogeneous) &&
+      !identical(as.integer(get_spec_K_max(fold_fit$spec)), as.integer(get_spec_K_max(spec)))) {
+    stop("Fold ", k, " refit changed K from ", get_spec_K_max(spec), " to ", get_spec_K_max(fold_fit$spec))
+  }
+  invisible(TRUE)
+}
+
 #' Target-aware K-fold cross-validation for BayesMFRM models
 #'
 #' Performs K-fold cross-validation with explicit prediction-target
@@ -1156,7 +1385,7 @@ cv_bmfrm <- function(object,
     locked_bmfrm <- intersect(
       names(overrides),
       c("formula", "data", "K", "priors", "stan_file", "family",
-        "threshold_facet", "hierarchical", "save_csvs", "save_gq", "obs_id")
+        "threshold_facet", "person_facet", "adjust_facets", "hierarchical", "save_csvs", "save_gq", "obs_id")
     )
     if (length(locked_bmfrm) > 0L) {
       stop("Cannot override locked model/data specification argument(s) in cv_bmfrm(): ",
@@ -1181,7 +1410,7 @@ cv_bmfrm <- function(object,
     threshold_facet = spec$threshold_facet,
     hierarchical = spec$hierarchical,
     save_gq = "minimal",
-    cache_dir = spec$cache_dir %||% "stan_cache",
+    cache_dir = spec$cache_dir %||% tempdir(),
     cpp_options = list(),
     iter = 2000L,
     warmup = 1000L,
@@ -1220,16 +1449,17 @@ cv_bmfrm <- function(object,
     stop("cores must be a positive integer")
   }
   refit_mode_cv <- match.arg(overrides$refit %||% "on_change", c("on_change", "never", "always"))
-  cache_dir_cv <- overrides$cache_dir %||% base_fit_args$cache_dir %||% spec$cache_dir %||% "stan_cache"
+  cache_dir_cv <- overrides$cache_dir %||% base_fit_args$cache_dir %||% spec$cache_dir %||% tempdir()
   if (!is.character(cache_dir_cv) || length(cache_dir_cv) != 1L || is.na(cache_dir_cv) || !nzchar(cache_dir_cv)) {
     stop("cache_dir must be a non-empty character path")
   }
 
   # 1. Resolve target facet and validate full model hierarchy for unseen levels
+  pf <- spec_person_facet(spec)
   target_facet <- switch(
     target,
     rating = NULL,
-    person = "person",
+    person = pf,
     rater = {
       if (!("rater" %in% spec$facets_main)) {
         stop("target = 'rater' requested, but 'rater' is not in model facets (",
@@ -1280,117 +1510,13 @@ cv_bmfrm <- function(object,
 
   # 3. Pre-fit audit across ALL folds: dropleveled training prep, actual unseen facets,
   #    1-level degeneracy check, and per-fold structural design identifiability!
-  fold_plans <- vector("list", K_folds)
-  all_unseen_facets <- character(0)
-  for (k in seq_len(K_folds)) {
-    train_idx <- which(folds != k)
-    test_idx <- which(folds == k)
-    if (!length(train_idx) || !length(test_idx)) {
-      stop("Fold ", k, " has empty training or test split")
-    }
-    train_df <- drop_unused_facet_levels(obs_data[train_idx, , drop = FALSE], spec$facets_main)
-    test_df <- obs_data[test_idx, , drop = FALSE]
-
-    # Actual unseen facets on this fold
-    unseen_k <- list()
-    for (f in spec$facets_main) {
-      tr_lv <- levels(train_df[[f]])
-      te_lv <- unique(as.character(test_df[[f]]))
-      u_lv <- setdiff(te_lv, tr_lv)
-      if (length(u_lv)) unseen_k[[f]] <- u_lv
-    }
-    all_unseen_facets <- union(all_unseen_facets, names(unseen_k))
-
-    if (!is.null(target_facet)) {
-      tr_t <- levels(train_df[[target_facet]])
-      te_t <- unique(as.character(test_df[[target_facet]]))
-      overlap_t <- intersect(tr_t, te_t)
-      if (length(overlap_t)) {
-        stop("Fold ", k, " has overlapping '", target_facet, "' levels between train and test: ",
-             paste(utils::head(overlap_t, 5L), collapse = ", "))
-      }
-    }
-
-    if (isTRUE(strict_target)) {
-      if (is.null(target_facet)) {
-        if (length(unseen_k)) {
-          details <- paste(vapply(names(unseen_k), function(f) {
-            paste0(f, " (", paste(utils::head(unseen_k[[f]], 3L), collapse = ", "), ")")
-          }, character(1)), collapse = "; ")
-          stop(
-            "Fold ", k, " in target = 'rating' drops all training observations for facet(s): ",
-            details, ". Supply custom folds keeping all facet levels in training or choose a grouped target."
-          )
-        }
-      } else {
-        collateral <- setdiff(names(unseen_k), target_facet)
-        if (length(collateral)) {
-          details <- paste(vapply(collateral, function(f) {
-            paste0(f, " (", paste(utils::head(unseen_k[[f]], 3L), collapse = ", "), ")")
-          }, character(1)), collapse = "; ")
-          stop(
-            "Fold ", k, " holding out '", target_facet, "' also makes other facet(s) unseen in training: ",
-            details, ". This changes the prediction target; adjust the rating plan or fold split, ",
-            "or handle joint unseen facets explicitly."
-          )
-        }
-      }
-    }
-
-    # Mandatory pre-fit guard for v1 heterogeneous-category PCM: unseen threshold_facet
-    # levels are NEVER supported regardless of strict_target (must stop before any refit).
-    if (isTRUE(spec$K_heterogeneous) &&
-        identical(spec$family, "pcm") &&
-        !is.null(spec$threshold_facet) &&
-        (spec$threshold_facet %in% names(unseen_k))) {
-      u_tf <- unseen_k[[spec$threshold_facet]]
-      stop(
-        "Fold ", k, " leaves threshold_facet '", spec$threshold_facet, "' level(s) (",
-        paste(utils::head(u_tf, 5L), collapse = ", "),
-        ") unseen in training, which is not supported in v1 heterogeneous-category PCM ",
-        "(even when strict_target = FALSE), because their rubric category count and step distribution are undefined."
-      )
-    }
-
-    # Validate full model hierarchy for every unseen facet before running any refits
-    for (uf in names(unseen_k)) {
-      validate_cv_hierarchy(spec, uf)
-    }
-
-    # Check training facet sizes (1-level degeneracy for interactions)
-    if (!isTRUE(allow_degenerate_interaction) && length(spec$facets_bias) > 0L) {
-      for (term in spec$facets_bias) {
-        comps <- strsplit(term, ":", fixed = TRUE)[[1L]]
-        degen <- comps[vapply(comps, function(f) nlevels(train_df[[f]]) <= 1L, logical(1))]
-        if (length(degen)) {
-          stop(
-            "Fold ", k, " reduces training facet(s) ", paste(degen, collapse = ", "),
-            " to <= 1 observed level, collapsing interaction '", term,
-            "' to 0 degrees of freedom. Use fewer folds or set allow_degenerate_interaction = TRUE deliberately."
-          )
-        }
-      }
-    }
-
-    K_fold_dc <- if (isTRUE(spec$K_heterogeneous) && !is.null(spec$K_by_level)) {
-      spec$K_by_level[levels(train_df[[spec$threshold_facet]])]
-    } else {
-      spec$K
-    }
-    dc_k <- check_design_bmfrm(
-      spec$formula, train_df, K = K_fold_dc,
-      family = spec$family, threshold_facet = spec$threshold_facet
-    )
-    fold_plans[[k]] <- list(
-      fold = k,
-      train_idx = train_idx,
-      test_idx = test_idx,
-      train_df = train_df,
-      test_df = test_df,
-      unseen_k = unseen_k,
-      design = dc_k
-    )
-  }
+  plan_info <- build_validated_cv_fold_plans(
+    obs_data = obs_data, spec = spec, folds = folds, K_folds = K_folds,
+    target_facet = target_facet, strict_target = strict_target,
+    allow_degenerate_interaction = allow_degenerate_interaction
+  )
+  fold_plans <- plan_info$fold_plans
+  all_unseen_facets <- plan_info$all_unseen_facets
 
   # 4. Locked refit specification (never re-infer K or alter priors/sampler settings)
   base_fit_args$iter <- as.integer(iter_cv)
@@ -1398,117 +1524,16 @@ cv_bmfrm <- function(object,
   base_fit_args$chains <- as.integer(chains_cv)
   base_fit_args$cores <- as.integer(cores_cv)
   base_fit_args$cache_dir <- cache_dir_cv
-  compiled_cv_model <- NULL
-  default_refit_fn <- function(train_df, fold, spec, fit_args) {
-    fold_spec <- spec
-    if (!isTRUE(fold_spec$custom_stan)) {
-      fold_spec$save_gq <- "minimal"
-    }
-    if (!is.null(spec$K_by_level) && !is.null(spec$threshold_facet)) {
-      tr_tf <- levels(train_df[[spec$threshold_facet]])
-      fold_spec$K_by_level <- spec$K_by_level[tr_tf]
-      fold_spec$K_max <- as.integer(max(fold_spec$K_by_level))
-      fold_spec$K_heterogeneous <- length(unique(fold_spec$K_by_level)) > 1L
-      fold_spec$K <- if (fold_spec$K_heterogeneous) fold_spec$K_by_level else as.integer(fold_spec$K_by_level[1L])
-    }
-    fold_spec <- resolve_bmfrm_spec(fold_spec, object$priors)
-    stan_code <- if (isTRUE(fold_spec$custom_stan)) {
-      if (!is.null(fit_args$stan_file) && file.exists(fit_args$stan_file)) {
-        paste(readLines(fit_args$stan_file, warn = FALSE), collapse = "\n")
-      } else if (!is.null(object$stan_code) && is.character(object$stan_code) && nzchar(object$stan_code)) {
-        object$stan_code
-      } else {
-        stop("Custom Stan code is unavailable for CV refit (missing both stan_file on disk and object$stan_code)")
-      }
-    } else if (!is.null(fit_args$stan_file)) {
-      paste(readLines(fit_args$stan_file, warn = FALSE), collapse = "\n")
-    } else {
-      build_stan_code(fold_spec, object$priors, save_gq = "minimal")
-    }
-    fold_spec$eval_contract <- resolve_eval_contract(fold_spec, stan_code)
-
-    # Compile once and share the compiled CmdStan binary across all folds
-    if (is.null(compiled_cv_model)) {
-      compiled_cv_model <<- compile_bmfrm(
-        stan_code = stan_code,
-        model_name = overrides$model_name %||% fold_spec$model_name,
-        cache_dir = cache_dir_cv,
-        cpp_options = overrides$cpp_options %||% fit_args$cpp_options %||% list()
-      )
-    }
-
-    data_info_k <- prepare_data_bmfrm(fold_spec, train_df, priors = object$priors)
-    base_refit_seed <- if (!is.null(refit_seed)) refit_seed else seed
-    fold_seed <- if (!is.null(base_refit_seed)) {
-      offset_bmfrm_seed(base_refit_seed, fold * 1000L)
-    } else if (!is.null(fit_args$seed)) {
-      offset_bmfrm_seed(fit_args$seed, fold * 1000L)
-    } else {
-      NULL
-    }
-    iter_k <- as.integer(iter_cv)
-    warmup_k <- as.integer(warmup_cv)
-    chains_k <- as.integer(chains_cv)
-    cores_k <- as.integer(cores_cv)
-    refit_mode <- refit_mode_cv
-    fold_cache_dir <- file.path(cache_dir_cv, "cv_folds")
-    base_fold_rds <- file.path(
-      fold_cache_dir,
-      paste0(overrides$model_name %||% fold_spec$model_name, "_fold", fold, "_", compiled_cv_model$hash, ".rds")
+  runner <- if (!is.null(refit_fn)) {
+    refit_fn
+  } else {
+    make_default_cv_refitter(
+      object = object, fold_plans = fold_plans, overrides = overrides,
+      refit_seed = refit_seed, seed = seed, iter_cv = iter_cv, warmup_cv = warmup_cv,
+      chains_cv = chains_cv, cores_cv = cores_cv, refit_mode_cv = refit_mode_cv,
+      cache_dir_cv = cache_dir_cv
     )
-
-    sampler_args <- fit_args$sampler_args %||% list()
-    reserved_ov <- c(
-      "cpp_options", "iter", "warmup", "chains", "cores", "refit",
-      "cache_dir", "design_check", "model_name"
-    )
-    for (nm in setdiff(names(overrides), reserved_ov)) sampler_args[[nm]] <- overrides[[nm]]
-
-    extra_sampling_k <- c(
-      list(
-        iter_sampling = iter_k - warmup_k,
-        iter_warmup = warmup_k,
-        save_warmup = FALSE
-      ),
-      sampler_args
-    )
-    fold_rds <- resolve_fit_cache_file(
-      base_cache_file = base_fold_rds,
-      code = compiled_cv_model$model$code(),
-      data = data_info_k$stan_data,
-      seed = fold_seed,
-      chains = chains_k,
-      parallel_chains = min(chains_k, cores_k),
-      extra_sampling = extra_sampling_k
-    )
-
-    fit_k <- do.call(
-      fit_cmdstan_cached,
-      c(
-        list(
-          model = compiled_cv_model$model,
-          data = data_info_k$stan_data,
-          file = fold_rds,
-          refit = refit_mode,
-          seed = fold_seed,
-          chains = chains_k,
-          parallel_chains = min(chains_k, cores_k)
-        ),
-        extra_sampling_k
-      )
-    )
-    out_k <- postprocess_bmfrm(
-      fit = fit_k,
-      spec = fold_spec,
-      data_info = data_info_k,
-      priors = object$priors,
-      stan_code = stan_code,
-      stan_code_hash = compiled_cv_model$hash
-    )
-    out_k$design <- fold_plans[[fold]]$design
-    out_k
   }
-  runner <- if (!is.null(refit_fn)) refit_fn else default_refit_fn
 
   # 5. Fit & score every fold (never silently dropping failed folds!)
   lpd_pointwise <- rep(NA_real_, N)
@@ -1541,48 +1566,7 @@ cv_bmfrm <- function(object,
       next
     }
 
-    # Verify unused factor levels did NOT leak into the training fit!
-    for (f in spec$facets_main) {
-      if (!setequal(fold_fit$data_info$facet_labels[[f]], levels(fp$train_df[[f]]))) {
-        stop(
-          "Fold ", k, " refit retained facet labels not observed in training for '", f,
-          "'. Training fold preprocessing must drop unused factor levels."
-        )
-      }
-    }
-    # Verify category definitions match the original fit per observation / per level,
-    # regardless of whether the original fit or fold refit uses uniform or heterogeneous K.
-    resolve_fold_K_obs <- function(f_spec, f_di, df_check) {
-      tf_f <- f_spec$threshold_facet
-      k_map_f <- f_di$K_by_level %||% f_spec$K_by_level
-      if (identical(f_spec$family, "pcm") && !is.null(tf_f) && !is.null(k_map_f)) {
-        out_k <- as.integer(unname(k_map_f[as.character(df_check[[tf_f]])]))
-        if (anyNA(out_k)) {
-          stop("Fold ", k, " refit is missing per-level category count(s) for '", tf_f, "'")
-        }
-        return(out_k)
-      }
-      rep(as.integer(get_spec_K_max(f_spec)), nrow(df_check))
-    }
-    exp_K_tr <- resolve_fold_K_obs(spec, object$data_info, fp$train_df)
-    got_K_tr <- resolve_fold_K_obs(fold_fit$spec, fold_fit$data_info, fp$train_df)
-    if (!identical(got_K_tr, exp_K_tr)) {
-      stop("Fold ", k, " refit changed per-level/per-observation category counts K relative to the original fit")
-    }
-    if (isTRUE(fold_fit$spec$K_heterogeneous) && !isTRUE(spec$K_heterogeneous)) {
-      stop("Fold ", k, " refit changed category definition from uniform K to heterogeneous K_by_level")
-    }
-    if (!isTRUE(fold_fit$spec$K_heterogeneous) && isTRUE(spec$K_heterogeneous)) {
-      tr_tf <- levels(fp$train_df[[spec$threshold_facet]])
-      exp_tr_u <- unique(as.integer(unname((object$data_info$K_by_level %||% spec$K_by_level)[tr_tf])))
-      if (length(exp_tr_u) > 1L) {
-        stop("Fold ", k, " refit changed category definition from heterogeneous K_by_level to uniform K")
-      }
-    }
-    if (!isTRUE(spec$K_heterogeneous) &&
-        !identical(as.integer(get_spec_K_max(fold_fit$spec)), as.integer(get_spec_K_max(spec)))) {
-      stop("Fold ", k, " refit changed K from ", get_spec_K_max(spec), " to ", get_spec_K_max(fold_fit$spec))
-    }
+    validate_cv_fold_refit(fold_fit, fp, spec, object$data_info, k)
 
     n_draws_per_fold[k] <- nrow(unclass(fold_fit$fit$draws("theta", format = "matrix")))
     conv_k <- fold_fit$convergence

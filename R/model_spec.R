@@ -1,9 +1,25 @@
 # Unified model specification shared by simulation, Stan data preparation,
 # Stan code generation, and MCMC diagnostics.
-# Supports hierarchical main facets (person + any centered facet), hierarchical
-# PCM steps (common steps + level deviations), and hierarchical two-way
-# interactions with optional cell-space local shrinkage (horseshoe / student_t),
-# as well as mixed Gaussian + non-Gaussian priors without silent path switches.
+
+spec_person_facet <- function(spec) {
+  if (is.list(spec) && !is.null(spec$person_facet) && nzchar(spec$person_facet)) {
+    spec$person_facet
+  } else {
+    "person"
+  }
+}
+
+spec_adjust_facets <- function(spec) {
+  pf <- spec_person_facet(spec)
+  non_person <- if (!is.null(spec$facets_main)) setdiff(spec$facets_main, pf) else character(0)
+  if (isTRUE(spec$adjust_facets_explicit)) {
+    intersect(spec$adjust_facets %||% character(0), non_person)
+  } else if (!is.null(spec$adjust_facets)) {
+    intersect(spec$adjust_facets, non_person)
+  } else {
+    intersect(c("rater", "interlocutor"), non_person)
+  }
+}
 
 validate_hierarchical <- function(hierarchical, facets_main, facets_bias, family) {
   if (!is.character(hierarchical) || anyNA(hierarchical) || any(!nzchar(hierarchical)) || anyDuplicated(hierarchical)) {
@@ -36,11 +52,10 @@ is_reserved_stan_identifier <- function(ids) {
     "theta", "tau", "tau_common", "tau_dev", "mu_theta", "sigma_theta",
     "N", "K", "X", "log_lik", "y_rep", "mu", "sigma2", "mu_fair",
     "eta", "eta_full", "eta_fair", "logits", "logits_full", "logits_fair",
-    "p_full", "p_fair", "ex", "ex2", "ex_fair",
+    "p_full", "p_fair", "ex", "ex2", "ex_fair", "cum_tau", "cat_seq", "cat_val", "cat_val2", "lse_full",
     "data", "model", "parameters", "transformed", "generated", "quantities",
     "functions", "real", "int", "vector", "matrix", "array", "for", "in",
     "if", "else", "while", "return", "target",
-    # https://mc-stan.org/docs/reference-manual/arithmetic-expressions.html
     "repeat", "until", "then", "true", "false", "struct", "typedef", "export",
     "auto", "extern", "var", "static", "lower", "upper", "offset", "multiplier",
     "complex", "simplex", "unit_vector", "sum_to_zero_vector", "sum_to_zero_matrix",
@@ -58,39 +73,62 @@ is_reserved_stan_identifier <- function(ids) {
     "reinterpret_cast", "short", "signed", "sizeof", "static_assert", "static_cast",
     "switch", "template", "this", "thread_local", "throw", "try", "typeid", "typename",
     "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "xor", "xor_eq",
-    # Local identifiers in the generated model, including ragged PCM blocks.
     "threshold", "n", "k", "i", "j", "mj", "rj", "dj", "s", "rs", "fs", "raw_j", "Kj", "t_start",
     "tau_step", "centered", "raw_eff", "lam_tilde"
   )
   (ids %in% reserved) |
-    grepl("__$|_raw$|_id$|_n$|^(B_|J_|K_|N_tau_|tau_|mean_|fixed_sd_|scale_factor_|prior_sd_|ability_|estimate_|sigma_|lambda_|c2_)", ids) |
+    grepl("__$|_raw$|_id$|_n$|^(B_|J_|K_|N_tau_|tau_|mean_|fixed_sd_|scale_factor_|prior_sd_|ability_|estimate_|sigma_|lambda_|c2_|hs_slab_)", ids) |
     !grepl("^[A-Za-z][A-Za-z0-9_]*$", ids)
 }
 
-validate_facet_names <- function(facets_main) {
-  facets <- setdiff(facets_main, "person")
-  if (any(is_reserved_stan_identifier(facets))) {
+validate_facet_names <- function(facets_main, person_facet = "person") {
+  to_check <- if (identical(person_facet, "person")) {
+    setdiff(facets_main, "person")
+  } else {
+    facets_main
+  }
+  if (any(is_reserved_stan_identifier(to_check))) {
     stop("Facet names must be nonreserved Stan identifiers")
   }
   invisible(TRUE)
 }
 
-# Internal normalization shared by generation, Stan data, and Stan code.
-# Public configuration lives in hierarchical, priors, and save_gq.
 resolve_bmfrm_spec <- function(spec, priors = NULL) {
-  validate_facet_names(spec$facets_main)
+  pf <- spec_person_facet(spec)
+  spec$person_facet <- pf
+  validate_facet_names(spec$facets_main, person_facet = pf)
   validate_interaction_terms(spec$facets_main, spec$facets_bias)
+  if (isTRUE(spec$custom_stan) && !isTRUE(spec$hierarchical_explicit)) {
+    spec$hierarchical <- character()
+  }
+  p_in <- priors %||% spec$priors
+  if (!isTRUE(spec$hierarchical_explicit) && !is.null(p_in) && is.list(p_in) &&
+      length(p_in) > 0L && all(vapply(p_in, inherits, logical(1), "bmfrm_prior"))) {
+    has_theta <- any(vapply(p_in, function(p) identical(p$class, "theta"), logical(1)))
+    has_person_pop <- any(vapply(p_in, function(p) {
+      p$class %in% c("mean", "sd") && (is.null(p$facet) || p$facet %in% c("person", pf))
+    }, logical(1)))
+    if (has_theta && !has_person_pop) {
+      spec$hierarchical <- setdiff(spec$hierarchical %||% character(), pf)
+    }
+  }
   spec$hierarchical <- validate_hierarchical(spec$hierarchical %||% character(), spec$facets_main, spec$facets_bias, spec$family)
-  spec$save_gq <- match.arg(spec$save_gq %||% "full", c("full", "minimal"))
+  spec$save_gq <- match.arg(spec$save_gq %||% "minimal", c("minimal", "full"))
   if (isTRUE(spec$custom_stan)) {
     if (!is.null(priors)) stop("priors cannot be supplied with a custom Stan model; specify priors inside the Stan file")
     if (length(spec$hierarchical)) stop("Hierarchical ability and marginal scaling require generated Stan code")
-    # The Stan file owns its priors; package defaults do not describe that model.
     spec$priors <- NULL
     spec$gaussian_model <- NULL
     return(spec)
   }
-  priors <- validate_priors(priors %||% spec$priors, spec$facets_main, spec$facets_bias, spec$family, spec$hierarchical)
+  priors <- validate_priors(
+    priors %||% spec$priors,
+    spec$facets_main,
+    spec$facets_bias,
+    spec$family,
+    spec$hierarchical,
+    person_facet = pf
+  )
   spec$priors <- priors
   spec$gaussian_model <- NULL
 
@@ -99,34 +137,32 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
     all(vapply(priors, function(p) is_normal_prior_literal(p$spec), logical(1)))
   has_shrinkage <- any(vapply(priors, function(p) !is.null(p$local_shrinkage) && p$local_shrinkage != "none", logical(1)))
 
-  # Preserve exact legacy code path when no hierarchical/marginal/PCM-gaussian/shrinkage features are used
   if (!length(spec$hierarchical) && !marginal && !gaussian_pcm && !has_shrinkage) {
     return(spec)
   }
 
-  if (!spec$family %in% c("rsm", "pcm") || !"person" %in% spec$facets_main) {
+  if (!spec$family %in% c("rsm", "pcm") || !pf %in% spec$facets_main) {
     stop("Hierarchical priors and marginal scaling support generated RSM/PCM only")
   }
 
-  facets <- setdiff(spec$facets_main, "person")
+  facets <- setdiff(spec$facets_main, pf)
 
-  keys <- vapply(priors, function(p) paste(p$class, p$facet %||% "", sep = ":"), character(1))
-  get_prior <- function(cl, facet = "") priors[[match(paste(cl, facet, sep = ":"), keys)]]
+  keys <- vapply(priors, prior_target_key, character(1), person_facet = pf, facets_bias = spec$facets_bias)
+  get_prior_by_key <- function(k) priors[[match(k, keys)]]
 
-  # 1. Ability block (person)
-  if ("person" %in% spec$hierarchical) {
-    mu <- rsm_population_prior(get_prior("mean", "person")$spec, "normal", FALSE)
-    sd <- rsm_population_prior(get_prior("sd", "person")$spec, "lognormal", TRUE)
+  # 1. Ability block (person_facet)
+  if (pf %in% spec$hierarchical) {
+    mu <- rsm_population_prior(get_prior_by_key(paste0("mean:", pf))$spec, "normal", FALSE)
+    sd <- rsm_population_prior(get_prior_by_key(paste0("sd:", pf))$spec, "lognormal", TRUE)
     ability_spec <- list(mode = "hierarchical", mean = mu, sd = sd)
   } else {
-    tp <- get_prior("theta")
+    tp <- get_prior_by_key("theta:")
     if (is_normal_prior_literal(tp$spec)) {
       args <- parse_bmfrm_prior_literal(tp$spec)$args
       mu <- rsm_population_prior(args[1L], "normal", FALSE)
       sd <- rsm_population_prior(args[2L], "lognormal", TRUE)
       ability_spec <- list(mode = "gaussian", mean = mu, sd = sd)
     } else {
-      # Non-Gaussian person prior (e.g. student_t, double_exponential) allowed alongside other hierarchical/marginal terms
       parse_bmfrm_prior_literal(tp$spec)
       ability_spec <- list(mode = "non_gaussian", spec = tp$spec,
                            mean = rsm_population_prior(0, "normal", FALSE),
@@ -134,14 +170,13 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
     }
   }
 
-  # 2. Other main facets
+  # 2. Centered main facets (unified role-agnostic lookup)
   facet_specs <- lapply(facets, function(f) {
     if (f %in% spec$hierarchical) {
-      p <- get_prior("sd", f)
+      p <- get_prior_by_key(paste0("sd:", f))
       list(facet = f, mode = "hierarchical_sd", sd = positive_sd_prior(p$spec), scale = p$scale)
     } else {
-      cl <- if (f %in% c("item", "rater")) f else paste0("facet_", f)
-      p <- get_prior(cl)
+      p <- get_prior_by_key(paste0("facet:", f))
       if (is_normal_prior_literal(p$spec)) {
         args <- parse_bmfrm_prior_literal(p$spec)$args
         list(facet = f, mode = "gaussian_basis", sd = list(estimated = FALSE, value = unname(args[2L])), scale = p$scale)
@@ -157,7 +192,7 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   names(facet_specs) <- facets
 
   # 3. Step (tau) block
-  tau_p <- get_prior("tau")
+  tau_p <- get_prior_by_key("tau:")
   if ("tau" %in% spec$hierarchical) {
     if (isTRUE(spec$K_heterogeneous)) {
       stop(
@@ -165,11 +200,10 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
         "counts K vary across '", spec$threshold_facet, "' levels."
       )
     }
-    # Hierarchical PCM: tau[j, k] = tau_common[k] + tau_dev[j, k], each row sums to zero
     if (!is_normal_prior_literal(tau_p$spec)) {
       stop("Hierarchical PCM common step prior ('tau') requires a normal(0, positive_sd) distribution")
     }
-    tau_dev_p <- get_prior("sd", "tau")
+    tau_dev_p <- get_prior_by_key("sd:tau")
     step_spec <- list(
       mode = "hierarchical_pcm",
       common_sd = unname(parse_bmfrm_prior_literal(tau_p$spec)$args[2L]),
@@ -194,16 +228,20 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   # 4. Interaction (bias) blocks
   biases <- lapply(spec$facets_bias, function(term) {
     is_hier <- term %in% spec$hierarchical
-    p <- get_prior(if (is_hier) "sd" else "bias", term)
+    p <- get_prior_by_key(paste0(if (is_hier) "sd:" else "bias:", term))
     ls <- p$local_shrinkage %||% "none"
     bname <- gsub(":", "", term)
     fpair <- strsplit(term, ":", fixed = TRUE)[[1L]]
     if (is_hier) {
       sd_info <- positive_sd_prior(p$spec)
       mode <- if (ls == "none") "gaussian_basis" else paste0("shrinkage_", ls)
+      slab_df <- p$slab_df %||% 4
+      slab_scale <- p$slab_scale %||% 2
       list(term = term, name = bname, facets = fpair,
            hierarchical = TRUE, mode = mode, local_shrinkage = ls,
-           sd = sd_info, scale = p$scale)
+           sd = sd_info, scale = p$scale,
+           slab_df = slab_df, slab_scale = slab_scale,
+           slab_shape = 0.5 * slab_df, slab_rate = 0.5 * slab_df * slab_scale^2)
     } else if (is_normal_prior_literal(p$spec)) {
       args <- parse_bmfrm_prior_literal(p$spec)$args
       list(term = term, name = bname, facets = fpair,
@@ -221,7 +259,6 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   })
   names(biases) <- spec$facets_bias
 
-  # Backward-compatible fields alongside rich per-block specs
   gaussian_facets <- facets[vapply(facet_specs, function(x) x$mode == "gaussian_basis", logical(1))]
   facet_sd_vec <- if (length(gaussian_facets)) {
     vapply(facet_specs[gaussian_facets], function(x) x$sd$value, numeric(1))
@@ -235,7 +272,8 @@ resolve_bmfrm_spec <- function(spec, priors = NULL) {
   }
 
   spec$gaussian_model <- list(
-    schema = "bayesmfrm.unified_ordinal.v5",
+    schema = "bayesmfrm.unified_ordinal.v6",
+    person_facet = pf,
     family = spec$family,
     threshold_facet = spec$threshold_facet,
     K_heterogeneous = isTRUE(spec$K_heterogeneous),
@@ -276,7 +314,6 @@ rsm_prior_basis <- function(n, scale) {
   if (scale == "marginal") isometric_rsm_basis(n) else unname(sum_zero_basis(n))
 }
 
-# Marginal scale correction factor for double-centered J1 x J2 matrices
 double_center_scale_factor <- function(n1, n2, scale) {
   if (!identical(scale, "marginal") || n1 <= 1L || n2 <= 1L) return(1)
   sqrt((n1 / (n1 - 1L)) * (n2 / (n2 - 1L)))
@@ -285,7 +322,6 @@ double_center_scale_factor <- function(n1, n2, scale) {
 gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
   out <- list()
 
-  # Ability data (preserved verbatim for Gaussian / hierarchical person compatibility)
   if (model$ability$mode %in% c("hierarchical", "gaussian")) {
     mu <- model$ability$mean
     sd <- model$ability$sd
@@ -299,7 +335,6 @@ gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
     ))
   }
 
-  # Step (tau) data
   if (isTRUE(model$K_heterogeneous)) {
     tf_labels <- labels[[model$threshold_facet]]
     K_lvl <- as.integer(unname((K_by_level %||% model$K_by_level)[tf_labels]))
@@ -342,7 +377,6 @@ gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
     out$fixed_sd_tau <- if (model$step$dev_sd$estimated) 1 else model$step$dev_sd$value
   }
 
-  # Main facet data
   for (f in names(model$facet_specs)) {
     fs <- model$facet_specs[[f]]
     if (fs$mode == "gaussian_basis") {
@@ -355,7 +389,6 @@ gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
     }
   }
 
-  # Interaction data
   for (b in model$biases) {
     n1 <- length(labels[[b$facets[1L]]])
     n2 <- length(labels[[b$facets[2L]]])
@@ -368,6 +401,10 @@ gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
       out[[paste0("estimate_sd_", b$name)]] <- as.integer(b$sd$estimated)
       out[[paste0("fixed_sd_", b$name)]] <- if (b$sd$estimated) 1 else b$sd$value
       out[[paste0("scale_factor_", b$name)]] <- double_center_scale_factor(n1, n2, b$scale)
+      if (b$mode == "shrinkage_horseshoe") {
+        out[[paste0("hs_slab_shape_", b$name)]] <- b$slab_shape %||% 2
+        out[[paste0("hs_slab_rate_", b$name)]] <- b$slab_rate %||% 8
+      }
     }
   }
 
@@ -375,19 +412,19 @@ gaussian_model_data <- function(model, labels, K, K_by_level = NULL) {
 }
 
 sample_gaussian_model <- function(model, labels, K, K_by_level = NULL) {
-  # 1. Person ability
+  pf <- model$person_facet %||% "person"
+  n_p <- length(labels[[pf]])
   if (model$ability$mode %in% c("hierarchical", "gaussian")) {
     mu <- model$ability$mean
     sd <- model$ability$sd
     mu <- if (mu$estimated) stats::rnorm(1L, mu$location, mu$scale) else mu$location
     sd <- if (sd$estimated) stats::rlnorm(1L, sd$location, sd$scale) else sd$location
-    out <- list(theta = stats::rnorm(length(labels$person), mu, sd))
+    out <- list(theta = stats::rnorm(n_p, mu, sd))
   } else {
-    out <- list(theta = sample_bmfrm_prior(model$ability$spec, length(labels$person)))
+    out <- list(theta = sample_bmfrm_prior(model$ability$spec, n_p))
     mu <- NA_real_; sd <- NA_real_
   }
 
-  # 2. Other main facets
   for (f in names(model$facet_specs)) {
     fs <- model$facet_specs[[f]]
     n <- length(labels[[f]])
@@ -403,7 +440,6 @@ sample_gaussian_model <- function(model, labels, K, K_by_level = NULL) {
     }
   }
 
-  # 3. Steps (tau)
   if (isTRUE(model$K_heterogeneous)) {
     tf_labels <- labels[[model$threshold_facet]]
     K_lvl <- as.integer(unname((K_by_level %||% model$K_by_level)[tf_labels]))
@@ -453,13 +489,11 @@ sample_gaussian_model <- function(model, labels, K, K_by_level = NULL) {
     }
   }
 
-  # Preserve exact RNG order for person population metadata
-  if ("person" %in% model$hierarchical) {
+  if (pf %in% model$hierarchical) {
     out$mu_theta <- mu
     out$sigma_theta <- sd
   }
 
-  # 4. Interactions
   for (b in model$biases) {
     n <- lengths(labels[b$facets])
     if (b$mode == "gaussian_basis") {
@@ -471,8 +505,7 @@ sample_gaussian_model <- function(model, labels, K, K_by_level = NULL) {
       s_val <- sample_positive_sd(b$sd)
       z <- matrix(stats::rnorm(prod(n)), n[1L], n[2L])
       lam <- matrix(abs(stats::rcauchy(prod(n), 0, 1)), n[1L], n[2L])
-      # c2 ~ inv_gamma(2, 8) <=> 1 / rgamma(1, shape = 2, rate = 8)
-      c2 <- 1 / stats::rgamma(1L, shape = 2, rate = 8)
+      c2 <- 1 / stats::rgamma(1L, shape = b$slab_shape %||% 2, rate = b$slab_rate %||% 8)
       lam_tilde <- sqrt((c2 * lam^2) / (c2 + (s_val^2) * (lam^2)))
       sf <- double_center_scale_factor(n[1L], n[2L], b$scale)
       u <- sf * s_val * lam_tilde * z
@@ -482,8 +515,6 @@ sample_gaussian_model <- function(model, labels, K, K_by_level = NULL) {
     } else if (b$mode == "shrinkage_student_t") {
       s_val <- sample_positive_sd(b$sd)
       z <- matrix(stats::rnorm(prod(n)), n[1L], n[2L])
-      # lam ~ inv_gamma(1.5, 0.5) => E[lam] = 1, so sqrt(lam) * z is unit-variance
-      # Student-t (df = 3), preserving exact conditional cell SD = s_val under scale = "marginal".
       lam <- matrix(1 / stats::rgamma(prod(n), shape = 1.5, rate = 0.5), n[1L], n[2L])
       sf <- double_center_scale_factor(n[1L], n[2L], b$scale)
       u <- sf * s_val * sqrt(lam) * z
@@ -538,7 +569,6 @@ model_diagnostic_variables <- function(spec, data_info) {
     if (model$ability$mode == "hierarchical" && model$ability$sd$estimated) "log_sigma_theta_raw"
   )
 
-  # Hierarchical main facet SDs (included even when J_f == 1 because unseen-level prediction uses sigma_f)
   for (f in all_other) {
     fs <- model$facet_specs[[f]]
     if (fs$mode == "hierarchical_sd" && fs$sd$estimated) {
@@ -547,7 +577,6 @@ model_diagnostic_variables <- function(spec, data_info) {
     }
   }
 
-  # Hierarchical PCM step parameters
   if (model$step$mode == "hierarchical_pcm" && K_max > 2L) {
     variable <- c(variable, "tau_common")
     raw <- c(raw, "tau_common_raw", "tau_dev_raw")
@@ -557,7 +586,6 @@ model_diagnostic_variables <- function(spec, data_info) {
     }
   }
 
-  # Interactions
   for (b in model$biases) {
     active_b <- all(lengths(data_info$facet_labels[b$facets]) > 1L)
     if (active_b) {
@@ -607,11 +635,10 @@ validate_interaction_terms <- function(facets, terms) {
   invisible(TRUE)
 }
 
-# Positive-support SD prior shared by hierarchical main facets, PCM step
-# deviations, and two-way interactions.
 positive_sd_prior <- function(x) {
   if (is.numeric(x) && length(x) == 1L && is.finite(x) && x > 0) return(list(estimated = FALSE, value = unname(x)))
   if (!is.character(x) || length(x) != 1L || is.na(x)) stop("Hierarchical SD must be positive or a supported positive-scale prior")
+  validate_stan_prior_spec(x)
   p <- parse_bmfrm_prior_literal(x)
   a <- p$args; dist <- p$distribution
   valid <- (dist %in% c("normal", "cauchy") && length(a) == 2L && a[1L] == 0 && a[2L] > 0) ||
@@ -621,7 +648,6 @@ positive_sd_prior <- function(x) {
   list(estimated = TRUE, spec = x, distribution = dist, args = a)
 }
 
-# Backward-compatible alias
 interaction_sd_prior <- positive_sd_prior
 
 sample_positive_sd <- function(p) {

@@ -17,20 +17,25 @@ data {
   // {{MODEL_DATA}}
 }
 
+transformed data {
+  vector[K_max] cat_seq = linspaced_vector(K_max, 0.0, K_max - 1.0);
+  vector[K_max] cat_val = linspaced_vector(K_max, 1.0, K_max);
+  vector[K_max] cat_val2 = square(cat_val);
+}
+
 parameters {
-  // person abilities (always present)
+  // ability facet ({{PERSON_FACET}})
   // {{ABILITY_PARAM_DECL}}
 
   // {{FACET_PARAM_DECL}}
 
-  // ragged facet-specific thresholds (zero free parameters for K_level[j] == 2)
+  // ragged facet-specific step deviations (zero free parameters for K_level[j] == 2)
   // {{THRESHOLD_PARAM_DECL}}
 
   // {{BIAS_PARAM_DECL}}
 }
 
 transformed parameters {
-  // person abilities
   // {{ABILITY_TRANSFORM}}
 
   // {{FACET_TRANSFORM}}
@@ -44,78 +49,26 @@ transformed parameters {
 model {
   // {{PRIOR_BLOCK}}
 
-  // likelihood over each level's valid categories 1..K_level[j]
-  for (n in 1:N) {
-    int person_n = person_id[n];
-    // {{INDEX_EXTRACT}}
-    int threshold_n = {{THRESHOLD_FACET}}_id[n];
-    int Kj = K_level[threshold_n];
-    int t_start = tau_start[threshold_n];
-
-    real eta = theta[person_n]
-               // {{ETA_SUM}};
-
-    vector[Kj] logits;
-    logits[1] = 0;
-    for (k in 2:Kj) {
-      logits[k] = logits[k - 1] + eta - tau[t_start + k - 2];
+  // vectorized linear predictor & per-level precomputed cumulative ragged steps
+  {
+    vector[N_tau_steps] cum_tau;
+    vector[N] eta = theta[{{PERSON_FACET}}_id]
+                    // {{ETA_VEC_MAIN}};
+    for (j in 1:J_{{THRESHOLD_FACET}}) {
+      int s = tau_start[j];
+      int mj = tau_len[j];
+      cum_tau[s:(s + mj - 1)] = cumulative_sum(tau[s:(s + mj - 1)]);
     }
-
-    X[n] ~ categorical_logit(logits);
+    // {{ETA_VEC_BIAS}}
+    for (n in 1:N) {
+      int threshold_n = {{THRESHOLD_FACET}}_id[n];
+      int Kj = K_level[threshold_n];
+      int t_start = tau_start[threshold_n];
+      vector[Kj] logits = head(cat_seq, Kj) * eta[n];
+      logits[2:Kj] -= cum_tau[t_start:(t_start + Kj - 2)];
+      X[n] ~ categorical_logit(logits);
+    }
   }
 }
 
-generated quantities {
-  vector[N] log_lik;
-  array[N] int<lower=1, upper=K_max> y_rep;
-  vector[N] mu;        // expected score E[Y_n] on 1..K_level[j]
-  vector[N] sigma2;    // model variance Var(Y_n) on 1..K_level[j]
-  vector[N] mu_fair;   // fair expected score on 1..K_level[j]
-
-  for (n in 1:N) {
-    int person_n = person_id[n];
-    // {{INDEX_EXTRACT}}
-    int threshold_n = {{THRESHOLD_FACET}}_id[n];
-    int Kj = K_level[threshold_n];
-    int t_start = tau_start[threshold_n];
-
-    real eta_full = theta[person_n]
-                    // {{ETA_SUM}};
-    real eta_fair = theta[person_n]
-                    // {{ETA_SUM_FAIR}};
-
-    vector[Kj] logits_full;
-    vector[Kj] logits_fair;
-    vector[Kj] p_full;
-    vector[Kj] p_fair;
-    real ex;
-    real ex2;
-    real ex_fair;
-
-    logits_full[1] = 0;
-    logits_fair[1] = 0;
-    for (k in 2:Kj) {
-      real tau_step = tau[t_start + k - 2];
-      logits_full[k] = logits_full[k - 1] + eta_full - tau_step;
-      logits_fair[k] = logits_fair[k - 1] + eta_fair - tau_step;
-    }
-
-    p_full = softmax(logits_full);
-    p_fair = softmax(logits_fair);
-
-    ex = 0;
-    ex2 = 0;
-    ex_fair = 0;
-    for (k in 1:Kj) {
-      ex      += k * p_full[k];
-      ex2     += k * k * p_full[k];
-      ex_fair += k * p_fair[k];
-    }
-    mu[n]      = ex;
-    sigma2[n]  = ex2 - ex * ex;
-    mu_fair[n] = ex_fair;
-
-    log_lik[n] = categorical_logit_lpmf(X[n] | logits_full);
-    y_rep[n]   = categorical_logit_rng(logits_full);
-  }
-}
+// {{GQ_BLOCK}}

@@ -6,14 +6,6 @@
 \usage{
 validate_spec(spec, data)
 }
-\arguments{
-\item{spec}{bmfrm_spec object}
-
-\item{data}{data.frame}
-}
-\value{
-TRUE if valid (invisibly), otherwise stops with error
-}
 \description{
 Validate bmfrm model specification
 }

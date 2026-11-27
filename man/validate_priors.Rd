@@ -2,31 +2,18 @@
 % Please edit documentation in R/prior.R
 \name{validate_priors}
 \alias{validate_priors}
-\title{Validate a list of priors}
+\title{Validate and complete a list of priors against model facets}
 \usage{
 validate_priors(
   priors,
   facets_main,
   facets_bias = NULL,
   family = "rsm",
-  hierarchical = character()
+  hierarchical = person_facet,
+  person_facet = "person"
 )
 }
-\arguments{
-\item{priors}{list of bmfrm_prior objects or NULL}
-
-\item{facets_main}{vector of main facet names}
-
-\item{facets_bias}{vector of bias facet names}
-
-\item{family}{model family: "rsm" or "pcm"}
-
-\item{hierarchical}{Names of facets with hierarchical distributions.}
-}
-\value{
-validated list of priors
-}
 \description{
-Validate a list of priors
+Validate and complete a list of priors against model facets
 }
 \keyword{internal}

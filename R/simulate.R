@@ -32,42 +32,53 @@
 #'   optional row names match facet labels and column names match step numbers
 #'   1,...,K-1. For heterogeneous `K`, fixed `tau` must be a named list of numeric
 #'   vectors of length `K_j - 1`, each summing to zero (`0` for binary `K_j = 2`).
+#' @param person_facet Name of the unconstrained ability facet in `formula`
+#'   (default `"person"`).
 #' @return A bmfrm_simulation with y_rep (simulations by ratings), generating
 #'   parameters, facet_labels, specification, and data for nsim = 1.
 #' @export
 simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
-                           nsim = 1L, seed = NULL, hierarchical = character(),
-                           family = c("rsm", "pcm"), threshold_facet = NULL) {
+                           nsim = 1L, seed = NULL, hierarchical = person_facet,
+                           family = c("rsm", "pcm"), threshold_facet = NULL,
+                           person_facet = "person") {
   family <- match.arg(family)
+  hier_explicit <- !missing(hierarchical)
+  if (!hier_explicit && !is.null(parameters) && is.list(parameters) &&
+      !any(c("mu_theta", "sigma_theta") %in% names(parameters))) {
+    hierarchical <- setdiff(hierarchical, person_facet)
+  }
   if (length(nsim) != 1L || !is.finite(nsim) || nsim < 1 || nsim != floor(nsim)) stop("nsim must be a positive integer")
   if (!is.data.frame(design) || !nrow(design)) stop("design must contain rating rows")
   response <- bmfrm_response_name(formula)
   fake <- design
   fake[[response]] <- 1L
-  spec <- resolve_bmfrm_spec(parse_bmfrm_formula(formula, fake, K = K, hierarchical = hierarchical,
-    family = family, threshold_facet = threshold_facet), priors)
+  raw_spec <- parse_bmfrm_formula(formula, fake, K = K, hierarchical = hierarchical,
+    family = family, threshold_facet = threshold_facet, person_facet = person_facet)
+  raw_spec$hierarchical_explicit <- hier_explicit
+  spec <- resolve_bmfrm_spec(raw_spec, priors)
+  pf <- spec_person_facet(spec)
   model <- spec$gaussian_model
   priors <- spec$priors
   hierarchical <- spec$hierarchical
   K_max <- get_spec_K_max(spec)
   is_hetero <- isTRUE(spec$K_heterogeneous)
   K_by_level <- spec$K_by_level
-  if (!"person" %in% spec$facets_main ||
-      any(!spec$facets_main %in% names(design))) stop("Simulation requires person and named main facets")
+  if (!pf %in% spec$facets_main ||
+      any(!spec$facets_main %in% names(design))) stop("Simulation requires person_facet ('", pf, "') and named main facets")
   fs <- lapply(design[spec$facets_main], function(x) if (is.factor(x)) x else factor(x))
   if (any(vapply(fs, anyNA, logical(1)))) stop("Missing values in design facets")
   labels <- lapply(fs, levels)
   ids <- lapply(fs, as.integer)
-  param_names <- c(ifelse(spec$facets_main == "person", "theta", spec$facets_main), "tau")
+  param_names <- c(ifelse(spec$facets_main == pf, "theta", spec$facets_main), "tau")
   sizes <- c(lengths(labels), K_max - 1L)
   names(sizes) <- param_names
   J_step <- if (family == "pcm") length(labels[[spec$threshold_facet]]) else 1L
   sizes["tau"] <- if (is_hetero) sum(as.integer(K_by_level[labels[[spec$threshold_facet]]]) - 1L) else J_step * (K_max - 1L)
-  if ("person" %in% hierarchical) {
+  if (pf %in% hierarchical) {
     param_names <- c(param_names, "mu_theta", "sigma_theta")
     sizes <- c(sizes, mu_theta = 1L, sigma_theta = 1L)
   }
-  hier_main <- setdiff(intersect(hierarchical, spec$facets_main), "person")
+  hier_main <- setdiff(intersect(hierarchical, spec$facets_main), pf)
   for (hf in hier_main) {
     nm <- paste0("sigma_", hf)
     param_names <- c(param_names, nm)
@@ -171,26 +182,24 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
       if (!param_names[j] %in% c("theta", "mu_theta", "sigma_theta") && abs(sum(x)) > 1e-8) stop("Fixed parameter must sum to zero: ", param_names[j])
       parameters[[j]] <- unname(x)
     }
-    if ("person" %in% hierarchical) {
+    if (pf %in% hierarchical) {
       if (parameters$sigma_theta <= 0) stop("sigma_theta must be positive")
       if ((!model$ability_mean$estimated && parameters$mu_theta != model$ability_mean$location) ||
           (!model$ability_sd$estimated && parameters$sigma_theta != model$ability_sd$location)) stop("Fixed population parameters must match model")
     }
   }
-  classes <- c(ifelse(spec$facets_main == "person", "theta",
-                     ifelse(spec$facets_main %in% c("item", "rater"), spec$facets_main,
-                            paste0("facet_", spec$facets_main))), "tau")
-  prior_classes <- vapply(priors, function(p) p$class, character(1))
+  prior_keys <- vapply(priors, prior_target_key, character(1), person_facet = pf, facets_bias = spec$facets_bias)
+  main_keys <- c(ifelse(spec$facets_main == pf, "theta:", paste0("facet:", spec$facets_main)), "tau:")
   sample_one <- function() {
     pars <- parameters
     if (is.null(pars) && !is.null(model)) {
       pars <- sample_gaussian_model(model, labels, K_max, K_by_level = K_by_level)
     }
     if (is.null(pars)) {
-      pars <- lapply(seq_along(classes), function(j) {
+      pars <- lapply(seq_along(main_keys), function(j) {
         if (param_names[j] == "tau" && is_hetero) {
           tf_lv <- labels[[spec$threshold_facet]]
-          p_spec <- priors[[match(classes[j], prior_classes)]]$spec
+          p_spec <- priors[[match(main_keys[j], prior_keys)]]$spec
           tl <- lapply(tf_lv, function(lv) {
             Kj <- as.integer(K_by_level[[lv]])
             if (Kj == 2L) return(0)
@@ -200,24 +209,24 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
           names(tl) <- tf_lv
           return(tl)
         }
-        x <- sample_bmfrm_prior(priors[[match(classes[j], prior_classes)]]$spec, sizes[j])
+        x <- sample_bmfrm_prior(priors[[match(main_keys[j], prior_keys)]]$spec, sizes[j])
         if (param_names[j] == "tau" && family == "pcm") {
           x <- matrix(x, J_step, K_max - 1L)
           x <- x - rowMeans(x)
         } else if (param_names[j] != "theta") x <- x - mean(x)
         x
       })
-      names(pars) <- param_names[seq_along(classes)]
+      names(pars) <- param_names[seq_along(main_keys)]
       for (j in seq_along(bias_names)) {
-        p <- priors[[which(prior_classes == "bias" & vapply(priors, function(p) identical(p$facet, spec$facets_bias[j]), logical(1)))]]
+        p <- priors[[match(paste0("bias:", spec$facets_bias[j]), prior_keys)]]
         n <- bias_dims[[j]]
         x <- matrix(sample_bmfrm_prior(p$spec, prod(n)), n[1L], n[2L])
         x <- sweep(x, 1L, rowMeans(x), "-")
         pars[[bias_names[j]]] <- unname(sweep(x, 2L, colMeans(x), "-"))
       }
     }
-    eta <- pars$theta[ids$person]
-    for (f in setdiff(spec$facets_main, "person")) eta <- eta - pars[[f]][ids[[f]]]
+    eta <- pars$theta[ids[[pf]]]
+    for (f in setdiff(spec$facets_main, pf)) eta <- eta - pars[[f]][ids[[f]]]
     for (j in seq_along(bias_names)) {
       f <- strsplit(spec$facets_bias[j], ":", fixed = TRUE)[[1L]]
       eta <- eta + pars[[bias_names[j]]][cbind(ids[[f[1L]]], ids[[f[2L]]])]
@@ -259,9 +268,15 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
 #' @return A bmfrm_simulation. Inspect its y_rep before fitting observed data.
 #' @export
 prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL,
-                               hierarchical = character(), family = c("rsm", "pcm"), threshold_facet = NULL) {
-  simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, hierarchical = hierarchical,
-    family = match.arg(family), threshold_facet = threshold_facet)
+                               hierarchical = person_facet, family = c("rsm", "pcm"),
+                               threshold_facet = NULL, person_facet = "person") {
+  if (missing(hierarchical)) {
+    simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed,
+      family = match.arg(family), threshold_facet = threshold_facet, person_facet = person_facet)
+  } else {
+    simulate_bmfrm(formula, design, K, priors, nsim = ndraws, seed = seed, hierarchical = hierarchical,
+      family = match.arg(family), threshold_facet = threshold_facet, person_facet = person_facet)
+  }
 }
 
 with_bmfrm_seed <- function(seed, code) {

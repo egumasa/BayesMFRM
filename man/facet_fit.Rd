@@ -2,21 +2,49 @@
 % Please edit documentation in R/methods.R
 \name{facet_fit}
 \alias{facet_fit}
-\title{Extract facet fit statistics}
+\title{Extract calibrated facet fit statistics (Sinharay 2006 posterior predictive p-values)}
 \usage{
-facet_fit(object, facet, prob = 0.95, chunk_size = NULL, ...)
+facet_fit(
+  object,
+  facet,
+  prob = 0.95,
+  seed = 123L,
+  include_zstd = FALSE,
+  chunk_size = NULL,
+  ...
+)
 }
 \arguments{
-\item{object}{bmfrm_fit object}
+\item{object}{\code{bmfrm_fit} object}
 
-\item{facet}{name of facet}
+\item{facet}{name of main facet}
 
-\item{prob}{credible interval probability (default 0.95)}
+\item{prob}{credible and predictive reference interval probability (default \code{0.95})}
+
+\item{seed}{Optional integer RNG seed for reproducible posterior predictive
+draws when \code{y_rep} is streamed in R (default \code{123L}).}
+
+\item{include_zstd}{Logical; include uncalibrated asymptotic Wilson-Hilferty
+\code{infit_zstd} / \code{outfit_zstd} columns for legacy descriptive comparison?
+Default \code{FALSE}.}
 
 \item{chunk_size}{Optional observation chunk size for streaming evaluation.}
 
 \item{...}{unused}
 }
 \description{
-Extract facet fit statistics
+Computes draw-matched realized and replicated mean-square discrepancies
+\code{MSQ(y, psi_d)} and \code{MSQ(y_rep_d, psi_d)} across posterior draws, returning
+calibrated posterior predictive p-values (\code{infit_ppp}, \code{outfit_ppp}) and
+posterior predictive reference bounds (\code{infit_rep_lo..hi}, \code{outfit_rep_lo..hi})
+as primary fit diagnostics.
+}
+\details{
+Why PPP is primary: posterior parameter uncertainty inflates realized
+\code{(y - mu_d)^2 / sigma2_d} for sparse levels or small \code{n_obs}, causing raw MSQ
+rules of thumb and asymptotic Wilson-Hilferty \verb{|ZSTD| > 2} thresholds to emit
+systematic false alarms. Comparing \code{MSQ(y, psi_d)} against \code{MSQ(y_rep_d, psi_d)}
+on the same posterior draws accounts for exact discrete category distributions,
+sample size \code{n_obs}, and parameter uncertainty (\code{PPP} near \code{0} indicates
+underfit/erratic noise; \code{PPP} near \code{1} indicates overfit/muted dispersion).
 }

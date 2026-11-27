@@ -2,15 +2,21 @@
 % Please edit documentation in R/posterior_quantities.R
 \name{stream_bmfrm_facet_fit}
 \alias{stream_bmfrm_facet_fit}
-\title{Streaming facet-level infit/outfit with draw-consistent fourth-moment q (O(D * J_facet) memory)}
+\title{Streaming facet-level infit/outfit with Sinharay (2006) posterior predictive p-values}
 \usage{
-stream_bmfrm_facet_fit(object, facet, prob = 0.95, chunk_size = NULL)
+stream_bmfrm_facet_fit(
+  object,
+  facet,
+  prob = 0.95,
+  seed = 123L,
+  include_zstd = FALSE,
+  chunk_size = NULL
+)
 }
 \description{
-Evaluates \code{C_n / W_n^2} and \code{C_n - W_n^2} inside each posterior draw before
-aggregating (avoiding the Jensen order swap \code{E[C] / E[W]^2 != E[C / W^2]}),
-and returns draw-level Wilson-Hilferty ZSTD approximations alongside MSQ CrIs.
-Note that Wilson-Hilferty ZSTD remains an approximation (especially for small
-\code{n_obs} or sparse designs); use conditional PPC for calibrated misfit checks.
+Evaluates realized and replicated discrepancies \code{MSQ(y, psi_d)} vs.
+\code{MSQ(y_rep_d, psi_d)} on identical posterior draws in \code{O(D * J_facet)} memory,
+returning calibrated posterior predictive p-values (\code{infit_ppp}, \code{outfit_ppp})
+and posterior predictive reference bounds (\code{infit_rep_lo..hi}, \code{outfit_rep_lo..hi}).
 }
 \keyword{internal}

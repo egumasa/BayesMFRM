@@ -30,13 +30,12 @@ fit_has_variable <- function(fit, var_name) {
 #'
 #' @keywords internal
 resolve_eval_contract <- function(spec, stan_code = NULL) {
-  non_person <- if (!is.null(spec$facets_main)) setdiff(spec$facets_main, "person") else character(0)
   if (!isTRUE(spec$custom_stan)) {
     return(list(
       source = "generated",
       model_id = NULL,
       r_recompute = TRUE,
-      stan_mu_fair_adjust = intersect(c("rater", "interlocutor"), non_person),
+      stan_mu_fair_adjust = spec_adjust_facets(spec),
       supported_ops = c("residuals", "facet_fit", "fair_scores", "standardized_fair_scores", "pp_check", "predict", "loo"),
       reason = "Generated standard MFRM (RSM/PCM) with verified R-engine semantics."
     ))
@@ -118,8 +117,9 @@ can_evaluate_in_r <- function(object, adjust_facets = character()) {
   spec <- object$spec
   if (is.null(spec$facets_main) || is.null(spec$K)) return(FALSE)
   if (!fit_has_variable(object$fit, "theta")) return(FALSE)
+  pf <- spec_person_facet(spec)
 
-  other_facets <- setdiff(spec$facets_main, c("person", adjust_facets))
+  other_facets <- setdiff(spec$facets_main, c(pf, adjust_facets))
   for (f in other_facets) {
     if (!fit_has_variable(object$fit, f)) return(FALSE)
   }
@@ -198,14 +198,15 @@ check_fair_score_identifiability <- function(object, eval_df, adjust_facets = ch
     tol2 <- (dc$tolerance %||% 1e-10)^2
     row_names <- rownames(null_mat)
     proj <- matrix(0, nrow = n, ncol = ncol(null_mat))
+    pf <- spec_person_facet(object$spec)
 
-    p_idx <- match(paste0("person:", as.character(eval_df$person)), row_names)
+    p_idx <- match(paste0(pf, ":", as.character(eval_df[[pf]])), row_names)
     if (anyNA(p_idx)) {
       return(list(likelihood_identified = rep(NA, n), identification_basis = rep(NA_character_, n)))
     }
     proj <- proj + null_mat[p_idx, , drop = FALSE]
 
-    keep_facets <- setdiff(object$spec$facets_main, c("person", adjust_facets))
+    keep_facets <- setdiff(object$spec$facets_main, c(pf, adjust_facets))
     for (f in keep_facets) {
       f_idx <- match(paste0(f, ":", as.character(eval_df[[f]])), row_names)
       if (anyNA(f_idx)) {
@@ -277,6 +278,7 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
     return(list(likelihood_identified = rep(NA, P), identification_basis = rep(NA_character_, P)))
   }
 
+  pf <- spec_person_facet(object$spec)
   null_mat <- dc$effect_null_space
   q <- ncol(null_mat)
   if (!q) {
@@ -284,7 +286,7 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
   } else {
     tol2 <- (dc$tolerance %||% 1e-10)^2
     row_names <- rownames(null_mat)
-    p_idx <- match(paste0("person:", as.character(person_labels)), row_names)
+    p_idx <- match(paste0(pf, ":", as.character(person_labels)), row_names)
     if (anyNA(p_idx)) {
       return(list(likelihood_identified = rep(NA, P), identification_basis = rep(NA_character_, P)))
     }
@@ -292,7 +294,7 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
 
     # Non-person null-space projection U_r (n_ref x q)
     U_r <- matrix(0, nrow = n_ref, ncol = q)
-    keep_facets <- setdiff(object$spec$facets_main, c("person", adjust_facets))
+    keep_facets <- setdiff(object$spec$facets_main, c(pf, adjust_facets))
     for (f in keep_facets) {
       f_idx <- match(paste0(f, ":", as.character(reference_grid[[f]])), row_names)
       if (anyNA(f_idx)) {
@@ -304,15 +306,15 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
     for (term in object$spec$facets_bias) {
       comps <- strsplit(term, ":", fixed = TRUE)[[1L]]
       if (any(comps %in% adjust_facets)) next
-      if ("person" %in% comps) {
-        other <- setdiff(comps, "person")
+      if (pf %in% comps) {
+        other <- setdiff(comps, pf)
         other_idx <- match(as.character(reference_grid[[other]]), object$data_info$facet_labels[[other]])
         if (anyNA(other_idx)) {
           return(list(likelihood_identified = rep(NA, P), identification_basis = rep(NA_character_, P)))
         }
         person_terms[[length(person_terms) + 1L]] <- list(
           term = term,
-          person_first = identical(comps[1L], "person"),
+          person_first = identical(comps[1L], pf),
           other_idx = other_idx
         )
       } else {
@@ -327,8 +329,6 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
     }
 
     if (!length(person_terms)) {
-      # For person p, ||V_p[p,] + U_r[r,]||^2 < tol^2 for ALL r iff
-      # all rows of U_r are identical (to u0) AND ||V_p[p,] + u0||^2 < tol^2.
       u0 <- U_r[1L, , drop = FALSE]
       ref_spread <- if (n_ref > 1L) max(rowSums(sweep(U_r, 2L, u0, "-")^2)) else 0
       if (ref_spread >= tol2) {
@@ -337,8 +337,7 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
         pred_ok <- rowSums(sweep(V_p, 2L, u0, "+")^2) < tol2
       }
     } else {
-      # Evaluate person-coupled interaction projections per person without expanding P x n_ref
-      p_label_idx <- match(as.character(person_labels), object$data_info$facet_labels$person)
+      p_label_idx <- match(as.character(person_labels), object$data_info$facet_labels[[pf]])
       if (anyNA(p_label_idx)) {
         return(list(likelihood_identified = rep(NA, P), identification_basis = rep(NA_character_, P)))
       }
@@ -364,7 +363,7 @@ check_standardized_fair_identifiability <- function(object, person_labels, refer
       !(object$spec$threshold_facet %in% adjust_facets) &&
       length(dc$unobserved_step_levels)) {
     tf <- object$spec$threshold_facet
-    if (identical(tf, "person")) {
+    if (identical(tf, pf)) {
       pred_ok <- pred_ok & !(as.character(person_labels) %in% dc$unobserved_step_levels)
     } else if (any(as.character(reference_grid[[tf]]) %in% dc$unobserved_step_levels)) {
       pred_ok <- rep(FALSE, P)
@@ -406,11 +405,15 @@ extract_ordered_draws <- function(fit, var_name, expected_cols = NULL) {
 #' @keywords internal
 resolve_adjust_facets <- function(spec, adjust_facets = NULL, warn_if_empty = TRUE) {
   facets_main <- spec$facets_main
+  pf <- spec_person_facet(spec)
   if (is.null(adjust_facets)) {
     if (is.null(facets_main)) {
       return(c("rater", "interlocutor"))
     }
-    non_person <- setdiff(facets_main, "person")
+    non_person <- setdiff(facets_main, pf)
+    if (isTRUE(spec$adjust_facets_explicit)) {
+      return(intersect(spec$adjust_facets %||% character(0), non_person))
+    }
     found <- intersect(c("rater", "interlocutor"), non_person)
     if (!length(found) && length(non_person) >= 1L && warn_if_empty) {
       warning(
@@ -423,12 +426,12 @@ resolve_adjust_facets <- function(spec, adjust_facets = NULL, warn_if_empty = TR
     }
     return(found)
   }
-  non_person <- setdiff(facets_main, "person")
+  non_person <- setdiff(facets_main, pf)
   if (!is.character(adjust_facets) || anyNA(adjust_facets)) {
     stop("adjust_facets must be a character vector of facet names")
   }
-  if ("person" %in% adjust_facets) {
-    stop("'person' cannot be included in adjust_facets")
+  if (pf %in% adjust_facets) {
+    stop("'", pf, "' cannot be included in adjust_facets")
   }
   unknown <- setdiff(adjust_facets, facets_main)
   if (length(unknown)) {
@@ -442,16 +445,17 @@ resolve_adjust_facets <- function(spec, adjust_facets = NULL, warn_if_empty = TR
 #' @keywords internal
 extract_bmfrm_param_draws <- function(object, adjust_facets = character(), draw_idx = NULL) {
   spec <- object$spec
+  pf <- spec_person_facet(spec)
   labels <- object$data_info$facet_labels
   K <- get_spec_K_max(spec)
   family <- spec$family %||% "rsm"
   is_hetero <- isTRUE(spec$K_heterogeneous)
 
-  theta <- extract_ordered_draws(object$fit, "theta", length(labels$person))
+  theta <- extract_ordered_draws(object$fit, "theta", length(labels[[pf]]))
   if (!is.null(draw_idx)) theta <- theta[draw_idx, , drop = FALSE]
   D <- nrow(theta)
 
-  other_facets <- setdiff(spec$facets_main, c("person", adjust_facets))
+  other_facets <- setdiff(spec$facets_main, c(pf, adjust_facets))
   facet_draws <- list()
   for (f in other_facets) {
     fd <- extract_ordered_draws(object$fit, f, length(labels[[f]]))
@@ -541,7 +545,7 @@ extract_bmfrm_param_draws <- function(object, adjust_facets = character(), draw_
   }
 
   list(
-    D = D, K = K, labels = labels,
+    D = D, K = K, person_facet = pf, labels = labels,
     theta = theta, facet_draws = facet_draws,
     bias_draws = bias_draws, tau_info = tau_info
   )
@@ -699,9 +703,10 @@ eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
                              compute_y_rep = FALSE) {
   D <- params$D
   K <- params$K
+  pf <- params$person_facet %||% "person"
   nc <- length(rows)
 
-  eta <- params$theta[, ids$person[rows], drop = FALSE]
+  eta <- params$theta[, ids[[pf]][rows], drop = FALSE]
   for (f in names(params$facet_draws)) {
     eta <- eta - params$facet_draws[[f]][, ids[[f]][rows], drop = FALSE]
   }
@@ -900,16 +905,16 @@ stream_bmfrm_residuals <- function(object, chunk_size = NULL) {
   list(mu_hat = mu_hat, sigma2_hat = sig_hat)
 }
 
-#' Streaming facet-level infit/outfit with draw-consistent fourth-moment q (O(D * J_facet) memory)
+#' Streaming facet-level infit/outfit with Sinharay (2006) posterior predictive p-values
 #'
-#' Evaluates `C_n / W_n^2` and `C_n - W_n^2` inside each posterior draw before
-#' aggregating (avoiding the Jensen order swap `E[C] / E[W]^2 != E[C / W^2]`),
-#' and returns draw-level Wilson-Hilferty ZSTD approximations alongside MSQ CrIs.
-#' Note that Wilson-Hilferty ZSTD remains an approximation (especially for small
-#' `n_obs` or sparse designs); use conditional PPC for calibrated misfit checks.
+#' Evaluates realized and replicated discrepancies `MSQ(y, psi_d)` vs.
+#' `MSQ(y_rep_d, psi_d)` on identical posterior draws in `O(D * J_facet)` memory,
+#' returning calibrated posterior predictive p-values (`infit_ppp`, `outfit_ppp`)
+#' and posterior predictive reference bounds (`infit_rep_lo..hi`, `outfit_rep_lo..hi`).
 #'
 #' @keywords internal
-stream_bmfrm_facet_fit <- function(object, facet, prob = 0.95, chunk_size = NULL) {
+stream_bmfrm_facet_fit <- function(object, facet, prob = 0.95, seed = 123L,
+                                   include_zstd = FALSE, chunk_size = NULL) {
   df <- object$data_info$data_clean
   N <- nrow(df)
   x <- object$data_info$stan_data$X
@@ -921,85 +926,119 @@ stream_bmfrm_facet_fit <- function(object, facet, prob = 0.95, chunk_size = NULL
   D <- params$D
   cs <- default_bmfrm_chunk_size(D, N, chunk_size)
 
-  # Compact D x J accumulators (independent of N!)
   sum_z2 <- matrix(0, nrow = D, ncol = J)
   sum_wz2 <- matrix(0, nrow = D, ncol = J)
+  sum_z2_rep <- matrix(0, nrow = D, ncol = J)
+  sum_wz2_rep <- matrix(0, nrow = D, ncol = J)
   sum_w <- matrix(0, nrow = D, ncol = J)
-  sum_c_over_w2_m1 <- matrix(0, nrow = D, ncol = J)
-  sum_c_minus_w2 <- matrix(0, nrow = D, ncol = J)
+  sum_c_over_w2_m1 <- if (isTRUE(include_zstd)) matrix(0, nrow = D, ncol = J) else NULL
+  sum_c_minus_w2 <- if (isTRUE(include_zstd)) matrix(0, nrow = D, ncol = J) else NULL
   n_obs_vec <- integer(J)
 
-  # Compact length-N plug-in vectors
   mu_hat <- numeric(N)
   sig_hat <- numeric(N)
 
-  starts <- seq.int(1L, N, by = cs)
-  for (s in starts) {
-    e <- min(N, s + cs - 1L)
-    rows <- s:e
-    ch <- eval_bmfrm_chunk(params, ids, rows, compute_kurtosis = TRUE)
-    mu_hat[rows] <- unname(colMeans(ch$mu))
-    sig_hat[rows] <- unname(colMeans(ch$sigma2))
+  run_fit_stream <- function() {
+    starts <- seq.int(1L, N, by = cs)
+    for (s in starts) {
+      e <- min(N, s + cs - 1L)
+      rows <- s:e
+      ch <- eval_bmfrm_chunk(
+        params, ids, rows,
+        compute_kurtosis = isTRUE(include_zstd),
+        compute_y_rep = TRUE
+      )
+      mu_hat[rows] <<- unname(colMeans(ch$mu))
+      sig_hat[rows] <<- unname(colMeans(ch$sigma2))
 
-    X_mat <- matrix(x[rows], nrow = D, ncol = length(rows), byrow = TRUE)
-    resid2 <- (X_mat - ch$mu)^2
-    z2_chunk <- resid2 / ch$sigma2
-    w2_chunk <- ch$sigma2 * ch$sigma2
-    c_over_w2_m1 <- pmax(ch$kurt / w2_chunk - 1, 0)
-    c_minus_w2 <- pmax(ch$kurt - w2_chunk, 0)
+      X_mat <- matrix(x[rows], nrow = D, ncol = length(rows), byrow = TRUE)
+      resid2 <- (X_mat - ch$mu)^2
+      z2_chunk <- resid2 / ch$sigma2
 
-    f_chunk <- facet_id[rows]
-    for (lv in unique(f_chunk)) {
-      loc <- which(f_chunk == lv)
-      n_obs_vec[lv] <- n_obs_vec[lv] + length(loc)
-      sum_z2[, lv] <- sum_z2[, lv] + rowSums(z2_chunk[, loc, drop = FALSE])
-      sum_wz2[, lv] <- sum_wz2[, lv] + rowSums(resid2[, loc, drop = FALSE])
-      sum_w[, lv] <- sum_w[, lv] + rowSums(ch$sigma2[, loc, drop = FALSE])
-      sum_c_over_w2_m1[, lv] <- sum_c_over_w2_m1[, lv] + rowSums(c_over_w2_m1[, loc, drop = FALSE])
-      sum_c_minus_w2[, lv] <- sum_c_minus_w2[, lv] + rowSums(c_minus_w2[, loc, drop = FALSE])
+      resid2_rep <- (ch$y_rep - ch$mu)^2
+      z2_rep_chunk <- resid2_rep / ch$sigma2
+
+      if (isTRUE(include_zstd)) {
+        w2_chunk <- ch$sigma2 * ch$sigma2
+        c_over_w2_m1 <- pmax(ch$kurt / w2_chunk - 1, 0)
+        c_minus_w2 <- pmax(ch$kurt - w2_chunk, 0)
+      }
+
+      f_chunk <- facet_id[rows]
+      for (lv in unique(f_chunk)) {
+        loc <- which(f_chunk == lv)
+        n_obs_vec[lv] <<- n_obs_vec[lv] + length(loc)
+        sum_z2[, lv] <<- sum_z2[, lv] + rowSums(z2_chunk[, loc, drop = FALSE])
+        sum_wz2[, lv] <<- sum_wz2[, lv] + rowSums(resid2[, loc, drop = FALSE])
+        sum_z2_rep[, lv] <<- sum_z2_rep[, lv] + rowSums(z2_rep_chunk[, loc, drop = FALSE])
+        sum_wz2_rep[, lv] <<- sum_wz2_rep[, lv] + rowSums(resid2_rep[, loc, drop = FALSE])
+        sum_w[, lv] <<- sum_w[, lv] + rowSums(ch$sigma2[, loc, drop = FALSE])
+        if (isTRUE(include_zstd)) {
+          sum_c_over_w2_m1[, lv] <<- sum_c_over_w2_m1[, lv] + rowSums(c_over_w2_m1[, loc, drop = FALSE])
+          sum_c_minus_w2[, lv] <<- sum_c_minus_w2[, lv] + rowSums(c_minus_w2[, loc, drop = FALSE])
+        }
+      }
     }
   }
+  if (!is.null(seed)) with_bmfrm_seed(seed, run_fit_stream()) else run_fit_stream()
 
   prob_lo <- (1 - prob) / 2
   prob_hi <- 1 - prob_lo
+  tol_tie <- 1e-12
   obs_levels <- which(n_obs_vec > 0L)
   out_rows <- lapply(obs_levels, function(lv) {
     n_obs <- n_obs_vec[lv]
     idx <- which(facet_id == lv)
     outfit_draws <- sum_z2[, lv] / n_obs
     infit_draws <- sum_wz2[, lv] / sum_w[, lv]
+    outfit_rep_draws <- sum_z2_rep[, lv] / n_obs
+    infit_rep_draws <- sum_wz2_rep[, lv] / sum_w[, lv]
 
-    # Per-draw q_d and per-draw Wilson-Hilferty ZSTD (no E[C]/E[W]^2 swap)
-    q_out_draws <- sqrt(pmax(sum_c_over_w2_m1[, lv] / (n_obs^2), 1e-12))
-    q_in_draws <- sqrt(pmax(sum_c_minus_w2[, lv] / (sum_w[, lv]^2), 1e-12))
-    outfit_zstd_draws <- (outfit_draws^(1/3) - 1) * (3 / q_out_draws) + q_out_draws / 3
-    infit_zstd_draws <- (infit_draws^(1/3) - 1) * (3 / q_in_draws) + q_in_draws / 3
+    in_diff <- infit_rep_draws - infit_draws
+    out_diff <- outfit_rep_draws - outfit_draws
+    infit_ppp <- mean((in_diff > tol_tie) + 0.5 * (abs(in_diff) <= tol_tie))
+    outfit_ppp <- mean((out_diff > tol_tie) + 0.5 * (abs(out_diff) <= tol_tie))
 
     z2_plug <- (x[idx] - mu_hat[idx])^2 / sig_hat[idx]
     w_plug <- sig_hat[idx]
 
-    tibble::tibble(
+    out <- tibble::tibble(
       facet_value = lv,
       model = object$spec$model_name,
       n_obs = n_obs,
+      infit_ppp = infit_ppp,
+      outfit_ppp = outfit_ppp,
       infit_msq = mean(infit_draws),
       outfit_msq = mean(outfit_draws),
       infit_lo = unname(stats::quantile(infit_draws, prob_lo)),
       infit_hi = unname(stats::quantile(infit_draws, prob_hi)),
       outfit_lo = unname(stats::quantile(outfit_draws, prob_lo)),
       outfit_hi = unname(stats::quantile(outfit_draws, prob_hi)),
-      infit_zstd = mean(infit_zstd_draws),
-      outfit_zstd = mean(outfit_zstd_draws),
-      infit_zstd_lo = unname(stats::quantile(infit_zstd_draws, prob_lo)),
-      infit_zstd_hi = unname(stats::quantile(infit_zstd_draws, prob_hi)),
-      outfit_zstd_lo = unname(stats::quantile(outfit_zstd_draws, prob_lo)),
-      outfit_zstd_hi = unname(stats::quantile(outfit_zstd_draws, prob_hi)),
+      infit_rep_mean = mean(infit_rep_draws),
+      outfit_rep_mean = mean(outfit_rep_draws),
+      infit_rep_lo = unname(stats::quantile(infit_rep_draws, prob_lo)),
+      infit_rep_hi = unname(stats::quantile(infit_rep_draws, prob_hi)),
+      outfit_rep_lo = unname(stats::quantile(outfit_rep_draws, prob_lo)),
+      outfit_rep_hi = unname(stats::quantile(outfit_rep_draws, prob_hi)),
       infit_msq_plugin = sum(w_plug * z2_plug, na.rm = TRUE) / sum(w_plug, na.rm = TRUE),
-      outfit_msq_plugin = mean(z2_plug, na.rm = TRUE),
-      outfit_q = mean(q_out_draws),
-      infit_q = mean(q_in_draws),
-      zstd_method = "draw_wilson_hilferty_approx"
+      outfit_msq_plugin = mean(z2_plug, na.rm = TRUE)
     )
+    if (isTRUE(include_zstd)) {
+      q_out_draws <- sqrt(pmax(sum_c_over_w2_m1[, lv] / (n_obs^2), 1e-12))
+      q_in_draws <- sqrt(pmax(sum_c_minus_w2[, lv] / (sum_w[, lv]^2), 1e-12))
+      outfit_zstd_draws <- (outfit_draws^(1/3) - 1) * (3 / q_out_draws) + q_out_draws / 3
+      infit_zstd_draws <- (infit_draws^(1/3) - 1) * (3 / q_in_draws) + q_in_draws / 3
+      out$outfit_q <- mean(q_out_draws)
+      out$infit_q <- mean(q_in_draws)
+      out$infit_zstd <- mean(infit_zstd_draws)
+      out$outfit_zstd <- mean(outfit_zstd_draws)
+      out$infit_zstd_lo <- unname(stats::quantile(infit_zstd_draws, prob_lo))
+      out$infit_zstd_hi <- unname(stats::quantile(infit_zstd_draws, prob_hi))
+      out$outfit_zstd_lo <- unname(stats::quantile(outfit_zstd_draws, prob_lo))
+      out$outfit_zstd_hi <- unname(stats::quantile(outfit_zstd_draws, prob_hi))
+      out$zstd_method <- "uncalibrated_draw_wilson_hilferty_approx"
+    }
+    out
   })
   dplyr::bind_rows(out_rows)
 }
@@ -1010,10 +1049,11 @@ stream_bmfrm_fair_scores <- function(object, newdata, adjust_facets,
                                      summary = TRUE, chunk_size = NULL) {
   spec <- object$spec
   params <- extract_bmfrm_param_draws(object, adjust_facets = adjust_facets)
+  pf <- params$person_facet %||% "person"
   ids <- map_eval_indices(newdata, spec, params$labels, adjust_facets = adjust_facets)
   D <- params$D
   N <- nrow(newdata)
-  P <- length(params$labels$person)
+  P <- length(params$labels[[pf]])
   cs <- default_bmfrm_chunk_size(D, N, chunk_size)
 
   if (!summary) {
@@ -1030,10 +1070,9 @@ stream_bmfrm_fair_scores <- function(object, newdata, adjust_facets,
     return(list(mu_fair = mu_mean, mu_fair_sd = mu_sd))
   }
 
-  # Accumulate joint posterior draw sums per person (D x P only!)
   sum_mu <- matrix(0, nrow = D, ncol = P)
   count_p <- integer(P)
-  p_ids <- ids$person
+  p_ids <- ids[[pf]]
   starts <- seq.int(1L, N, by = cs)
   for (s in starts) {
     e <- min(N, s + cs - 1L)
@@ -1047,24 +1086,20 @@ stream_bmfrm_fair_scores <- function(object, newdata, adjust_facets,
     }
   }
 
-  list(sum_mu = sum_mu, count_p = count_p, labels = params$labels$person)
+  list(sum_mu = sum_mu, count_p = count_p, labels = params$labels[[pf]])
 }
 
 #' Streaming standardized fair scores without expanding a P x n_ref data.frame
-#'
-#' Iterates over person chunks and reference-grid chunks directly so memory stays
-#' O(D * chunk_size + D * P) even for thousands of persons. Supports arbitrary
-#' non-negative normalized weights over `reference_grid` rows.
-#'
 #' @keywords internal
 stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust_facets,
                                                   weights = NULL,
                                                   summary = TRUE, chunk_size = NULL) {
   spec <- object$spec
   params <- extract_bmfrm_param_draws(object, adjust_facets = adjust_facets)
+  pf <- params$person_facet %||% "person"
   D <- params$D
   K <- params$K
-  P <- length(params$labels$person)
+  P <- length(params$labels[[pf]])
   n_ref <- nrow(reference_grid)
   if (is.null(weights)) {
     weights <- rep(1 / n_ref, n_ref)
@@ -1075,10 +1110,8 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
     }
     weights <- weights / sum(weights)
   }
-  ref_ids <- map_eval_indices(reference_grid, spec, params$labels, adjust_facets = c("person", adjust_facets))
+  ref_ids <- map_eval_indices(reference_grid, spec, params$labels, adjust_facets = c(pf, adjust_facets))
 
-  # Compute non-person offset for reference_grid (D x n_ref); note n_ref <= max_grid_cells
-  # Chunk over person_chunk x ref_chunk so each temporary matrix is <= ~16 MB
   budget <- default_bmfrm_chunk_size(D, P * n_ref, chunk_size)
   ref_chunk_sz <- max(1L, min(n_ref, budget))
   p_chunk_sz <- max(1L, min(P, floor(budget / ref_chunk_sz)))
@@ -1088,8 +1121,8 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
   mu_sd <- if (!summary) numeric(P * n_ref) else NULL
 
   tau_info <- params$tau_info
-  ref_biases <- Filter(function(b) !identical(b$f1, "person") && !identical(b$f2, "person"), params$bias_draws)
-  person_biases <- Filter(function(b) identical(b$f1, "person") || identical(b$f2, "person"), params$bias_draws)
+  ref_biases <- Filter(function(b) !identical(b$f1, pf) && !identical(b$f2, pf), params$bias_draws)
+  person_biases <- Filter(function(b) identical(b$f1, pf) || identical(b$f2, pf), params$bias_draws)
   ref_starts <- seq.int(1L, n_ref, by = ref_chunk_sz)
   p_starts <- seq.int(1L, P, by = p_chunk_sz)
 
@@ -1099,7 +1132,6 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
     nr <- length(r_rows)
     w_chunk <- weights[r_rows]
 
-    # Non-person offset on this reference-grid chunk (D x nr)
     base_eta <- matrix(0, nrow = D, ncol = nr)
     for (f in names(params$facet_draws)) {
       base_eta <- base_eta - params$facet_draws[[f]][, ref_ids[[f]][r_rows], drop = FALSE]
@@ -1109,7 +1141,7 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
       base_eta <- base_eta + b$draws[, cell_idx, drop = FALSE]
     }
     is_pcm_mode <- tau_info$mode %in% c("pcm", "pcm_ragged")
-    is_person_pcm <- is_pcm_mode && identical(tau_info$threshold_facet, "person")
+    is_person_pcm <- is_pcm_mode && identical(tau_info$threshold_facet, pf)
     t_idx_r <- if (is_pcm_mode && !is_person_pcm) {
       ref_ids[[tau_info$threshold_facet]][r_rows]
     } else {
@@ -1122,13 +1154,12 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
       np <- length(p_rows)
       nc <- np * nr
 
-      # Columns ordered by person (outer), ref row (inner): matches rep(labels, each = n_ref)
       p_rep <- rep(p_rows, each = nr)
       r_rep <- rep(seq_len(nr), times = np)
       eta <- params$theta[, p_rep, drop = FALSE] + base_eta[, r_rep, drop = FALSE]
       for (b in person_biases) {
-        i1 <- if (identical(b$f1, "person")) p_rep else ref_ids[[b$f1]][r_rows][r_rep]
-        i2 <- if (identical(b$f2, "person")) p_rep else ref_ids[[b$f2]][r_rows][r_rep]
+        i1 <- if (identical(b$f1, pf)) p_rep else ref_ids[[b$f1]][r_rows][r_rep]
+        i2 <- if (identical(b$f2, pf)) p_rep else ref_ids[[b$f2]][r_rows][r_rep]
         cell_idx <- i1 + (i2 - 1L) * b$n1
         eta <- eta + b$draws[, cell_idx, drop = FALSE]
       }
@@ -1151,7 +1182,6 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
           }
         }
 
-        # Two-pass softmax for E[Y] (no K-fold matrix retention)
         max_logit <- matrix(0, nrow = D, ncol = nc)
         if (K >= 2L) {
           for (k in 2:K) {
@@ -1189,7 +1219,7 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
   }
 
   if (summary) {
-    return(list(sum_mu = sum_mu, count_p = rep(1, P), labels = params$labels$person, weights = weights))
+    return(list(sum_mu = sum_mu, count_p = rep(1, P), labels = params$labels[[pf]], weights = weights))
   }
   list(mu_fair = mu_mean, mu_fair_sd = mu_sd, weights = weights)
 }
@@ -1464,13 +1494,14 @@ prepare_eval_plan <- function(object, newdata,
 
       if (identical(sample_new_levels, "zero")) {
         main_new[[f]] <- list(mode = "zero", n_known = length(known), seeds = integer(0))
-      } else if (identical(f, "person")) {
-        if (!("person" %in% hier) ||
+      } else if (identical(f, spec_person_facet(spec))) {
+        pf_cur <- spec_person_facet(spec)
+        if (!(pf_cur %in% hier) ||
             !fit_has_variable(object$fit, "mu_theta") ||
             !fit_has_variable(object$fit, "sigma_theta")) {
           stop(
-            "Cannot sample new levels for non-hierarchical facet 'person' under ",
-            "sample_new_levels = 'hierarchical'. Refit with hierarchical = c(..., 'person') ",
+            "Cannot sample new levels for non-hierarchical facet '", pf_cur, "' under ",
+            "sample_new_levels = 'hierarchical'. Refit with hierarchical = c(..., '", pf_cur, "') ",
             "or explicitly set sample_new_levels = 'zero'."
           )
         }
@@ -1892,9 +1923,10 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
   K <- params$K
   nc <- length(rows)
 
-  # 1. Person linear predictor contribution
-  p_id <- ids$person[rows]
-  p_new_info <- plan$main_new$person
+  # 1. Person / ability linear predictor contribution
+  pf <- plan$params$person_facet %||% "person"
+  p_id <- ids[[pf]][rows]
+  p_new_info <- plan$main_new[[pf]]
   if (is.null(p_new_info)) {
     eta <- params$theta[, p_id, drop = FALSE]
   } else {
@@ -2397,7 +2429,8 @@ eval_bmfrm_log_lik_obs <- function(data_i, draws) {
   K <- draws$K
   y <- as.integer(data_i$.bmfrm_response[[1L]])
 
-  eta <- draws$theta[, as.integer(data_i$person[[1L]])]
+  pf <- draws$person_facet %||% "person"
+  eta <- draws$theta[, as.integer(data_i[[pf]][[1L]])]
   for (f in names(draws$facet_draws)) {
     eta <- eta - draws$facet_draws[[f]][, as.integer(data_i[[f]][[1L]])]
   }

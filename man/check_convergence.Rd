@@ -2,20 +2,34 @@
 % Please edit documentation in R/bmfrm.R
 \name{check_convergence}
 \alias{check_convergence}
-\title{Check MCMC convergence}
+\title{Check MCMC convergence and sampler diagnostics}
 \usage{
-check_convergence(fit, variables = NULL)
+check_convergence(
+  fit,
+  variables = NULL,
+  rhat_max = 1.01,
+  ess_min = 400,
+  ebfmi_min = 0.3
+)
 }
 \arguments{
 \item{fit}{CmdStanMCMC object.}
 
-\item{variables}{Optional parameter names. By default monitor raw model parameters
-where available, avoiding deterministic generated quantities.}
+\item{variables}{Optional parameter names.}
+
+\item{rhat_max}{Upper threshold for split R-hat (default \code{1.01}).}
+
+\item{ess_min}{Minimum bulk and tail ESS (default \code{400}).}
+
+\item{ebfmi_min}{Minimum per-chain E-BFMI (default \code{0.3}).}
 }
 \value{
-Individual diagnostics and a conservative status; this is not a proof of convergence.
+Named list of convergence and efficiency diagnostics.
 }
 \description{
-Check MCMC convergence
+Evaluates split R-hat, bulk/tail effective sample sizes, divergent
+transitions, and energy Bayesian fraction of missing information (E-BFMI).
+Maximum treedepth hits are recorded as an efficiency warning
+(\code{efficiency_warning = TRUE}) rather than non-convergence (\code{converged = FALSE}),
+following Stan diagnostic conventions.
 }
-\keyword{internal}

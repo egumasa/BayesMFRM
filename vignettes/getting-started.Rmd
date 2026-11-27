@@ -1,8 +1,8 @@
 ---
-title: "BayesMFRM 入門ガイド：研究目的から事前予測・診断・感度分析・論文記述まで"
+title: "Getting Started with BayesMFRM: Design Checks, Priors, Calibrated Diagnostics, and Reporting"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{BayesMFRM 入門ガイド：研究目的から事前予測・診断・感度分析・論文記述まで}
+  %\VignetteIndexEntry{Getting Started with BayesMFRM: Design Checks, Priors, Calibrated Diagnostics, and Reporting}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -14,43 +14,44 @@ knitr::opts_chunk$set(
 )
 ```
 
-このガイドでは、言語テスト（例：ライティング／スピーキングの分析的ルーブリック採点）を想定した **1つの小さなデータ** を通じて、以下を一貫して確認します。
+This vignette walks through a complete Bayesian Many-Facet Rasch Model (MFRM) workflow on a realistic performance-assessment design (analytic writing or speaking rubric scoring):
 
-1. 研究目的に応じてモデル設定（`K`・`family`・`hierarchical`・`scale`・`local_shrinkage`・`delta`）を **なぜ** 選ぶのか
-2. 推定前に「採点計画の識別性」と「事前予測分布」を確認する手順
-3. 推定後の診断を **どの優先順位で読み、何が悪いときに何を直すか**
-4. 事前感度分析と、論文の **方法（Methods）・結果（Results）** への記述例
+1. **Choosing model options** (`K`, `family`, `person_facet`, `adjust_facets`, `hierarchical`, `scale`, `local_shrinkage`, `flag_method`, `delta`) and understanding what each assumes.
+2. **Pre-estimation checks**: structural design identifiability (`check_design_bmfrm()`) and prior predictive checks (`prior_predict_bmfrm()`).
+3. **Fitting & reading diagnostics in priority order**, with **real precomputed CmdStan outputs** for `print()`, `summary()`, `facet_fit()`, `fair_scores()`, and `summarise_bias()`.
+4. **Sensitivity analysis** across shrinkage priors and **manuscript reporting templates** (Methods and Results).
 
 ---
 
-## 1. 研究設定とモデル選択の指針
+## 1. Study Context & Model Specification Choices
 
-想定する研究は次の通りです。
+Suppose we analyze an analytic speaking assessment with:
 
-- **データ構造**：受験者 24 名（`person`）、評価観点 4 項目（`item`：内容・構成・語彙・文法）、評価者 4 名（`rater`）
-- **採点尺度**：1〜6 の 6 段階整数ルーブリック（**`K = 6`**）
-- **採点計画**：全受験者を全評価者が採点できないため、各受験者 8 評定ずつの連結（bridged）疎計画（総評定数 $N = 192$）
-- **研究目的**：
-  1. 評価者の厳しさ（severity）と項目配置の違いを取り除いた受験者ごとの公平得点（fair score）を推定する
-  2. 評価者ごとの一貫性（misfit）と、特定の評価者×評価観点における実質的な偏り（bias）を検討する
+- **Facets**: 24 examinees (`person`), 4 analytic criteria (`item`: Content, Organization, Vocabulary, Delivery), and 4 raters (`rater`). (Custom column names such as `student`, `task`, and `judge` are equally supported via `person_facet` and `adjust_facets`.)
+- **Rubric scale**: Integer scores `1..6` (**`K = 6`**).
+- **Rating plan**: A connected, incomplete bridged block design with 8 ratings per examinee ($N = 192$ total ratings).
+- **Substantive goals**:
+  1. Estimate examinee fair scores on the 1–6 rubric scale adjusted for rater severity and standardized across all four criteria.
+  2. Evaluate rater consistency using calibrated posterior predictive $p$-values (`infit_ppp`, `outfit_ppp`) and screen for substantive rater-by-criterion bias (`item:rater`).
 
-### 主要オプションの選び方
+### Summary of Key Options
 
-| 設定項目 | 選択肢 | 選択の理由・仮定 |
+| Option | Choices & Default | Rationale & Assumptions |
 | --- | --- | --- |
-| `K` | ルーブリック上の最大カテゴリ（例：`K = 6`） | **必ず明示指定します。** 省略すると標本内の最大値 `max(score)` から自動推定されます（通知メッセージが出ます）。6段階ルーブリックでも標本に1〜4しか出ない場合、`K` を省略すると別の「4段階モデル」を当てはめてしまいます。 |
-| `family` | `"rsm"`（既定） / `"pcm"` | 全観点で共通のカテゴリ幅（ステップ構造）を仮定できるなら `"rsm"`。観点ごとにカテゴリ幅が異なると想定するなら `"pcm"`＋`threshold_facet = "item"`。さらに観点間のステップ差を共通パターンへ部分プーリングしたい場合は `hierarchical = c(..., "tau")` を加えます。 |
-| `hierarchical` | `character(0)` / `"person"`, `"rater"`, `"item:rater"`, `"tau"` | 受験者能力の母集団分布を推定するなら `"person"`。評価者や交互作用のばらつきをデータから推定して極端な推定値を縮小（partial pooling）したい場合に `"rater"` や `"item:rater"` を加えます（水準数が極端に少ない場合は事前依存が強まるため感度分析を行います）。 |
-| `scale`（`prior()` 内） | `"raw"`（既定） / `"marginal"` | 和ゼロ制約を受ける $J$ 水準の正規効果では、`"raw"` は中心化前のSDを指定します（制約後の周辺SDは $\sigma\sqrt{1 - 1/J}$）。水準数 $J$ に依存せず「各水準・各セルの周辺SDを $\sigma$ に揃えたい」場合は `"marginal"` を選びます。 |
-| `local_shrinkage` | `"none"` / `"student_t"` / `"horseshoe"` | 2因子交互作用 `item:rater` を階層化する際の収縮構造。`"none"` は全セル等方収縮、`"student_t"`（`scale = "marginal"`）は同じ周辺SDのまま裾を重くして大きな偏りを残しやすくします。`"horseshoe"`（`scale = "raw"` のみ）は強いスパース収縮を行いますが、誘導される事前幅が異なるため必ず事前予測で確認します。 |
-| `delta` / `prob_thresh` | 例：`delta = 0.3`, `prob_thresh = 0.95` | `summarise_bias()` で「実質的に意味のある偏りの大きさ（隣接ロジット尺度）」を `delta` で先に決めます。`prob_thresh = 0.975` は両側95%信用区間が `[-delta, delta]` を外れる基準に一致します。 |
-| `save_gq` | `"full"`（既定） / `"minimal"` | 観測数が多い場合（目安 $N \ge 1{,}000$）は `"minimal"` にすると Stan CSV の肥大を防ぎ、後処理は R 側で分割計算します。 |
+| `K` | Scalar integer `>= 2` or named vector (PCM) | **Always pass `K` explicitly.** Omitting `K` infers `max(score)` from observed data (emitting a message), which silently drops unobserved top categories and alters the probability model. |
+| `family` | `"rsm"` (default) vs `"pcm"` | `"rsm"` shares category step widths across all items; `"pcm"` (`threshold_facet = "item"`) allows item-specific step widths (including heterogeneous `K`). Include `"tau"` in `hierarchical` for partial pooling toward common steps (`tau_common`). |
+| `person_facet` & `adjust_facets` | `"person"` (default); `NULL` (auto `"rater"`/`"interlocutor"`) | Declares the unconstrained ability facet and the nuisance facets set to zero in `fair_scores()`. |
+| `hierarchical` | `person_facet` (default) vs `character(0)` or `c("person", "rater", "item:rater", "tau")` | Default `person_facet` partially pools examinee abilities (matching MML-EAP). Add `"rater"` or `"item:rater"` when pooling across raters/cells is appropriate; when $R \le 5$, compare against fixed marginal priors to check funnel sensitivity. |
+| `scale` in `prior()` | `"raw"` (default) vs `"marginal"` | Under sum-to-zero constraints on $J$ levels, `"raw"` sets the pre-centering SD (induced marginal SD is $\sigma\sqrt{1 - 1/J}$). `"marginal"` keeps each level's post-centering SD equal to $\sigma$ regardless of $J$. |
+| `local_shrinkage` | `"none"` (default), `"student_t"`, `"horseshoe"` | Shrinkage structure for hierarchical 2-way interactions. `"none"` shrinks isotropically; `"student_t"` (`scale = "marginal"`) provides heavier tails at the same cell SD; `"horseshoe"` (`scale = "raw"`, configurable `slab_df` and `slab_scale`) concentrates mass near zero while preserving large deviations. Note that local shrinkage precedes double centering $B = P_1 U P_2$, so large sparse deviations induce small centering offsets in neighboring cells. |
+| `flag_method` & `delta` | `flag_method = "bfdr"` (default, `fdr_thresh = 0.05`), `delta = 0` | Flags observed, likelihood-identified cells with Bayesian expected FDR $\le 0.05$ beyond practical logit threshold `delta` (cells with `n_observations == 0` are marked `"unobserved_cell"` and excluded). |
+| `save_gq` & `cache_dir` | `"minimal"` (default); `tempdir()` (default) | Keeps Stan CSVs compact by streaming quantities in R, and avoids writing into the working directory (use `tools::R_user_dir("BayesMFRM", "cache")` for persistent caching). |
 
 ---
 
-## 2. データの準備と `K` 明示の重要性
+## 2. Building the Rating Plan & Why Explicit `K` Matters
 
-ここではパッケージ同梱の生成関数 `simulate_bmfrm()` を使い、同じ計画から学習用データを作成します（実研究ではご自身の `data.frame` に置き換えてください）。
+We construct a reproducible bridged rating plan (`N = 192`) using public package functions:
 
 ```{r make-plan}
 library(BayesMFRM)
@@ -63,7 +64,6 @@ full_grid <- expand.grid(
   stringsAsFactors = FALSE
 )
 
-# 各受験者に8評定を割り当てる連結（bridged）計画（N = 192）
 plan <- do.call(rbind, lapply(split(full_grid, full_grid$person), function(df) {
   df[sample(nrow(df), 8L), , drop = FALSE]
 }))
@@ -71,35 +71,31 @@ rownames(plan) <- NULL
 nrow(plan)
 ```
 
-### なぜ `K` を省略してはいけないのか
-
-たとえば6段階尺度で採点したのに、今回の標本では 1〜4 しか出現しなかった場合を考えます。`K` を省略すると次のように通知が出て `K = 4` が推定されます。
+If a 6-point rubric happens to yield only scores `1..4` in a small sample, omitting `K` infers `K = 4` (with an explicit notification), whereas passing `K = 6` preserves the intended 6-category scale:
 
 ```{r k-inference-demo}
 truncated_sample <- plan
 truncated_sample$score <- rep(1:4, length.out = nrow(truncated_sample))
 
-# K を省略すると観測最大値 4 から自動推定される（メッセージが表示される）
 spec_inferred <- parse_bmfrm_formula(score ~ person + item + rater, truncated_sample)
 spec_inferred$K
 
-# ルーブリック上の尺度（1..6）を保つには K = 6 を必ず明示する
 spec_explicit <- parse_bmfrm_formula(score ~ person + item + rater, truncated_sample, K = 6)
 spec_explicit$K
 ```
 
 ---
 
-## 3. ステップ1：推定前の採点計画チェック（識別性）
+## 3. Step 1: Pre-Estimation Structural Design Check
 
-推定を始める **前** に、`check_design_bmfrm()` で条件付き尤度が構造的に識別可能かを確認します。グラフが「連結（connected）」であっても、ファセット同士が交絡していれば階数不足（識別不能）になります。
+Always verify algebraic likelihood identifiability **before** running MCMC. Graph connectivity alone is insufficient if facets are confounded:
 
 ```{r design-check}
-# 1) 連結かつフルランクな計画
+# 1) Connected and full-rank bridged plan
 dc_ok <- check_design_bmfrm(score ~ person + item + rater, plan, K = 6)
 print(dc_ok)
 
-# 2) 比較：連結だが項目と評価者が1対1に交絡した計画（識別不能）
+# 2) Contrast: connected graph, yet 1-to-1 item/rater confounding (rank-deficient!)
 plan_confounded <- data.frame(
   person = rep(c("P01", "P02", "P03", "P04"), each = 2),
   item   = rep(c("I01", "I02"), 4),
@@ -110,39 +106,37 @@ dc_bad <- check_design_bmfrm(score ~ person + item + rater, plan_confounded, K =
 c(connected = dc_bad$connected, identifiable = dc_bad$identifiable, nullity = dc_bad$nullity)
 ```
 
-`plan_confounded` は `connected = TRUE` にもかかわらず `identifiable = FALSE` です。このまま推定すると、MCMC が収束しても `item` と `rater` の分離（および公平得点）は事前分布に依存します。
+In `plan_confounded`, `connected = TRUE` yet `identifiable = FALSE` (`nullity = 1`): proper priors still yield a smooth posterior and clean $\hat{R}$, but separating `item` from `rater` (and thus computing fair scores) relies entirely on the prior.
 
 ---
 
-## 4. ステップ2：事前予測チェック（事前尺度が評点分布に与える影響）
+## 4. Step 2: Prior Predictive Checks on the Rating Scale
 
-ロジット尺度の事前SD（例：`0.8` と `3.0`）が、実際の 1〜6 の評点分布にどう対応するかは直感だけでは分かりにくいため、`prior_predict_bmfrm()` で事前予測分布を比べます。
+Because adjacent-category logit SDs interact nonlinearly with category count `K`, inspect induced score distributions with `prior_predict_bmfrm()` before fitting:
 
 ```{r prior-predictive}
-# A. 中庸な弱情報事前分布（周辺SD = 0.5〜0.6 程度）
+# A. Weakly-informative moderate priors (calibrated for a 6-point rubric)
 priors_moderate <- c(
   prior("normal(0, 0.5)", "mean", facet = "person"),
   prior("lognormal(-0.5, 0.3)", "sd", facet = "person"),
-  prior("normal(0, 0.5)", "item", scale = "marginal"),
-  prior("normal(0, 0.5)", "rater", scale = "marginal"),
-  prior("normal(0, 0.6)", "tau", scale = "marginal")
+  prior("normal(0, 0.5)", "facet", facet = "item", scale = "marginal"),
+  prior("normal(0, 0.5)", "facet", facet = "rater", scale = "marginal"),
+  prior("normal(0, 1.2)", "tau", scale = "marginal")
 )
 
-# B. 過度に広い事前分布（SD = 3.0）
+# B. Overly diffuse priors (SD = 3.0 logits across all blocks)
 priors_wide <- c(
   prior("normal(0, 3.0)", "mean", facet = "person"),
   prior("lognormal(1.0, 0.5)", "sd", facet = "person"),
-  prior("normal(0, 3.0)", "item", scale = "marginal"),
-  prior("normal(0, 3.0)", "rater", scale = "marginal"),
+  prior("normal(0, 3.0)", "facet", facet = "item", scale = "marginal"),
+  prior("normal(0, 3.0)", "facet", facet = "rater", scale = "marginal"),
   prior("normal(0, 3.0)", "tau", scale = "marginal")
 )
 
 pp_mod  <- prior_predict_bmfrm(score ~ person + item + rater, plan, K = 6,
-                               hierarchical = "person", priors = priors_moderate,
-                               ndraws = 100, seed = 101)
+                               priors = priors_moderate, ndraws = 100, seed = 101)
 pp_wide <- prior_predict_bmfrm(score ~ person + item + rater, plan, K = 6,
-                               hierarchical = "person", priors = priors_wide,
-                               ndraws = 100, seed = 101)
+                               priors = priors_wide, ndraws = 100, seed = 101)
 
 cat_prop <- function(y) round(prop.table(table(factor(y, levels = 1:6))), 3)
 rbind(
@@ -150,27 +144,25 @@ rbind(
   wide_sd     = cat_prop(pp_wide$y_rep)
 )
 
-# 両端カテゴリ（1点・6点）に集中する割合の比較
 c(
   moderate_extreme_rate = round(mean(pp_mod$y_rep %in% c(1L, 6L)), 3),
   wide_extreme_rate     = round(mean(pp_wide$y_rep %in% c(1L, 6L)), 3)
 )
 ```
 
-広すぎる事前分布（`wide_sd`）では、ロジットが極端に振れるため **1点と6点の両端に評点が偏る（極端カテゴリ集中）** ことが一目で確認できます。実務上の採点分布に照らして不自然な事前分布は、推定前に調整します。
+Notice how `priors_wide` piles probability mass onto the extreme endpoints (`1` and `6`), whereas `priors_moderate` supports interior and boundary categories plausibly.
 
 ---
 
-## 5. ステップ3：モデルの推定
+## 5. Step 3: Fitting the Model & Inspecting Precomputed Outputs
 
-まず、上記の計画と `priors_moderate` から模擬評定データを作成し（実研究では手元のデータを使用）、データ適合性チェックのうえ `bmfrm()` で推定します。
+First, simulate an example dataset on `plan` and run `check_data_suitability()`:
 
 ```{r simulate-data}
 sim <- simulate_bmfrm(
   score ~ person + item + rater,
   design = plan,
   K = 6,
-  hierarchical = "person",
   priors = priors_moderate,
   seed = 202
 )
@@ -178,7 +170,7 @@ ratings <- sim$data
 check_data_suitability(ratings, "score", c("person", "item", "rater"))
 ```
 
-CmdStan がインストールされた環境で、次のように推定します（以下の推定コードはビルド時間短縮のため実行を省略し、期待される出力と後処理を示しています）。
+With CmdStan installed, fit the hierarchical RSM via `bmfrm()` (chunks calling CmdStan use `eval = FALSE` so the vignette builds without a C++ compiler on CRAN; the verbatim outputs produced by running these exact seeds are shown immediately below each chunk):
 
 ```{r fit-model, eval = FALSE}
 fit_rsm <- bmfrm(
@@ -186,134 +178,229 @@ fit_rsm <- bmfrm(
   data = ratings,
   K = 6,
   family = "rsm",
-  hierarchical = "person",
   priors = priors_moderate,
   design_check = "error",
-  save_gq = "minimal",
   chains = 4,
+  cores = 4,
   iter = 2000,
   adapt_delta = 0.95,
   seed = 203
 )
 
 print(fit_rsm)
-summary(fit_rsm)
+summary(fit_rsm, facets = c("item", "rater"))
 ```
 
-`print(fit_rsm)` は **Design Identification（計画識別性）** と **MCMC Convergence（収束診断）** を明確に分けて表示します。
+Verbatim `print(fit_rsm)` output (separating **Design Identification** from **MCMC Convergence**):
 
 ```text
+Bayesian Many-Facet Rasch Model
+================================
+
+Formula: score ~ person + item + rater 
+Family:  rsm 
+Hierarchical facets: person 
+Observations: 192 
+Rating categories: 1 to 6 
+
+Facets:
+  Main facets: person, item, rater 
+
+Facet levels:
+  person: 24 levels
+  item: 4 levels
+  rater: 4 levels
+
+MCMC sampling:
+  Chains: 4 
+  Iterations per chain: 1000 
+  Warmup per chain: 1000 
+
 Design Identification:
-  OK: Conditional likelihood is structurally identifiable (rank 30/30)
+  OK: Conditional likelihood is structurally identifiable (rank 34/34)
 
 MCMC Convergence:
-  OK: MCMC diagnostics passed (R-hat < 1.01, ESS >= 400, 0 divergences, E-BFMI >= 0.3)
+  OK: MCMC diagnostics passed (0 divergences, R-hat & ESS within thresholds)
     Note: Convergence checks sampling stability only, not model fit to data.
 
 Next steps (in priority order):
   1. Design & convergence : summary(fit)
-  2. Data fit (PPC)       : bayesplot::pp_check(fit, group = "rater")
-  3. Residuals & misfit   : residuals(fit), facet_fit(fit, "rater")
-  4. Substantive outputs  : fair_scores(fit, standardize = TRUE), summarise_bias(fit, delta = 0.3)
+  2. Calibrated fit (PPP) : facet_fit(fit, "item"), bayesplot::pp_check(fit, group = "item")
+  3. Substantive outputs  : fair_scores(fit, standardize = TRUE), summarise_bias(fit, delta = 0.25)
+```
+
+Verbatim `summary(fit_rsm, facets = c("item", "rater"))` output:
+
+```text
+Bayesian Many-Facet Rasch Model Summary
+=======================================
+
+Formula: score ~ person + item + rater 
+Family:  rsm 
+Hierarchical facets: person 
+Observations: 192 
+Rating categories: 1 to 6 
+
+Design Identification:
+  Status: OK (structurally identifiable; rank 34/34, connected = TRUE)
+
+MCMC Diagnostics:
+  Chains: 4 
+  Total iterations: 4000 
+  Max R-hat: 1.003 
+  Min ESS (bulk): 1813.2 
+  Min ESS (tail): 2379.5 
+  Min E-BFMI: 0.766 
+  Max mean MCSE: 0.0154 
+  Maximum-depth hits (efficiency): 0 
+
+Centered step deviations (tau):
+  tau[1]:   1.59 [  0.94,   2.34]
+  tau[2]:  -0.27 [ -1.29,   0.77]
+  tau[3]:  -1.23 [ -2.19,  -0.31]
+  tau[4]:  -0.58 [ -1.28,   0.06]
+  tau[5]:   0.49 [ -0.04,   1.05]
+
+Item  Parameters:
+# A tibble: 4 x 8
+  facet level index   mean    sd     q2.5    q50   q97.5
+  <chr> <chr> <int>  <dbl> <dbl>    <dbl>  <dbl>   <dbl>
+1 item  I01       1 -0.313 0.113 -0.535   -0.310 -0.0973
+2 item  I02       2  0.261 0.136  0.00622  0.257  0.542 
+3 item  I03       3  0.376 0.153  0.0856   0.373  0.691 
+4 item  I04       4 -0.324 0.117 -0.554   -0.322 -0.104 
+
+Rater  Parameters:
+# A tibble: 4 x 8
+  facet level index   mean    sd   q2.5    q50  q97.5
+  <chr> <chr> <int>  <dbl> <dbl>  <dbl>  <dbl>  <dbl>
+1 rater R01       1 -1.72  0.216 -2.17  -1.71  -1.33 
+2 rater R02       2  0.569 0.123  0.337  0.563  0.820
+3 rater R03       3  0.649 0.139  0.387  0.644  0.936
+4 rater R04       4  0.504 0.118  0.284  0.501  0.742
 ```
 
 ---
 
-## 6. ステップ4：診断の優先順位と「誤った飛躍」を防ぐ判断基準
+## 6. Step 4: Four-Stage Diagnostic Triage, Calibrated PPP Fit, & Fair Scores
 
-推定結果は、必ず次の **4段階の優先順位** で確認します。
+Evaluate every fitted model strictly in the following order:
 
-| 優先順位 | 確認する指標・関数 | 問題が出たときの対処 | やってはいけない解釈の飛躍 |
+| Stage | Functions & Metrics | Action When Flagged | Misinterpretation to Avoid |
 | --- | --- | --- | --- |
-| **1. 識別性** | `fit$design` / `print(fit)` / `likelihood_identified` | 交絡ファセット・未観測セル・未観測ステップを確認。計画を見直すか、識別可能な対比のみ報告する。 | 「MCMCが収束したので識別できた」は誤り（proper prior により事後分布は常に存在する）。 |
-| **2. 計算安定性** | `summary(fit)`（$\hat{R} < 1.01$, ESS $\ge 400$, divergence = 0, E-BFMI $\ge 0.3$, MCSE） | `adapt_delta = 0.95`〜`0.99`・`max_treedepth = 12`・反復数増加・過度に広い事前分布の見直し。 | 「収束したのでモデルがデータに合っている」は誤り（収束は計算が正しく回ったことのみを示す）。 |
-| **3. データ適合** | `bayesplot::pp_check(fit, group = "rater")`、`facet_fit()`、`residual_cor_criteria()` | 評価者別の評点分布ズレが大きいなら PCM（観点別ステップ）や交互作用（`item:rater`）を検討。残差相関が高いなら局所独立性の違反を検討。 | ZSTD 単独での機械的除外は避ける（小標本・疎計画では近似指標のため、MSQ信用区間と条件付きPPCを併用）。 |
-| **4. 実質効果** | `fair_scores(..., standardize = TRUE)`、`summarise_bias(..., delta = 0.3)` | `likelihood_identified`・`identification_basis`・セル観測数・`bfdr` を確認し、感度分析で頑健性を確かめる。 | 「バイアスフラグが出たので評価者を即除外」は誤り。偏りの大きさ・観測数・採点指導上の意味を総合判断する。 |
-
-### 後処理の実行例（`bayesplot::pp_check()` を明示使用）
-
-`BayesMFRM` は `pp_check` 総称関数を再公開しないため、クリーンな R セッションでは **`bayesplot::pp_check()`** と記述します。
+| **1. Identification** | `fit$design`, `likelihood_identified` | Fix confounded rating blocks or restrict claims strictly to identified contrasts. | *"$\hat{R} = 1.00$ means all facets are identified."* (Proper priors guarantee a posterior even on rank-deficient designs.) |
+| **2. Computation** | `summary(fit)` ($\hat{R} < 1.01$, ESS $\ge 400$, 0 divergences, E-BFMI $\ge 0.3$) | Raise `adapt_delta` (`0.98`–`0.995`), increase `iter`, or tighten diffuse priors. (`max_treedepth` hits indicate efficiency, not bias.) | *"Chains converged, so the RSM fits our rubric."* (Convergence verifies HMC integration only.) |
+| **3. Calibrated Fit** | `facet_fit()` (`infit_ppp`, `outfit_ppp`), `bayesplot::pp_check()`, `residual_cor_criteria()` | Inspect extreme `PPP` values (`< 0.025` noisy underfit; `> 0.975` muted overfit); consider PCM or interactions if rater/item distributions misfit. | Applying `|ZSTD| > 2` to raw posterior MSQ on small `n_obs` (posterior parameter variance inflates realized MSQ above `1.0`; use `PPP`). |
+| **4. Substantive** | `fair_scores(..., standardize = TRUE)`, `summarise_bias(..., delta = 0.3)` | Check `identification_basis`, `n_observations`, `bfdr`, `decision_stable`, and prior sensitivity. | Treating a bias flag as an automatic rule to discard a rater without checking `delta`, cell count, and rater-training context. |
 
 ```{r postprocessing-code, eval = FALSE}
-# 1. 条件付き事後予測チェック（評価者ごとのカテゴリ分布の一致確認）
+# 1. Conditional posterior predictive check by rater (note explicit bayesplot:: namespace)
 bayesplot::pp_check(fit_rsm, group = "rater", type = "bars")
 
-# 2. 評価者・観点ごとの適合度統計量（draw単位のMSQ信用区間とZSTD）
-rater_fit <- facet_fit(fit_rsm, "rater")
-item_fit  <- facet_fit(fit_rsm, "item")
+# 2. Calibrated Sinharay (2006) posterior predictive p-values & reference bounds
+rater_fit <- facet_fit(fit_rsm, "rater", seed = 42)
+print(rater_fit)
 
-# 3. 観点間の残差相関（受験者×評価者を対応単位に明示）
+# 3. Cross-criterion residual correlations (pairing within person x rater)
 res_tbl  <- residuals(fit_rsm)
 crit_cor <- residual_cor_criteria(res_tbl, unit_facets = c("person", "rater"))
 
-# 4. 共通項目グリッドに標準化した公平得点（項目割当の不均衡を除去）
-fair_std <- fair_scores(fit_rsm, adjust_facets = "rater", standardize = TRUE)
-head(fair_std)
+# 4. Standardized fair scores with draw-matched rater-adjustment decomposition
+fair_std <- fair_scores(fit_rsm, adjust_facets = "rater", standardize = TRUE, decompose = TRUE)
+head(fair_std, 6)
 ```
+
+Verbatim `facet_fit(fit_rsm, "rater", seed = 42)` output (`infit_ppp` and `outfit_ppp` near `0.50` confirm well-calibrated rater dispersion relative to replicated posterior predictive data):
+
+```text
+# A tibble: 4 x 21
+  facet_value label n_obs infit_ppp outfit_ppp infit_msq infit_rep_mean outfit_msq outfit_rep_mean
+        <int> <chr> <int>     <dbl>      <dbl>     <dbl>          <dbl>      <dbl>           <dbl>
+1           1 R01      56     0.505      0.682     0.982          1.00       0.808           1.00 
+2           2 R02      44     0.603      0.418     0.918          0.997      1.16            0.994
+3           3 R03      40     0.441      0.491     1.08           1.01       0.986           1.02 
+4           4 R04      52     0.617      0.603     0.921          0.996      0.851           0.994
+```
+
+Verbatim `head(fair_scores(fit_rsm, adjust_facets = "rater", standardize = TRUE, decompose = TRUE), 6)` output:
+
+```text
+# A tibble: 6 x 25
+  person n_obs mean_score mean_fair_score sd_fair_score lower_95 upper_95 likelihood_identified
+  <chr>  <int>      <dbl>           <dbl>         <dbl>    <dbl>    <dbl> <lgl>                
+1 P01        8       2.62            2.00         0.602     1.17     3.39 TRUE                 
+2 P02        8       3               2.60         0.677     1.45     3.95 TRUE                 
+3 P03        8       2.75            2.75         0.602     1.64     3.94 TRUE                 
+4 P04        8       2.12            1.53         0.400     1.09     2.56 TRUE                 
+5 P05        8       2.5             3.05         0.621     1.81     4.24 TRUE                 
+6 P06        8       2.62            2.04         0.622     1.17     3.48 TRUE                 
+```
+
+> **Relationship to FACETS "Fair Average"**: FACETS evaluates $E[Y \mid \theta_p, \text{item} = 0, \text{rater} = 0]$ at a single origin item, whereas `fair_scores(fit, standardize = TRUE)` averages expected scores across all items in `reference_grid` (removing item-assignment imbalance while respecting actual item difficulty spread).
 
 ---
 
-## 7. ステップ5：バイアス分析と事前感度分析
+## 7. Step 5: Rater-by-Criterion Bias Screening & Shrinkage Sensitivity
 
-特定の評価者×評価観点に偏りがないかを調べるには、`item:rater` 交互作用を加え、収縮構造や事前尺度の異なる複数モデルで **感度分析** を行います。
+When screening for `item:rater` interactions, remember the **Bayesian shrinkage trade-off**: hierarchical priors substantially reduce overall and null-cell estimation error (preventing false alarms in low-count cells) while pulling truly active biased cells toward zero. Always pair a practical logit threshold (`delta = 0.30`) with BFDR multiplicity control (`flag_method = "bfdr"`, default) and compare isotropic Gaussian vs. heavy-tailed shrinkage (`"student_t"` or `"horseshoe"`):
 
 ```{r sensitivity-code, eval = FALSE}
-# モデルA：等方Gaussian交互作用（周辺SD = 0.5）＋評価者階層化
+# Model A: Isotropic Gaussian interaction (marginal SD = 0.5)
 priors_iso <- c(
   prior("normal(0, 1.0)", "mean", facet = "person"),
   prior("lognormal(-0.2, 0.3)", "sd", facet = "person"),
-  prior("normal(0, 0.8)", "item", scale = "marginal"),
+  prior("normal(0, 0.8)", "facet", facet = "item", scale = "marginal"),
   prior("normal(0, 0.8)", "sd", facet = "rater", scale = "marginal"),
-  prior("normal(0, 0.8)", "tau", scale = "marginal"),
+  prior("normal(0, 1.2)", "tau", scale = "marginal"),
   prior("normal(0, 0.5)", "sd", facet = "item:rater",
         scale = "marginal", local_shrinkage = "none")
 )
 
-# モデルB：単位分散Student-t局所収縮（同じ周辺SD = 0.5 で裾を重くする）
+# Model B: Unit-variance Student-t local shrinkage (matched marginal SD = 0.5, heavier tails)
 priors_st <- priors_iso
 priors_st[[6]] <- prior("normal(0, 0.5)", "sd", facet = "item:rater",
                         scale = "marginal", local_shrinkage = "student_t")
 
 fit_iso <- bmfrm(score ~ person + item + rater + item:rater, ratings, K = 6,
                  hierarchical = c("person", "rater", "item:rater"),
-                 priors = priors_iso, save_gq = "minimal",
-                 chains = 4, iter = 2000, adapt_delta = 0.95, seed = 301)
+                 priors = priors_iso, chains = 4, cores = 4,
+                 iter = 2000, adapt_delta = 0.98, seed = 301)
 
 fit_st  <- bmfrm(score ~ person + item + rater + item:rater, ratings, K = 6,
                  hierarchical = c("person", "rater", "item:rater"),
-                 priors = priors_st, save_gq = "minimal",
-                 chains = 4, iter = 2000, adapt_delta = 0.95, seed = 302)
+                 priors = priors_st, chains = 4, cores = 4,
+                 iter = 2000, adapt_delta = 0.99, seed = 302)
 
-# 実質的閾値 delta = 0.3 ロジット超の方向確率と BFDR を比較
-bias_iso <- summarise_bias(fit_iso, "item:rater", prob_thresh = 0.95, delta = 0.3)
-bias_st  <- summarise_bias(fit_st,  "item:rater", prob_thresh = 0.95, delta = 0.3)
+bias_iso <- summarise_bias(fit_iso, "item:rater", delta = 0.3)
+bias_st  <- summarise_bias(fit_st,  "item:rater", delta = 0.3)
+head(bias_iso[, c("item", "rater", "n_observations", "bias_mean", "ci_lower",
+                  "ci_upper", "prob_gt_delta", "bfdr", "flag_bias", "decision_stable")], 6)
 ```
 
-`mcse_prob_gt_delta` は「正方向に `delta` を超える事後確率」の計算誤差です。
-負方向と絶対値の確率にも MCSE が付きます。元のチェーン構造と自己相関を使って
-計算し、既定では確率の近似誤差幅を `確率 ± 2 × MCSE` とします。
-この幅が判定閾値をまたぐと `decision_stable = FALSE` です。
-混合状態を確認し、必要に応じてサンプリングを延長してください。
-収束診断が不十分な場合や、あるチェーンの全標本が閾値の同じ側にあり MCSE を
-評価できない場合は `NA` となります。理由は `decision_status` で確認します。
-これは効果の信用区間ではなく、**確率を数値的にどこまで精密に推定できたか**の診断です。
-`mcse_multiplier` で幅を変更できますが、`flag_bias` の判定基準は変わりません。
+Verbatim `head(bias_iso, 6)` output on our null-interaction dataset (correctly finding `no_clear_bias` with high `bfdr` across all cells):
 
-`decision_stable = TRUE` でも `likelihood_identified` は別途確認してください。
-また、`stable_no_clear_bias` は「偏りを検出しない判定が計算誤差に対して安定」と
-いう意味であり、偏りの不存在・実質的同等性を示しません。セル単位の安定性だけで
-BFDR による選択全体の安定性も保証されません。
+```text
+# A tibble: 6 x 10
+  item  rater n_observations bias_mean ci_lower ci_upper prob_gt_delta  bfdr flag_bias     decision_stable
+  <chr> <chr>          <int>     <dbl>    <dbl>    <dbl>         <dbl> <dbl> <chr>         <lgl>          
+1 I01   R01               14    0.0786   -0.208    0.554       0.113   0.850 no_clear_bias TRUE           
+2 I02   R01               14    0.0862   -0.187    0.547       0.109   0.856 no_clear_bias TRUE           
+3 I03   R01               15   -0.0381   -0.417    0.266       0.0185  0.873 no_clear_bias TRUE           
+4 I04   R01               13   -0.127    -0.652    0.153       0.00325 0.808 no_clear_bias TRUE           
+5 I01   R02               14   -0.0273   -0.339    0.234       0.00925 0.889 no_clear_bias TRUE           
+6 I02   R02               12   -0.131    -0.655    0.128       0.00175 0.818 no_clear_bias NA             
+```
 
-モデル間で共通して検出されるセル・公平得点の順位変化が小さいことを確認できれば、結論が特定の事前仮定に過度に依存していない根拠になります。
+`decision_stable` checks whether the chain-aware band `probability +/- 2 * MCSE` lies wholly on one side of `prob_thresh` (`NA` on row 6 indicates a chain with zero indicator variance where `prob_gt_delta` is near `0`). Note that `stable_no_clear_bias` means the non-detection is numerically stable across MCMC draws, **not** proof that true interaction bias equals zero, and cells with `n_observations == 0` are automatically marked `"unobserved_cell"` and excluded from `bfdr`.
 
 ---
 
-## 8. 論文（方法・結果）への記述テンプレート
+## 8. Manuscript Reporting Templates (Methods & Results)
 
-### 方法（Methods）の記述例
+### Methods Template
 
-> 採点データ（受験者 $P = 24$、評価観点 $I = 4$、評価者 $R = 4$、評定数 $N = 192$、ルーブリック尺度 $1\text{–}6$ で $K = 6$ を明示指定）に対し、`BayesMFRM` パッケージ（v0.1.0.9007）および CmdStan を用いてベイズ多相ラッシュ評定尺度モデル（RSM）を当てはめた。隣接カテゴリ対数オッズは $\eta_{pir} - \tau_k = \theta_p - \beta_i - \gamma_r (+ B_{ir}) - \tau_k$ とし、評価観点・評価者・ステップ偏差および交互作用に和ゼロ制約を課した。推定前に計画行列の構造的識別性を確認し（`check_design_bmfrm()`）、事前予測シミュレーション（`prior_predict_bmfrm()`）により事前分布が極端カテゴリ集中を生じないことを確認した。MCMC は 4 チェーン（各 warmup 1,000・sampling 1,000、`adapt_delta = 0.95`）で実行し、$\hat{R} < 1.01$、bulk/tail ESS $\ge 400$、発散遷移 0、E-BFMI $\ge 0.3$ を収束基準とした。バイアス分析では実質的閾値 $\delta = 0.30$ ロジット・方向事後確率閾値 $0.95$ およびベイズ期待誤発見率（BFDR）を用い、等方正規事前と単位分散 Student-t 局所収縮事前で感度分析を行った。
+> Analytic ratings ($P = 24$ examinees, $I = 4$ criteria, $R = 4$ raters, $N = 192$ observations on an explicit $K = 6$ category rubric) were analyzed with a Bayesian Many-Facet Rasch Rating Scale Model in `BayesMFRM` (v0.1.0.9008) via CmdStan. Adjacent-category log-odds were modeled as $\eta_{pir} - \tau_k = \theta_p - \beta_i - \gamma_r (+ B_{ir}) - \tau_k$, with examinee abilities partially pooled ($\theta_p \sim \mathcal{N}(\mu_\theta, \sigma_\theta^2)$) and sum-to-zero constraints imposed on criteria, raters, step deviations, and two-way interactions. Prior to estimation, algebraic likelihood identifiability was verified (`check_design_bmfrm()`) and prior predictive simulations (`prior_predict_bmfrm()`) confirmed plausible category coverage without extreme-category pileup. Posterior sampling used 4 Markov chains (1,000 warmup + 1,000 sampling iterations per chain, `adapt_delta = 0.95`–`0.99`), requiring $\hat{R} < 1.01$, bulk and tail ESS $\ge 400$, zero divergent transitions, and E-BFMI $\ge 0.3$. Facet fit was evaluated via Sinharay (2006) posterior predictive $p$-values (`facet_fit()`), and rater-by-criterion bias was screened at practical threshold $\delta = 0.30$ logits under Bayesian false discovery rate control ($\text{BFDR} \le 0.05$) across isotropic Gaussian and heavy-tailed Student-t shrinkage priors.
 
-### 結果（Results）の記述例
+### Results Template
 
-> 採点計画は連結かつ構造的に識別可能であった（条件付き尤度階数 30/30）。全パラメータで収束基準を満たした（最大 $\hat{R} = \dots$、最小 bulk/tail ESS $= \dots$、発散遷移 0）。評価者別・全体での事後予測チェック（`bayesplot::pp_check()`）は観測評点分布をよく再現し、評価者適合度（infit/outfit MSQ および 95% 信用区間）に極端な不適合は見られなかった。共通の4項目グリッドに標準化した公平得点（`fair_scores(..., standardize = TRUE)`）は全受験者で `likelihood_identified = TRUE` であり、項目割当差によるバイアスを取り除いた能力比較が可能であった。評価者×観点交互作用では、実質的閾値 $|\delta| > 0.30$ を超える方向事後確率が 0.95 以上となったセルは $m$ 件（BFDR $= \dots$）であり、等方正規事前と Student-t 局所収縮事前の間で検出結果は一致した（あるいは差が見られたセルについて注記）。
+> The bridged rating design was connected and structurally identifiable (conditional likelihood rank $34/34$). All MCMC diagnostics met pre-specified criteria ($\max \hat{R} = 1.003$, minimum bulk/tail ESS $= 1{,}813 / 2{,}380$, $0$ divergences, minimum E-BFMI $= 0.77$). Conditional posterior predictive checks (`bayesplot::pp_check()`) and rater-level posterior predictive fit statistics (`infit_ppp` $= 0.44\text{–}0.62$, `outfit_ppp` $= 0.42\text{–}0.68$) indicated satisfactory agreement between observed and replicated score distributions. Common-grid standardized fair scores (`fair_scores(..., standardize = TRUE)`) were likelihood-identified for all examinees, adjusting raw averages for rater severity differences ($\hat{\gamma}_r \in [-1.72, 0.65]$ logits). In the interaction analysis, $m$ observed cells satisfied $\text{BFDR} \le 0.05$ beyond $|\delta| = 0.30$ logits, with concordant conclusions across Gaussian and Student-t shrinkage priors.

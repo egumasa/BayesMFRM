@@ -8,7 +8,8 @@ get_default_priors(
   facets_main = c("person", "item", "rater"),
   facets_bias = NULL,
   family = "rsm",
-  hierarchical = character()
+  hierarchical = person_facet,
+  person_facet = "person"
 )
 }
 \arguments{
@@ -16,16 +17,22 @@ get_default_priors(
 
 \item{facets_bias}{vector of bias facet names}
 
-\item{family}{model family: "rsm" or "pcm"}
+\item{family}{model family: \code{"rsm"} or \code{"pcm"}}
 
-\item{hierarchical}{Names of facets with hierarchical distributions. Supports
-any main facet (e.g. \code{"person"}, \code{"rater"}, \code{"item"}), two-way interaction
-terms (e.g. \code{"item:rater"}), and \code{"tau"} for hierarchical PCM partial
-pooling toward common steps. \code{character(0)} retains fixed-scale priors.}
+\item{hierarchical}{Names of facets with hierarchical distributions (default
+\code{person_facet}; pass \code{character(0)} for fixed-scale priors).}
+
+\item{person_facet}{Name of the unconstrained ability facet (default \code{"person"}).}
 }
 \value{
-list of bmfrm_prior objects
+list of \code{bmfrm_prior} objects
 }
 \description{
-Get default priors for bmfrm models
+By default, \code{person_facet} is partially pooled (\code{hierarchical = person_facet})
+with \code{mean ~ normal(0, 2.5)} and \code{sd ~ lognormal(0, 0.5)}, centered main
+facets receive \code{normal(0, 1)}, two-way interactions receive \code{normal(0, 0.5)},
+and category step thresholds \code{tau} receive weakly-informative \code{normal(0, 2)}
+so wide multi-category rubrics (e.g. \code{K = 6} spanning +/-3 logits) are not
+overly compressed. Inspect induced response distributions before fitting via
+\code{\link[=prior_predict_bmfrm]{prior_predict_bmfrm()}}.
 }

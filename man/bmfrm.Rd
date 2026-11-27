@@ -2,7 +2,7 @@
 % Please edit documentation in R/bmfrm.R
 \name{bmfrm}
 \alias{bmfrm}
-\title{Fit Bayesian Many-Facet Rasch Models}
+\title{Fit a Bayesian Many-Facet Rasch Model}
 \usage{
 bmfrm(
   formula,
@@ -12,10 +12,12 @@ bmfrm(
   stan_file = NULL,
   family = c("rsm", "pcm"),
   threshold_facet = NULL,
+  person_facet = "person",
+  adjust_facets = NULL,
   model_name = NULL,
-  cache_dir = "stan_cache",
+  cache_dir = tempdir(),
   save_csvs = TRUE,
-  save_gq = c("full", "minimal"),
+  save_gq = c("minimal", "full"),
   design_check = c("warn", "error", "none"),
   cpp_options = list(),
   refit = c("on_change", "never", "always"),
@@ -24,110 +26,92 @@ bmfrm(
   chains = 4,
   cores = getOption("mc.cores", 1L),
   seed = NULL,
-  hierarchical = character(),
+  hierarchical = person_facet,
   obs_id = NULL,
+  rhat_max = 1.01,
+  ess_min = 400,
   ...
 )
 }
 \arguments{
-\item{formula}{R formula specifying the model (e.g., score ~ person + item + rater + rater:item).
-The response must be a single column name; transform scores in \code{data} first.}
+\item{formula}{R formula specifying response, ability facet, main facets, and
+optional two-way interactions (e.g., \code{score ~ person + item + rater + item:rater}).}
 
-\item{data}{data.frame containing all variables in the formula}
+\item{data}{data.frame containing rating observations.}
 
-\item{K}{Number of rating categories: a scalar integer \verb{>= 2} for RSM or
-uniform PCM, a named integer vector matching every \code{threshold_facet} level
-for heterogeneous PCM (e.g., \code{c(I1 = 2L, I2 = 4L, I3 = 6L)}), or \code{NULL}
-(inferred from \code{max(score)}). Equal values in a named vector use uniform PCM.}
+\item{K}{Number of rating categories (\verb{1..K}): scalar integer \verb{>= 2} for RSM
+or uniform PCM, a named integer vector matching \code{threshold_facet} levels for
+heterogeneous-category PCM, or \code{NULL} (inferred from \code{max(score)}).}
 
-\item{priors}{list of prior() objects for generated models (if NULL, uses defaults).
-Cannot be supplied together with \code{stan_file}.}
+\item{priors}{Optional list of \code{\link[=prior]{prior()}} specifications. Unspecified blocks
+receive \code{\link[=get_default_priors]{get_default_priors()}}.}
 
-\item{stan_file}{optional path to a hardcoded Stan file (bypasses code generation).
-Priors are defined in that file; the returned \code{priors} metadata is \code{NULL}.}
+\item{stan_file}{Optional path to a custom \code{.stan} file (bypasses Stan code
+generation; \code{priors} and \code{hierarchical} cannot be supplied).}
 
-\item{family}{model family: "rsm" (Rating Scale Model with shared thresholds) or
-"pcm" (Partial Credit Model with facet-specific thresholds)}
+\item{family}{Model family: \code{"rsm"} (shared step thresholds) or \code{"pcm"}
+(level-specific step thresholds on \code{threshold_facet}).}
 
-\item{threshold_facet}{For PCM only: which facet gets level-specific steps
-(e.g., "item"). Step deviations sum to zero within each level, separating
-the level's overall location from its category pattern.}
+\item{threshold_facet}{Required for \code{family = "pcm"}: main facet name whose
+levels have distinct step thresholds.}
 
-\item{model_name}{optional name for the model (auto-generated if NULL)}
+\item{person_facet}{Name of the unconstrained examinee / ability main facet in
+\code{formula} (default \code{"person"}).}
 
-\item{cache_dir}{directory for caching compiled models and fits}
+\item{adjust_facets}{Optional character vector of nuisance main facets (e.g.,
+\code{"rater"}, \code{"judge"}) to adjust in fair-score calculations. When \code{NULL},
+auto-detects \code{"rater"} and \code{"interlocutor"} if present.}
 
-\item{save_csvs}{Must be \code{TRUE}: persistent CmdStan fit caching requires CSV files.
-\code{FALSE} is unsupported and raises an error. Use \code{save_gq = "minimal"} to
-reduce saved output.}
+\item{model_name}{Optional base name for compiled Stan binary caching.}
 
-\item{save_gq}{Either \code{"full"} (default; saves observation-level \code{log_lik},
-\code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} in Stan \verb{generated quantities}) or
-\code{"minimal"} (omits observation-level \verb{generated quantities} for scalability
-on large datasets; downstream S3 methods compute quantities on demand in R).}
+\item{cache_dir}{Directory for compiled Stan binaries and fit caches. Defaults
+to \code{tempdir()} (CRAN-compliant, never pollutes the working directory); pass
+\code{tools::R_user_dir("BayesMFRM", "cache")} for persistent cross-session caching.}
 
-\item{design_check}{How to handle a rank-deficient generated RSM/PCM, including
-two-way interactions: warn, error, or none.}
+\item{save_csvs}{Logical; must remain \code{TRUE} because \code{cmdstanr} draw accessors
+read output CSVs. Use \code{save_gq = "minimal"} (default) to keep CSVs compact.}
 
-\item{cpp_options}{Named compilation options passed to cmdstanr.}
+\item{save_gq}{Either \code{"minimal"} (default; omits observation-level Stan
+\verb{generated quantities} and streams all post-processing in R) or \code{"full"}
+(writes \code{log_lik}, \code{y_rep}, \code{mu}, \code{sigma2}, \code{mu_fair} to Stan CSVs).}
 
-\item{refit}{refit behavior: "never", "always", or "on_change"}
+\item{design_check}{Structural rank check mode before fitting: \code{"warn"}
+(default), \code{"error"}, or \code{"none"}.}
 
-\item{iter}{number of MCMC iterations}
+\item{cpp_options}{Named list of C++ options passed to \code{cmdstanr::cmdstan_model()}.}
 
-\item{warmup}{number of warmup iterations}
+\item{refit}{Cache policy: \code{"on_change"} (default; reuses cache when a fixed
+\code{seed} is supplied and code/data/settings match), \code{"never"}, or \code{"always"}.}
 
-\item{chains}{number of MCMC chains}
+\item{iter}{Total iterations per chain (warmup + sampling; default \code{2000}).}
 
-\item{cores}{number of CPU cores to use}
+\item{warmup}{Warmup iterations per chain (default \code{floor(iter / 2)}).}
 
-\item{seed}{random seed}
+\item{chains}{Number of Markov chains (default \code{4}).}
 
-\item{hierarchical}{Names of facets or terms with hierarchical distributions.
-The default \code{character(0)} retains fixed-scale priors. Supports any main
-facet (\code{"person"} with \code{mean}/\code{sd}, or centered facets such as \code{"rater"} /
-\code{"item"} with \code{class = "sd"}), two-way interaction names (e.g.
-\code{"item:rater"} with \code{class = "sd"} and optional \code{local_shrinkage} =
-\code{"horseshoe"} or \code{"student_t"}), and \code{"tau"} for hierarchical PCM partial
-pooling toward common steps when category counts are uniform. Hierarchical
-\code{tau} is not supported in v1 when \code{K} varies across threshold-facet levels.}
+\item{cores}{Number of parallel chains (default \code{getOption("mc.cores", 1L)}).}
 
-\item{obs_id}{Optional observation identifier passed to
-\code{\link[=prepare_data_bmfrm]{prepare_data_bmfrm()}} (either a column name in \code{data} or a unique vector
-of length \code{nrow(data)}) used by \code{\link[=compare_bmfrm]{compare_bmfrm()}} to verify observation
-alignment across models.}
+\item{seed}{Optional integer RNG seed (\code{NULL} runs fresh random chains).}
 
-\item{...}{additional arguments passed to cmdstanr::sample()}
+\item{hierarchical}{Character vector of hierarchical facets/terms. Defaults to
+\code{person_facet} (empirical/Bayesian partial pooling of examinee abilities,
+matching MML-EAP); pass \code{character(0)} for unpooled fixed-scale priors.}
+
+\item{obs_id}{Optional column name or length-\code{nrow(data)} vector of unique
+observation IDs for model-comparison alignment across missing-score filtering.}
+
+\item{rhat_max}{Convergence diagnostic threshold for split R-hat (default \code{1.01}).}
+
+\item{ess_min}{Convergence diagnostic minimum bulk/tail ESS (default \code{400}).}
+
+\item{...}{Additional named arguments passed to \code{CmdStanModel$sample()} (e.g.,
+\code{adapt_delta = 0.95}, \code{max_treedepth = 12}).}
 }
 \value{
-bmfrm_fit object containing the fitted model and metadata
+A \code{bmfrm_fit} object.
 }
 \description{
-This is the main function for fitting Bayesian many-facet Rasch models using Stan.
-It provides a user-friendly interface for specifying models with multiple facets
-and optional bias terms.
-}
-\examples{
-\dontrun{
-# Basic 3-facet RSM model (shared thresholds)
-fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6, family = "rsm")
-
-# PCM model with item-specific thresholds
-fit <- bmfrm(score ~ person + item + rater, data = ratings, K = 6,
-             family = "pcm", threshold_facet = "item")
-
-# Model with bias term
-fit <- bmfrm(score ~ person + item + rater + rater:item, data = ratings)
-
-# Custom priors
-priors <- c(
-  prior("normal(0, 2)", class = "theta"),
-  prior("normal(0, 1)", class = "item"),
-  prior("student_t(3, 0, 1)", class = "rater"),
-  prior("normal(0, 0.5)", class = "bias", facet = "rater:item"),
-  prior("normal(0, 3)", class = "tau")
-)
-fit <- bmfrm(score ~ person + item + rater + rater:item,
-             data = ratings, priors = priors)
-}
+Fits Rating Scale Models (RSM) or Partial Credit Models (PCM) with arbitrary
+main facets, hierarchical partial pooling, and two-way interactions (including
+Student-t and regularized horseshoe local shrinkage) via CmdStan.
 }

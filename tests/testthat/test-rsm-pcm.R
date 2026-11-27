@@ -86,8 +86,8 @@ test_that("RSM template has correct structure", {
   expect_true(grepl("THRESHOLD_PARAM_DECL", rsm_code))
   # Should NOT have ordered tau
   expect_false(grepl("ordered\\[K-1\\] tau_raw", rsm_code))
-  # Should have shared tau indexing
-  expect_true(grepl("tau\\[k-1\\]", rsm_code))
+  # Should precompute shared cumulative tau once outside observation loop
+  expect_true(grepl("cumulative_sum\\(tau\\)", rsm_code))
 })
 
 test_that("PCM template has correct structure", {
@@ -96,8 +96,8 @@ test_that("PCM template has correct structure", {
 
   # Should have matrix tau with threshold facet placeholder
   expect_true(grepl("THRESHOLD_PARAM_DECL", pcm_code))
-  # Should have facet-specific tau indexing
-  expect_true(grepl("tau\\[threshold_n, k-1\\]", pcm_code))
+  # Should precompute facet-specific cumulative tau
+  expect_true(grepl("cum_tau\\[\\{\\{THRESHOLD_FACET\\}\\}_id\\[n\\]\\]", pcm_code))
 })
 
 test_that("print.bmfrm_spec shows family information", {
@@ -144,11 +144,10 @@ test_that("build_stan_code generates correct RSM code", {
   priors <- get_default_priors(spec$facets_main, spec$facets_bias, spec$family)
   stan_code <- build_stan_code(spec, priors)
 
-  # Should have vector tau
-  expect_true(grepl("vector\\[K - 1\\] tau_raw", stan_code))
-  # Should have shared tau indexing (no matrix access)
-  expect_true(grepl("tau\\[k-1\\]", stan_code))
-  expect_false(grepl("tau\\[.*_n, k-1\\]", stan_code))
+  # Should have sum-to-zero basis vector tau_raw and precomputed shared cum_tau
+  expect_true(grepl("vector\\[K - 2\\] tau_raw", stan_code))
+  expect_true(grepl("cumulative_sum\\(tau\\)", stan_code))
+  expect_false(grepl("cum_tau\\[threshold_n\\]", stan_code))
 })
 
 test_that("build_stan_code generates correct PCM code", {
@@ -170,10 +169,8 @@ test_that("build_stan_code generates correct PCM code", {
 
   # Should have matrix tau with item dimension
   expect_true(grepl("matrix\\[J_item, K - 2\\] tau_raw", stan_code))
-  # Should have facet-specific tau indexing
-  expect_true(grepl("tau\\[threshold_n, k-1\\]", stan_code))
-  # Should have threshold_n extraction
-  expect_true(grepl("int threshold_n = item_id\\[n\\]", stan_code))
+  # Should have facet-specific cumulative tau indexing
+  expect_true(grepl("cum_tau\\[item_id\\[n\\]\\]", stan_code))
 })
 
 # Integration tests - only run if cmdstan is available

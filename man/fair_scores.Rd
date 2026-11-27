@@ -20,88 +20,54 @@ fair_scores(
 )
 }
 \arguments{
-\item{object}{bmfrm_fit object}
+\item{object}{\code{bmfrm_fit} object}
 
-\item{summary}{whether to return person-level summaries or row-level scores}
+\item{summary}{whether to return examinee-level summaries (\code{TRUE}) or row-level scores (\code{FALSE})}
 
-\item{adjust_facets}{Optional character vector of nuisance facet names to
-remove (default NULL auto-detects \code{"rater"} and \code{"interlocutor"}).}
+\item{adjust_facets}{Optional character vector of nuisance facet names to set
+to zero (defaults to \code{adjust_facets} set in \code{\link[=bmfrm]{bmfrm()}}, or auto-detects
+\code{"rater"} and \code{"interlocutor"}).}
 
-\item{standardize}{Logical; if TRUE, standardize every person to the common
-reference grid of unadjusted non-person facets (or \code{reference_grid}).}
+\item{standardize}{Logical; evaluate every examinee over the common reference
+grid of unadjusted facets?}
 
-\item{reference_grid}{Optional data.frame of unadjusted non-person facet
-combinations (and optional \code{weight} column) used for standardized
-evaluation.}
+\item{reference_grid}{Optional data.frame of unadjusted facet combinations.}
 
-\item{reference_weights}{Optional weights over \code{reference_grid}: either a
-non-negative numeric vector of length \code{nrow(reference_grid)} or a named
-list of named facet-level weight vectors (e.g.,
-\code{list(item = c(k1 = 0.4, k2 = 0.3, k3 = 0.3))}). Normalized internally to
-sum to 1.}
+\item{reference_weights}{Optional numeric or named-list weights over \code{reference_grid}.}
 
-\item{decompose}{Logical; if TRUE (requires \code{summary = TRUE}), add exact
-draw-matched decomposition columns separating pure facet adjustment,
-optional standardization shift, and shrinkage/sampling noise with 95\% CrIs.}
+\item{decompose}{Logical; include draw-matched \code{Fair - Raw} decomposition?}
 
-\item{return_draws}{Logical; if TRUE (requires \code{summary = TRUE}), attach
-\verb{D x P} posterior draw matrices as \code{attr(res, "draws")} and reference
-metadata as \code{attr(res, "reference_meta")}.}
+\item{return_draws}{Logical; attach \verb{D x P} posterior draw matrices as \code{attr(res, "draws")}?}
 
-\item{max_grid_cells}{Maximum number of cells allowed when auto-expanding the
-common reference grid for \code{standardize = TRUE} (default \code{10000L}). Prevents
-combinatorial explosion with many unadjusted facets; supply an explicit
-\code{reference_grid} or raise \code{max_grid_cells} deliberately for larger grids.}
+\item{max_grid_cells}{Maximum auto-expanded reference grid cells (default \code{10000L}).}
 
-\item{max_output_rows}{Maximum total person x reference-grid rows allowed
-when \code{standardize = TRUE} and \code{summary = FALSE} (default \code{1000000L}).}
+\item{max_output_rows}{Maximum row-level standardized output rows (default \code{1e6L}).}
 
-\item{chunk_size}{Optional observation chunk size for streaming posterior
-evaluation (auto-sized to ~16 MB per chunk when NULL).}
+\item{chunk_size}{Optional observation chunk size for streaming evaluation.}
 
 \item{...}{unused}
 }
 \description{
-Computes expected scores after setting adjusted nuisance facets (and any
-interactions involving them) to zero (average severity). By default,
-\code{"rater"} and \code{"interlocutor"} are detected automatically; if neither is
-present and other non-person facets exist, a warning is issued so custom
-facet names (e.g., \code{"judge"}, \code{"examiner"}) are not silently left unadjusted.
+Computes expected scores on the rating rubric scale after setting adjusted
+nuisance facets (and interactions involving them) to zero.
 }
-\details{
-When \code{standardize = TRUE} (or \code{reference_grid} / \code{reference_weights} is
-supplied), person summaries are evaluated over a common reference condition
-spanning the unadjusted facets, optionally weighted by \code{reference_weights}
-(e.g., rubric blueprint weights such as \code{list(item = c(content = 0.4, org = 0.3, lang = 0.3))}
-or a numeric row-weight vector / \code{reference_grid$weight} column).
+\section{Relationship to FACETS "Fair Average"}{
 
-When \code{decompose = TRUE} (with \code{summary = TRUE}), computes exact draw-matched
-decompositions of \code{Fair - Raw} on the same posterior draws:
-\itemize{
-\item Under \code{standardize = FALSE}: \code{fair_minus_raw = adjustment + shrinkage_and_noise},
-separating pure nuisance-facet adjustment (\code{E[mu_fair - mu_actual]}) from
-hierarchical shrinkage and sampling noise (\code{E[mu_actual] - mean_score}).
-\item Under \code{standardize = TRUE}: \code{fair_minus_raw = standardization_shift + adjustment + shrinkage_and_noise},
-further separating the design/criterion weighting shift from pure rater adjustment.
+Distinguish three quantities when comparing across software:
+\enumerate{
+\item \strong{FACETS "Fair Average"} (\code{E[Y | theta_p, item = 0, rater = 0]}):
+evaluates the nonlinear category expectation at the single reference
+origin \code{0} for all non-person facets.
+\item \strong{\code{fair_scores(fit, standardize = FALSE)}}: averages \verb{E[Y_n | theta_p, item_\{i(n)\}, rater = 0]}
+over each examinee's \emph{observed} tasks/items (retaining task difficulty
+differences if task assignment is unbalanced).
+\item \strong{\code{fair_scores(fit, standardize = TRUE)}} (recommended for cross-examinee
+comparison): averages \code{E[Y | theta_p, item_g, rater = 0]} across every
+cell \code{g} of the common reference task/item grid (\code{reference_grid},
+optionally weighted by \code{reference_weights}). By Jensen's inequality on
+the nonlinear ordinal expectation, averaging expected scores across real
+item difficulties differs slightly from evaluating a single hypothetical
+item at difficulty \code{0} (FACETS Fair Average).
+}
 }
 
-When \code{return_draws = TRUE} (with \code{summary = TRUE}), attaches person-level
-posterior draw matrices (\verb{D x P}) as \code{attr(res, "draws")} so users can
-compute draw-matched score contrasts across reference conditions without
-subtracting marginal credible intervals.
-
-For non-hierarchical PCM with steps on an adjusted facet, no reference step
-profile exists and an error is raised. For uniform hierarchical PCM
-(\code{hierarchical = "tau"}), the shared \code{tau_common} profile is used.
-
-For heterogeneous-category PCM, \code{mean_fair_score} is a weighted mean on
-the native rubric units; v1 does not add \code{expected_total_score}. Use
-\code{standardize = TRUE} with common reference cells/weights to compare persons.
-Rescaling to 0--1 alone does not establish interval-scale comparability
-across rubrics of different lengths. Adjusting \code{threshold_facet} is unsupported.
-
-\code{attr(res, "reference_meta")} is attached to all summary and row-level
-results, including when \code{return_draws = FALSE}. It records \code{score_unit}
-(\code{"native_weighted_mean"} for summaries, \code{"native_row_expected_score"} for
-rows), \code{K_by_level}, \code{reference_weights}, \code{standardized}, and comparability notes.
-}

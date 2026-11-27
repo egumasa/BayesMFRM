@@ -1,12 +1,11 @@
 #' Build Stan code from specification and priors
 #'
-#' @param spec bmfrm_spec object from parse_bmfrm_formula()
-#' @param priors list of bmfrm_prior objects
-#' @param save_gq Either `"full"` (default; saves observation-level `log_lik`,
-#'   `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan `generated quantities`) or
-#'   `"minimal"` (omits observation-level `generated quantities` to save disk
-#'   and memory on large datasets; downstream S3 methods compute quantities on
-#'   demand in R).
+#' @param spec `bmfrm_spec` object from [parse_bmfrm_formula()]
+#' @param priors list of `bmfrm_prior` objects
+#' @param save_gq Either `"minimal"` (default; omits observation-level
+#'   `generated quantities` so downstream S3 methods stream quantities on demand
+#'   in R) or `"full"` (saves `log_lik`, `y_rep`, `mu`, `sigma2`, `mu_fair` in
+#'   Stan `generated quantities`).
 #'
 #' @return character string with complete Stan code
 #' @export
@@ -18,106 +17,54 @@ build_stan_code <- function(spec, priors = NULL, save_gq = NULL) {
     )
   }
   if (!is.null(save_gq)) {
-    spec$save_gq <- match.arg(save_gq, c("full", "minimal"))
+    spec$save_gq <- match.arg(save_gq, c("minimal", "full"))
   }
 
   spec <- resolve_bmfrm_spec(spec, priors)
   priors <- spec$priors
+  pf <- spec_person_facet(spec)
 
-  # Load appropriate template based on family (and heterogeneous PCM flag)
   template_path <- get_stan_template_path(spec$family, heterogeneous = isTRUE(spec$K_heterogeneous))
+  stan_code <- paste(readLines(template_path, warn = FALSE), collapse = "\n")
 
-  stan_code <- readLines(template_path, warn = FALSE)
-  stan_code <- paste(stan_code, collapse = "\n")
-
-  # For PCM, replace threshold facet placeholder first
+  stan_code <- gsub("\\{\\{PERSON_FACET\\}\\}", pf, stan_code)
   if (spec$family == "pcm" && !is.null(spec$threshold_facet)) {
     stan_code <- gsub("\\{\\{THRESHOLD_FACET\\}\\}", spec$threshold_facet, stan_code)
   }
 
-  # Generate replacements for each placeholder
   replacements <- ordinal_stan_replacements(spec)
-
-  # 1. FACET_DATA_DECL
   replacements$FACET_DATA_DECL <- generate_facet_data_decl(spec)
-
-  # 2. FACET_PARAM_DECL
   replacements$FACET_PARAM_DECL <- generate_facet_param_decl(spec)
-
-  # 3. BIAS_PARAM_DECL
   replacements$BIAS_PARAM_DECL <- generate_bias_param_decl(spec)
-
-  # 4. FACET_TRANSFORM
   replacements$FACET_TRANSFORM <- generate_facet_transform(spec)
-
-  # 5. BIAS_TRANSFORM
   replacements$BIAS_TRANSFORM <- generate_bias_transform(spec)
-
-  # 6. PRIOR_BLOCK
   replacements$PRIOR_BLOCK <- generate_prior_block(spec, priors)
+  replacements$ETA_VEC_MAIN <- generate_eta_vec_main(spec, fair = FALSE)
+  replacements$ETA_VEC_BIAS <- generate_eta_vec_bias(spec, target_var = "eta", fair = FALSE)
+  replacements$GQ_BLOCK <- if (identical(spec$save_gq, "full")) generate_gq_block(spec) else ""
 
-  # 7. INDEX_EXTRACT
-  replacements$INDEX_EXTRACT <- generate_index_extract(spec)
-
-  # 8. ETA_SUM
-  replacements$ETA_SUM <- generate_eta_sum(spec, fair = FALSE)
-
-  # 9. ETA_SUM_FAIR
-  replacements$ETA_SUM_FAIR <- generate_eta_sum(spec, fair = TRUE)
-
-  # 10. FAIR_TAU_EXPR (PCM only: use tau_common when hierarchical PCM steps lie on an adjusted nuisance facet)
-  use_common_fair_tau <- identical(spec$family, "pcm") &&
-    !is.null(spec$gaussian_model) &&
-    identical(spec$gaussian_model$step$mode, "hierarchical_pcm") &&
-    (spec$threshold_facet %in% c("rater", "interlocutor"))
-  replacements$FAIR_TAU_EXPR <- if (use_common_fair_tau) "tau_common[k-1]" else "tau[threshold_n, k-1]"
-
-  # Replace all placeholders
   for (placeholder in names(replacements)) {
     pattern <- paste0("// \\{\\{", placeholder, "\\}\\}")
-    replacement <- replacements[[placeholder]]
-    stan_code <- gsub(pattern, replacement, stan_code, fixed = FALSE)
+    stan_code <- gsub(pattern, replacements[[placeholder]], stan_code, fixed = FALSE)
   }
 
-  # Strip generated quantities block for minimal output mode
-  if (identical(spec$save_gq, "minimal")) {
-    stan_code <- sub("\ngenerated quantities \\{[\\s\\S]*$", "", stan_code, perl = TRUE)
-  }
-
-  stan_code
+  sub("\n{3,}$", "\n", stan_code)
 }
 
 #' Generate data block declarations for facets
 #' @keywords internal
 generate_facet_data_decl <- function(spec) {
-  int_lines <- ""
-  for (facet in spec$facets_main) {
-    int_lines <- c(int_lines,
-      paste0("  int<lower=1> J_", facet, ";")
-    )
-  }
-
-  array_lines <- ""
-  for (facet in spec$facets_main) {
-    array_lines <- c(
-      array_lines,
-      paste0("  array[N] int<lower=1, upper=J_", facet, "> ", facet, "_id", ";")
-    )
-  }
-
-  paste(
-    c(int_lines, "", array_lines),
-    collapse = "\n"
-  )
+  int_lines <- vapply(spec$facets_main, function(f) paste0("  int<lower=1> J_", f, ";"), character(1))
+  arr_lines <- vapply(spec$facets_main, function(f) paste0("  array[N] int<lower=1, upper=J_", f, "> ", f, "_id;"), character(1))
+  paste(c(int_lines, "", arr_lines), collapse = "\n")
 }
 
 #' Generate parameter declarations for main facets
 #' @keywords internal
 generate_facet_param_decl <- function(spec) {
-  lines <- ""
-
-  # Skip person (theta) as it's always present in template
-  other_facets <- setdiff(spec$facets_main, "person")
+  pf <- spec_person_facet(spec)
+  other_facets <- setdiff(spec$facets_main, pf)
+  lines <- character(0)
 
   for (facet in other_facets) {
     if (is.null(spec$gaussian_model)) {
@@ -145,54 +92,50 @@ generate_facet_param_decl <- function(spec) {
 #' @keywords internal
 generate_bias_param_decl <- function(spec) {
   lines <- character(0)
-
-  if (length(spec$facets_bias) > 0) {
-    for (bias_facet in spec$facets_bias) {
-      components <- strsplit(bias_facet, ":")[[1]]
-      f1 <- components[1]
-      f2 <- components[2]
-      bias_name <- gsub(":", "", bias_facet)
-      if (!is.null(spec$gaussian_model)) {
-        b <- spec$gaussian_model$biases[[bias_facet]]
-        if (b$mode == "gaussian_basis") {
-          lines <- c(
-            lines,
-            paste0("  matrix[J_", f1, " - 1, J_", f2, " - 1] ", bias_name, "_raw;"),
-            paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;")
-          )
-        } else if (b$mode == "shrinkage_horseshoe") {
-          lines <- c(
-            lines,
-            paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"),
-            paste0("  matrix<lower=0>[J_", f1, ", J_", f2, "] lambda_", bias_name, ";"),
-            paste0("  real<lower=0> c2_", bias_name, ";"),
-            paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;")
-          )
-        } else if (b$mode == "shrinkage_student_t") {
-          lines <- c(
-            lines,
-            paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"),
-            paste0("  matrix<lower=0>[J_", f1, ", J_", f2, "] lambda_", bias_name, ";"),
-            paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;")
-          )
-        } else {
-          lines <- c(lines, paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"))
-        }
-        next
+  for (bias_facet in spec$facets_bias) {
+    components <- strsplit(bias_facet, ":", fixed = TRUE)[[1L]]
+    f1 <- components[1L]
+    f2 <- components[2L]
+    bias_name <- gsub(":", "", bias_facet)
+    if (!is.null(spec$gaussian_model)) {
+      b <- spec$gaussian_model$biases[[bias_facet]]
+      if (b$mode == "gaussian_basis") {
+        lines <- c(
+          lines,
+          paste0("  matrix[J_", f1, " - 1, J_", f2, " - 1] ", bias_name, "_raw;"),
+          paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;")
+        )
+      } else if (b$mode == "shrinkage_horseshoe") {
+        lines <- c(
+          lines,
+          paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"),
+          paste0("  matrix<lower=0>[J_", f1, ", J_", f2, "] lambda_", bias_name, ";"),
+          paste0("  real<lower=0> c2_", bias_name, ";"),
+          paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;")
+        )
+      } else if (b$mode == "shrinkage_student_t") {
+        lines <- c(
+          lines,
+          paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"),
+          paste0("  matrix<lower=0>[J_", f1, ", J_", f2, "] lambda_", bias_name, ";"),
+          paste0("  vector<lower=0>[estimate_sd_", bias_name, "] sigma_", bias_name, "_raw;")
+        )
+      } else {
+        lines <- c(lines, paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"))
       }
+    } else {
       lines <- c(lines, paste0("  matrix[J_", f1, ", J_", f2, "] ", bias_name, "_raw;"))
     }
   }
-
   paste(lines, collapse = "\n")
 }
 
 #' Generate transformed parameters for main facets
 #' @keywords internal
 generate_facet_transform <- function(spec) {
-  other_facets <- setdiff(spec$facets_main, "person")
-
-  vector_lines <- ""
+  pf <- spec_person_facet(spec)
+  other_facets <- setdiff(spec$facets_main, pf)
+  vector_lines <- character(0)
   centering_lines <- character(0)
 
   for (facet in other_facets) {
@@ -213,106 +156,81 @@ generate_facet_transform <- function(spec) {
         )
         next
       }
-      # non_gaussian_raw falls through to standard centering
     }
-    vector_lines <- c(
-      vector_lines,
-      paste0("  vector[J_", facet, "] ", facet, ";")
-    )
+    vector_lines <- c(vector_lines, paste0("  vector[J_", facet, "] ", facet, ";"))
     centering_lines <- c(
       centering_lines,
-      paste0("  // ", facet, " (sum-to-zero constraint)"),
-      "  {",
-      paste0("    real mean_", facet, " = mean(", facet, "_raw);"),
-      paste0("    ", facet, " = ", facet, "_raw - mean_", facet, ";"),
-      "  }"
+      paste0("  ", facet, " = ", facet, "_raw - mean(", facet, "_raw);")
     )
   }
 
-  paste(
-    c(vector_lines, centering_lines),
-    collapse = "\n"
-  )
+  paste(c(vector_lines, centering_lines), collapse = "\n")
 }
 
 #' Generate transformed parameters for bias facets
 #' @keywords internal
 generate_bias_transform <- function(spec) {
-  lines <- ""
-
-  if (length(spec$facets_bias) > 0) {
-    for (bias_facet in spec$facets_bias) {
-      bias_name <- gsub(":", "", bias_facet)
-      components <- strsplit(bias_facet, ":", fixed = TRUE)[[1L]]
-      dims <- paste0("J_", components, collapse = ", ")
-      if (!is.null(spec$gaussian_model)) {
-        b <- spec$gaussian_model$biases[[bias_facet]]
-        if (b$mode == "gaussian_basis") {
-          lines <- c(
-            lines,
-            paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
-                   " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
-            paste0("  matrix[", dims, "] ", bias_name, " = sigma_", bias_name,
-                   " * B_", bias_name, "_1 * ", bias_name, "_raw * B_", bias_name, "_2';")
-          )
-          next
-        } else if (b$mode == "shrinkage_horseshoe") {
-          lines <- c(
-            lines,
-            paste0("  // ", bias_facet, " regularized horseshoe bias (double-centered in cell space)"),
-            paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
-                   " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
-            paste0("  matrix[", dims, "] ", bias_name, ";"),
-            "  {",
-            paste0("    matrix[", dims, "] lam_tilde = sqrt(c2_", bias_name,
-                   " * square(lambda_", bias_name, ") ./ (c2_", bias_name,
-                   " + square(sigma_", bias_name, ") * square(lambda_", bias_name, ")));"),
-            paste0("    matrix[", dims, "] raw_eff = scale_factor_", bias_name,
-                   " * sigma_", bias_name, " * (lam_tilde .* ", bias_name, "_raw);"),
-            paste0("    matrix[", dims, "] centered;"),
-            paste0("    for (i in 1:rows(raw_eff)) centered[i, ] = raw_eff[i, ] - mean(raw_eff[i, ]);"),
-            paste0("    for (j in 1:cols(centered)) ", bias_name, "[:, j] = centered[:, j] - mean(centered[:, j]);"),
-            "  }"
-          )
-          next
-        } else if (b$mode == "shrinkage_student_t") {
-          lines <- c(
-            lines,
-            paste0("  // ", bias_facet, " Student-t local shrinkage bias (double-centered in cell space)"),
-            paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
-                   " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
-            paste0("  matrix[", dims, "] ", bias_name, ";"),
-            "  {",
-            paste0("    matrix[", dims, "] raw_eff = scale_factor_", bias_name,
-                   " * sigma_", bias_name, " * (sqrt(lambda_", bias_name, ") .* ", bias_name, "_raw);"),
-            paste0("    matrix[", dims, "] centered;"),
-            paste0("    for (i in 1:rows(raw_eff)) centered[i, ] = raw_eff[i, ] - mean(raw_eff[i, ]);"),
-            paste0("    for (j in 1:cols(centered)) ", bias_name, "[:, j] = centered[:, j] - mean(centered[:, j]);"),
-            "  }"
-          )
-          next
-        }
-        # non_gaussian_raw falls through to standard double centering
+  lines <- character(0)
+  for (bias_facet in spec$facets_bias) {
+    bias_name <- gsub(":", "", bias_facet)
+    components <- strsplit(bias_facet, ":", fixed = TRUE)[[1L]]
+    dims <- paste0("J_", components, collapse = ", ")
+    if (!is.null(spec$gaussian_model)) {
+      b <- spec$gaussian_model$biases[[bias_facet]]
+      if (b$mode == "gaussian_basis") {
+        lines <- c(
+          lines,
+          paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
+                 " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
+          paste0("  matrix[", dims, "] ", bias_name, " = sigma_", bias_name,
+                 " * B_", bias_name, "_1 * ", bias_name, "_raw * B_", bias_name, "_2';")
+        )
+        next
+      } else if (b$mode == "shrinkage_horseshoe") {
+        lines <- c(
+          lines,
+          paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
+                 " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
+          paste0("  matrix[", dims, "] ", bias_name, ";"),
+          "  {",
+          paste0("    matrix[", dims, "] lam_tilde = sqrt(c2_", bias_name,
+                 " * square(lambda_", bias_name, ") ./ (c2_", bias_name,
+                 " + square(sigma_", bias_name, ") * square(lambda_", bias_name, ")));"),
+          paste0("    matrix[", dims, "] raw_eff = scale_factor_", bias_name,
+                 " * sigma_", bias_name, " * (lam_tilde .* ", bias_name, "_raw);"),
+          paste0("    matrix[", dims, "] centered;"),
+          "    for (i in 1:rows(raw_eff)) centered[i, ] = raw_eff[i, ] - mean(raw_eff[i, ]);",
+          paste0("    for (j in 1:cols(centered)) ", bias_name, "[:, j] = centered[:, j] - mean(centered[:, j]);"),
+          "  }"
+        )
+        next
+      } else if (b$mode == "shrinkage_student_t") {
+        lines <- c(
+          lines,
+          paste0("  real<lower=0> sigma_", bias_name, " = estimate_sd_", bias_name,
+                 " ? sigma_", bias_name, "_raw[1] : fixed_sd_", bias_name, ";"),
+          paste0("  matrix[", dims, "] ", bias_name, ";"),
+          "  {",
+          paste0("    matrix[", dims, "] raw_eff = scale_factor_", bias_name,
+                 " * sigma_", bias_name, " * (sqrt(lambda_", bias_name, ") .* ", bias_name, "_raw);"),
+          paste0("    matrix[", dims, "] centered;"),
+          "    for (i in 1:rows(raw_eff)) centered[i, ] = raw_eff[i, ] - mean(raw_eff[i, ]);",
+          paste0("    for (j in 1:cols(centered)) ", bias_name, "[:, j] = centered[:, j] - mean(centered[:, j]);"),
+          "  }"
+        )
+        next
       }
-      lines <- c(
-        lines,
-        paste0("  // ", bias_facet, " bias (sum-to-zero constraints)"),
-        paste0("  matrix[", dims, "] ", bias_name, ";"),
-        "  {",
-        paste0("    matrix[rows(", bias_name, "_raw), cols(", bias_name, "_raw)] centered;"),
-        paste0("    // Row-wise centering"),
-        paste0("    for (i in 1:rows(", bias_name, "_raw)) {"),
-        paste0("      centered[i, ] = ", bias_name, "_raw[i, ] - mean(", bias_name, "_raw[i, ]);"),
-        "    }",
-        paste0("    // Column-wise centering"),
-        paste0("    for (j in 1:cols(centered)) {"),
-        paste0("      ", bias_name, "[:, j] = centered[:, j] - mean(centered[:, j]);"),
-        "    }",
-        "  }"
-      )
     }
+    lines <- c(
+      lines,
+      paste0("  matrix[", dims, "] ", bias_name, ";"),
+      "  {",
+      paste0("    matrix[rows(", bias_name, "_raw), cols(", bias_name, "_raw)] centered;"),
+      paste0("    for (i in 1:rows(", bias_name, "_raw)) centered[i, ] = ", bias_name, "_raw[i, ] - mean(", bias_name, "_raw[i, ]);"),
+      paste0("    for (j in 1:cols(centered)) ", bias_name, "[:, j] = centered[:, j] - mean(centered[:, j]);"),
+      "  }"
+    )
   }
-
   paste(lines, collapse = "\n")
 }
 
@@ -323,23 +241,17 @@ generate_prior_block <- function(spec, priors) {
     gm <- spec$gaussian_model
     lines <- character(0)
 
-    # 1. Ability priors (preserve exact ordering for Gaussian/hierarchical compatibility)
     if (gm$ability$mode %in% c("hierarchical", "gaussian")) {
       lines <- c(lines, "  theta_raw ~ std_normal();", "  mu_theta_raw ~ std_normal();", "  log_sigma_theta_raw ~ std_normal();")
     } else {
       lines <- c(lines, paste0("  theta_raw ~ ", gm$ability$spec, ";"))
     }
 
-    # 2. Step (tau) priors
     if (gm$step$mode == "gaussian_basis") {
       tau_lhs <- if (spec$family == "pcm" && !isTRUE(spec$K_heterogeneous)) "to_vector(tau_raw)" else "tau_raw"
       lines <- c(lines, paste0("  ", tau_lhs, " ~ std_normal();"))
     } else if (gm$step$mode == "hierarchical_pcm") {
-      lines <- c(
-        lines,
-        "  tau_common_raw ~ std_normal();",
-        "  to_vector(tau_dev_raw) ~ std_normal();"
-      )
+      lines <- c(lines, "  tau_common_raw ~ std_normal();", "  to_vector(tau_dev_raw) ~ std_normal();")
       if (gm$step$dev_sd$estimated) {
         lines <- c(lines, paste0("  sigma_tau_raw ~ ", gm$step$dev_sd$spec, ";"))
       }
@@ -348,7 +260,6 @@ generate_prior_block <- function(spec, priors) {
       lines <- c(lines, paste0("  ", tau_lhs, " ~ ", gm$step$spec, ";"))
     }
 
-    # 3. Main facet priors
     for (f in names(gm$facet_specs)) {
       fs <- gm$facet_specs[[f]]
       if (fs$mode == "gaussian_basis") {
@@ -363,7 +274,6 @@ generate_prior_block <- function(spec, priors) {
       }
     }
 
-    # 4. Interaction priors
     for (b in gm$biases) {
       if (b$mode == "gaussian_basis") {
         lines <- c(lines, paste0("  to_vector(", b$name, "_raw) ~ std_normal();"))
@@ -375,7 +285,7 @@ generate_prior_block <- function(spec, priors) {
           lines,
           paste0("  to_vector(", b$name, "_raw) ~ std_normal();"),
           paste0("  to_vector(lambda_", b$name, ") ~ cauchy(0, 1);"),
-          paste0("  c2_", b$name, " ~ inv_gamma(2, 8);")
+          paste0("  c2_", b$name, " ~ inv_gamma(hs_slab_shape_", b$name, ", hs_slab_rate_", b$name, ");")
         )
         if (b$sd$estimated) {
           lines <- c(lines, paste0("  sigma_", b$name, "_raw ~ ", b$sd$spec, ";"))
@@ -397,14 +307,10 @@ generate_prior_block <- function(spec, priors) {
     return(paste(lines, collapse = "\n"))
   }
 
-  lines <- ""
+  lines <- character(0)
   for (prior_obj in priors) {
     if (prior_obj$class == "theta") {
       lines <- c(lines, paste0("  theta_raw ~ ", prior_obj$spec, ";"))
-    } else if (prior_obj$class == "item") {
-      lines <- c(lines, paste0("  item_raw ~ ", prior_obj$spec, ";"))
-    } else if (prior_obj$class == "rater") {
-      lines <- c(lines, paste0("  rater_raw ~ ", prior_obj$spec, ";"))
     } else if (prior_obj$class == "tau") {
       if (spec$family == "pcm" && !isTRUE(spec$K_heterogeneous)) {
         lines <- c(lines, paste0("  to_vector(tau_raw) ~ ", prior_obj$spec, ";"))
@@ -414,16 +320,20 @@ generate_prior_block <- function(spec, priors) {
     } else if (prior_obj$class == "bias") {
       bias_name <- gsub(":", "", prior_obj$facet)
       lines <- c(lines, paste0("  to_vector(", bias_name, "_raw) ~ ", prior_obj$spec, ";"))
-    } else if (grepl("^facet_", prior_obj$class)) {
-      facet_name <- gsub("^facet_", "", prior_obj$class)
-      lines <- c(lines, paste0("  ", facet_name, "_raw ~ ", prior_obj$spec, ";"))
+    } else {
+      key <- prior_target_key(prior_obj, person_facet = spec_person_facet(spec), facets_bias = spec$facets_bias)
+      if (startsWith(key, "facet:")) {
+        facet_name <- sub("^facet:", "", key)
+        lines <- c(lines, paste0("  ", facet_name, "_raw ~ ", prior_obj$spec, ";"))
+      }
     }
   }
-
   paste(lines, collapse = "\n")
 }
 
 ordinal_stan_replacements <- function(spec) {
+  pf <- spec_person_facet(spec)
+  Jp <- paste0("J_", pf)
   J <- paste0("J_", spec$threshold_facet)
   is_hetero <- isTRUE(spec$K_heterogeneous)
   if (is.null(spec$gaussian_model)) {
@@ -434,8 +344,8 @@ ordinal_stan_replacements <- function(spec) {
           paste0("  array[", J, "] int<lower=1> tau_raw_start;"),
           paste0("  array[", J, "] int<lower=0> tau_raw_len;")
         ), collapse = "\n"),
-        ABILITY_PARAM_DECL = "vector[J_person] theta_raw;",
-        ABILITY_TRANSFORM = "vector[J_person] theta = theta_raw;",
+        ABILITY_PARAM_DECL = paste0("vector[", Jp, "] theta_raw;"),
+        ABILITY_TRANSFORM = paste0("vector[", Jp, "] theta = theta_raw;"),
         THRESHOLD_PARAM_DECL = "vector[N_tau_raw] tau_raw;",
         THRESHOLD_TRANSFORM = paste(c(
           "vector[N_tau_steps] tau = rep_vector(0.0, N_tau_steps);",
@@ -454,8 +364,8 @@ ordinal_stan_replacements <- function(spec) {
     }
     return(list(
       MODEL_DATA = "",
-      ABILITY_PARAM_DECL = "vector[J_person] theta_raw;",
-      ABILITY_TRANSFORM = "vector[J_person] theta = theta_raw;",
+      ABILITY_PARAM_DECL = paste0("vector[", Jp, "] theta_raw;"),
+      ABILITY_TRANSFORM = paste0("vector[", Jp, "] theta = theta_raw;"),
       THRESHOLD_PARAM_DECL = if (spec$family == "pcm") paste0("matrix[", J, ", K-1] tau_raw;") else "vector[K - 1] tau_raw;",
       THRESHOLD_TRANSFORM = if (spec$family == "pcm") {
         paste0("matrix[", J, ", K - 1] tau;\n  for (j in 1:", J, ") tau[j] = tau_raw[j] - mean(tau_raw[j]);")
@@ -468,7 +378,6 @@ ordinal_stan_replacements <- function(spec) {
   gm <- spec$gaussian_model
   fields <- character(0)
 
-  # 1. Ability fields/decls/transforms
   if (gm$ability$mode %in% c("hierarchical", "gaussian")) {
     fields <- c(
       fields,
@@ -480,21 +389,20 @@ ordinal_stan_replacements <- function(spec) {
       "real<lower=0> ability_sd_scale;"
     )
     ability_param <- paste(c(
-      "vector[J_person] theta_raw;",
+      paste0("vector[", Jp, "] theta_raw;"),
       "vector[estimate_mu] mu_theta_raw;",
       "vector[estimate_sigma] log_sigma_theta_raw;"
     ), collapse = "\n  ")
     ability_transform <- paste(c(
       "real mu_theta = estimate_mu ? ability_mean_location + ability_mean_scale * mu_theta_raw[1] : ability_mean_location;",
       "real<lower=0> sigma_theta = estimate_sigma ? exp(ability_sd_location + ability_sd_scale * log_sigma_theta_raw[1]) : ability_sd_location;",
-      "vector[J_person] theta = mu_theta + sigma_theta * theta_raw;"
+      paste0("vector[", Jp, "] theta = mu_theta + sigma_theta * theta_raw;")
     ), collapse = "\n  ")
   } else {
-    ability_param <- "vector[J_person] theta_raw;"
-    ability_transform <- "vector[J_person] theta = theta_raw;"
+    ability_param <- paste0("vector[", Jp, "] theta_raw;")
+    ability_transform <- paste0("vector[", Jp, "] theta = theta_raw;")
   }
 
-  # 2. Step (tau) fields/decls/transforms
   if (is_hetero) {
     if (gm$step$mode == "gaussian_basis") {
       fields <- c(
@@ -578,7 +486,6 @@ ordinal_stan_replacements <- function(spec) {
     }
   }
 
-  # 3. Main facet data fields
   for (f in names(gm$facet_specs)) {
     fs <- gm$facet_specs[[f]]
     if (fs$mode == "gaussian_basis") {
@@ -597,7 +504,6 @@ ordinal_stan_replacements <- function(spec) {
     }
   }
 
-  # 4. Interaction data fields
   for (b in gm$biases) {
     if (b$mode == "gaussian_basis") {
       fields <- c(
@@ -614,6 +520,13 @@ ordinal_stan_replacements <- function(spec) {
         paste0("real<lower=0> fixed_sd_", b$name, ";"),
         paste0("real<lower=0> scale_factor_", b$name, ";")
       )
+      if (b$mode == "shrinkage_horseshoe") {
+        fields <- c(
+          fields,
+          paste0("real<lower=0> hs_slab_shape_", b$name, ";"),
+          paste0("real<lower=0> hs_slab_rate_", b$name, ";")
+        )
+      }
     }
   }
 
@@ -626,63 +539,170 @@ ordinal_stan_replacements <- function(spec) {
   )
 }
 
-#' Generate index extraction code
+#' Generate vectorized main-facet subtraction expression
 #' @keywords internal
-generate_index_extract <- function(spec) {
-  lines <- ""
+generate_eta_vec_main <- function(spec, fair = FALSE) {
+  pf <- spec_person_facet(spec)
+  adj <- if (fair) spec_adjust_facets(spec) else character(0)
+  keep <- setdiff(spec$facets_main, c(pf, adj))
+  if (!length(keep)) return("")
+  paste(paste0("- ", keep, "[", keep, "_id]"), collapse = "\n                    ")
+}
 
-  other_facets <- setdiff(spec$facets_main, "person")
+#' Generate 2D interaction accumulation loop on a vectorized linear predictor
+#' @keywords internal
+generate_eta_vec_bias <- function(spec, target_var = "eta", fair = FALSE) {
+  adj <- if (fair) spec_adjust_facets(spec) else character(0)
+  terms <- character(0)
+  for (bias_facet in spec$facets_bias) {
+    comps <- strsplit(bias_facet, ":", fixed = TRUE)[[1L]]
+    if (fair && any(comps %in% adj)) next
+    bname <- gsub(":", "", bias_facet)
+    terms <- c(terms, paste0(bname, "[", comps[1L], "_id[n], ", comps[2L], "_id[n]]"))
+  }
+  if (!length(terms)) return("")
+  paste(c(
+    "for (n in 1:N) {",
+    paste0("      ", target_var, "[n] += ", paste(terms, collapse = " + "), ";"),
+    "    }"
+  ), collapse = "\n    ")
+}
 
-  for (facet in other_facets) {
-    lines <- c(lines, paste0("    int ", facet, "_n = ", facet, "_id[n];"))
+#' Generate explicit generated quantities block (omitted cleanly when save_gq == "minimal")
+#' @keywords internal
+generate_gq_block <- function(spec) {
+  pf <- spec_person_facet(spec)
+  adj <- spec_adjust_facets(spec)
+  has_fair_diff <- length(adj) > 0L
+  is_hetero <- isTRUE(spec$K_heterogeneous)
+  tf <- spec$threshold_facet
+
+  eta_full_main <- generate_eta_vec_main(spec, fair = FALSE)
+  eta_full_bias <- generate_eta_vec_bias(spec, target_var = "eta_full", fair = FALSE)
+  eta_fair_main <- if (has_fair_diff) generate_eta_vec_main(spec, fair = TRUE) else ""
+  eta_fair_bias <- if (has_fair_diff) generate_eta_vec_bias(spec, target_var = "eta_fair", fair = TRUE) else ""
+
+  use_common_fair_tau <- identical(spec$family, "pcm") &&
+    !is_hetero &&
+    !is.null(spec$gaussian_model) &&
+    identical(spec$gaussian_model$step$mode, "hierarchical_pcm") &&
+    (tf %in% adj)
+
+  k_upper <- if (is_hetero) "K_max" else "K"
+  lines <- c(
+    "generated quantities {",
+    "  vector[N] log_lik;",
+    paste0("  array[N] int<lower=1, upper=", k_upper, "> y_rep;"),
+    "  vector[N] mu;",
+    "  vector[N] sigma2;",
+    "  vector[N] mu_fair;",
+    "  {",
+    paste0("    vector[N] eta_full = theta[", pf, "_id]",
+           if (nzchar(eta_full_main)) paste0(" ", gsub("\n\\s*", " ", eta_full_main)) else "", ";")
+  )
+  if (nzchar(eta_full_bias)) lines <- c(lines, paste0("    ", eta_full_bias))
+  if (has_fair_diff) {
+    lines <- c(
+      lines,
+      paste0("    vector[N] eta_fair = theta[", pf, "_id]",
+             if (nzchar(eta_fair_main)) paste0(" ", gsub("\n\\s*", " ", eta_fair_main)) else "", ";")
+    )
+    if (nzchar(eta_fair_bias)) lines <- c(lines, paste0("    ", eta_fair_bias))
   }
 
+  if (identical(spec$family, "rsm")) {
+    lines <- c(
+      lines,
+      "    vector[K] cum_tau = append_row(0.0, cumulative_sum(tau));",
+      "    for (n in 1:N) {",
+      "      vector[K] logits_full = cat_seq * eta_full[n] - cum_tau;",
+      "      real lse_full = log_sum_exp(logits_full);",
+      "      vector[K] p_full = softmax(logits_full);",
+      "      real ex = dot_product(cat_val, p_full);",
+      "      mu[n] = ex;",
+      "      sigma2[n] = fmax(dot_product(cat_val2, p_full) - ex * ex, 0.0);",
+      "      log_lik[n] = logits_full[X[n]] - lse_full;",
+      "      y_rep[n] = categorical_rng(p_full);",
+      if (has_fair_diff) {
+        c("      vector[K] p_fair = softmax(cat_seq * eta_fair[n] - cum_tau);",
+          "      mu_fair[n] = dot_product(cat_val, p_fair);")
+      } else {
+        "      mu_fair[n] = ex;"
+      },
+      "    }"
+    )
+  } else if (!is_hetero) {
+    lines <- c(
+      lines,
+      paste0("    array[J_", tf, "] vector[K] cum_tau;"),
+      paste0("    for (j in 1:J_", tf, ") cum_tau[j] = append_row(0.0, cumulative_sum(tau[j]'));"),
+      if (use_common_fair_tau) "    vector[K] cum_tau_fair = append_row(0.0, cumulative_sum(tau_common));",
+      "    for (n in 1:N) {",
+      paste0("      int threshold_n = ", tf, "_id[n];"),
+      "      vector[K] logits_full = cat_seq * eta_full[n] - cum_tau[threshold_n];",
+      "      real lse_full = log_sum_exp(logits_full);",
+      "      vector[K] p_full = softmax(logits_full);",
+      "      real ex = dot_product(cat_val, p_full);",
+      "      mu[n] = ex;",
+      "      sigma2[n] = fmax(dot_product(cat_val2, p_full) - ex * ex, 0.0);",
+      "      log_lik[n] = logits_full[X[n]] - lse_full;",
+      "      y_rep[n] = categorical_rng(p_full);",
+      if (has_fair_diff) {
+        c(paste0("      vector[K] p_fair = softmax(cat_seq * eta_fair[n] - ",
+                 if (use_common_fair_tau) "cum_tau_fair" else "cum_tau[threshold_n]", ");"),
+          "      mu_fair[n] = dot_product(cat_val, p_fair);")
+      } else {
+        "      mu_fair[n] = ex;"
+      },
+      "    }"
+    )
+  } else {
+    lines <- c(
+      lines,
+      "    vector[N_tau_steps] cum_tau;",
+      paste0("    for (j in 1:J_", tf, ") {"),
+      "      int s = tau_start[j];",
+      "      int mj = tau_len[j];",
+      "      cum_tau[s:(s + mj - 1)] = cumulative_sum(tau[s:(s + mj - 1)]);",
+      "    }",
+      "    for (n in 1:N) {",
+      paste0("      int threshold_n = ", tf, "_id[n];"),
+      "      int Kj = K_level[threshold_n];",
+      "      int t_start = tau_start[threshold_n];",
+      "      vector[Kj] logits_full = head(cat_seq, Kj) * eta_full[n];",
+      "      logits_full[2:Kj] -= cum_tau[t_start:(t_start + Kj - 2)];",
+      "      real lse_full = log_sum_exp(logits_full);",
+      "      vector[Kj] p_full = softmax(logits_full);",
+      "      real ex = dot_product(head(cat_val, Kj), p_full);",
+      "      mu[n] = ex;",
+      "      sigma2[n] = fmax(dot_product(head(cat_val2, Kj), p_full) - ex * ex, 0.0);",
+      "      log_lik[n] = logits_full[X[n]] - lse_full;",
+      "      y_rep[n] = categorical_rng(p_full);",
+      if (has_fair_diff) {
+        c("      vector[Kj] logits_fair = head(cat_seq, Kj) * eta_fair[n];",
+          "      logits_fair[2:Kj] -= cum_tau[t_start:(t_start + Kj - 2)];",
+          "      mu_fair[n] = dot_product(head(cat_val, Kj), softmax(logits_fair));")
+      } else {
+        "      mu_fair[n] = ex;"
+      },
+      "    }"
+    )
+  }
+
+  lines <- c(lines, "  }", "}")
   paste(lines, collapse = "\n")
 }
 
-#' Generate eta sum (linear predictor)
+#' Verify whether the current working directory is the BayesMFRM package source root
 #' @keywords internal
-generate_eta_sum <- function(spec, fair = FALSE) {
-  lines <- ""
-
-  other_facets <- setdiff(spec$facets_main, "person")
-
-  for (facet in other_facets) {
-    if (fair && facet %in% c("rater", "interlocutor")) {
-      next
-    }
-    lines <- c(lines, paste0("+ (- ", facet, "[", facet, "_n])"))
-  }
-
-  if (length(spec$facets_bias) > 0) {
-    for (bias_facet in spec$facets_bias) {
-      components <- strsplit(bias_facet, ":")[[1]]
-      f1 <- components[1]
-      f2 <- components[2]
-      bias_clean <- gsub(":", "", bias_facet)
-
-      if (fair && (f1 %in% c("rater", "interlocutor") || f2 %in% c("rater", "interlocutor"))) {
-        next
-      }
-
-      lines <- c(lines, paste0("+ ", bias_clean, "[", f1, "_n, ", f2, "_n]"))
-    }
-  }
-
-  if (length(lines) == 0) {
-    return("")
-  }
-
-  paste(lines, collapse = "\n               ")
+is_bayesmfrm_source_root <- function(dir = ".") {
+  desc <- file.path(dir, "DESCRIPTION")
+  if (!file.exists(desc)) return(FALSE)
+  lines <- readLines(desc, n = 10L, warn = FALSE)
+  any(grepl("^Package:\\s*BayesMFRM\\s*$", lines))
 }
 
-#' Get Stan template path
-#'
-#' @param family Model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)
-#' @param heterogeneous Logical; if `TRUE` and `family = "pcm"`, return the
-#'   packed ragged heterogeneous-category PCM template (`bmfrm_pcm_hetero.stan`).
-#'
-#' @return Path to the Stan template file
+#' Get Stan template path without unverified relative sibling fallbacks
 #' @keywords internal
 get_stan_template_path <- function(family = "rsm", heterogeneous = FALSE) {
   template_name <- switch(family,
@@ -699,13 +719,8 @@ get_stan_template_path <- function(family = "rsm", heterogeneous = FALSE) {
   }
 
   inst_path <- file.path("inst", "stan", template_name)
-  if (file.exists(inst_path)) {
-    return(inst_path)
-  }
-
-  workspace_path <- file.path("BayesMFRM", "inst", "stan", template_name)
-  if (file.exists(workspace_path)) {
-    return(workspace_path)
+  if (is_bayesmfrm_source_root(".") && file.exists(inst_path)) {
+    return(normalizePath(inst_path, mustWork = TRUE))
   }
 
   stop("Stan template '", template_name, "' not found. Please check BayesMFRM installation.")

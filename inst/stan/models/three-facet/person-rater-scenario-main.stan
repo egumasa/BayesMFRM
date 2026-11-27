@@ -83,7 +83,7 @@ generated quantities {
     real ex;
     real ex2;
 
-    // build cumulative logits for rating-scale model
+    // build adjacent-category logits for rating-scale model
     logits[1] = 0;
     for (k in 2:K) {
       logits[k] = logits[k - 1] + eta - tau[k - 1];

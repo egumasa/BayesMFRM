@@ -14,8 +14,6 @@ stream_bmfrm_standardized_fair_scores(
 )
 }
 \description{
-Iterates over person chunks and reference-grid chunks directly so memory stays
-O(D * chunk_size + D * P) even for thousands of persons. Supports arbitrary
-non-negative normalized weights over \code{reference_grid} rows.
+Streaming standardized fair scores without expanding a P x n_ref data.frame
 }
 \keyword{internal}

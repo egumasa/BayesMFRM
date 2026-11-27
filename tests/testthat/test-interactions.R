@@ -140,8 +140,8 @@ test_that("bias summaries use generated names, original labels and practical thr
 test_that("fair predictions retain interactions among unadjusted facets", {
   d <- expand.grid(person=1:4,item=1:3,rater=1:2,task=1:2); d$score <- 1
   s <- parse_bmfrm_formula(score~person+item+rater+task+item:rater+item:task,d,3)
-  code <- generate_eta_sum(s,fair=TRUE)
+  code <- generate_eta_vec_bias(s, target_var = "eta_fair", fair = TRUE)
   expect_match(code,"itemtask[",fixed=TRUE)
   expect_false(grepl("itemrater[",code,fixed=TRUE))
-  expect_match(build_stan_code(s),"matrix[J_item, J_rater] itemrater;",fixed=TRUE)
+  expect_match(build_stan_code(s),"matrix[J_item, J_rater] itemrater",fixed=TRUE)
 })

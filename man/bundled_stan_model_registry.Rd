@@ -7,8 +7,6 @@
 bundled_stan_model_registry()
 }
 \description{
-Maps each bundled model under \verb{inst/stan/models/} to its verified likelihood
-structure, whether the R posterior-quantity engine matches its parameter names
-and linear predictor, and which facets its built-in \code{mu_fair} adjusts.
+Internal registry of verified bundled Stan models and their R-engine compatibility
 }
 \keyword{internal}

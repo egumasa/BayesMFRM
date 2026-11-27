@@ -10,8 +10,10 @@ facet_fit_from_matrices(
   mu_mat,
   sig_mat,
   kurt_mat = NULL,
+  y_rep_mat = NULL,
   model_name = "model",
-  prob = 0.95
+  prob = 0.95,
+  include_zstd = FALSE
 )
 }
 \arguments{
@@ -24,15 +26,23 @@ facet_fit_from_matrices(
 \item{sig_mat}{Numeric matrix (D x N) of model variances per draw.}
 
 \item{kurt_mat}{Optional numeric matrix (D x N) of fourth central moments
-\code{E[(Y - mu)^4]} per draw for exact Wright & Masters ZSTD variance \code{q}.}
+\code{E[(Y - mu)^4]} per draw for legacy Wilson-Hilferty ZSTD variance \code{q}.}
+
+\item{y_rep_mat}{Optional integer/numeric matrix (D x N) of posterior
+predictive replicated responses for Sinharay (2006) posterior predictive
+p-values (\code{infit_ppp}, \code{outfit_ppp}) and predictive reference bounds.}
 
 \item{model_name}{Character model label.}
 
 \item{prob}{Credible interval probability (default 0.95).}
+
+\item{include_zstd}{Logical; include uncalibrated asymptotic Wilson-Hilferty
+\code{infit_zstd} / \code{outfit_zstd} columns? Default \code{FALSE} (prefer calibrated
+\code{infit_ppp} / \code{outfit_ppp}).}
 }
 \value{
-Tibble with draw-consistent posterior mean infit/outfit, credible
-intervals, plug-in values, and optional exact \code{outfit_q} / \code{infit_q}.
+Tibble with calibrated posterior predictive fit p-values (when
+\code{y_rep_mat} is supplied), realized MSQ summaries, and plug-in values.
 }
 \description{
 Compute facet-level infit/outfit directly from draw matrices without list-columns

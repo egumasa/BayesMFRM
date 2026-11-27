@@ -12,9 +12,10 @@ simulate_bmfrm(
   parameters = NULL,
   nsim = 1L,
   seed = NULL,
-  hierarchical = character(),
+  hierarchical = person_facet,
   family = c("rsm", "pcm"),
-  threshold_facet = NULL
+  threshold_facet = NULL,
+  person_facet = "person"
 )
 }
 \arguments{
@@ -52,6 +53,9 @@ each level. For uniform \code{K}, fixed \code{tau} must be a levels-by-(K-1) mat
 optional row names match facet labels and column names match step numbers
 1,...,K-1. For heterogeneous \code{K}, fixed \code{tau} must be a named list of numeric
 vectors of length \code{K_j - 1}, each summing to zero (\code{0} for binary \code{K_j = 2}).}
+
+\item{person_facet}{Name of the unconstrained ability facet in \code{formula}
+(default \code{"person"}).}
 }
 \value{
 A bmfrm_simulation with y_rep (simulations by ratings), generating

@@ -80,14 +80,19 @@ test_that("summarise_bias respects prob_thresh directly without 95% CI contradic
     fit = list(draws = function(...) mat)
   ), class = "bmfrm_fit")
 
-  s95 <- summarise_bias(obj, "item:rater", prob_thresh = 0.95, delta = 0.2)
+  s95 <- summarise_bias(obj, "item:rater", prob_thresh = 0.95, delta = 0.2, flag_method = "prob")
   expect_equal(s95$flag_bias[1], "positive_bias")
   expect_equal(s95$flag_bias[2], "negative_bias")
   expect_true("bfdr" %in% names(s95))
   expect_equal(s95$bfdr[1], 0.04, tolerance = 1e-12)
 
-  s975 <- summarise_bias(obj, "item:rater", prob_thresh = 0.975, delta = 0.2)
+  s975 <- summarise_bias(obj, "item:rater", prob_thresh = 0.975, delta = 0.2, flag_method = "prob")
   expect_true(all(s975$flag_bias == "no_clear_bias"))
+
+  # Default flag_method = "bfdr" flags cells with bfdr <= 0.05 (here 0.04 <= 0.05)
+  s_bfdr <- summarise_bias(obj, "item:rater", delta = 0.2)
+  expect_equal(s_bfdr$flag_method[1], "bfdr")
+  expect_equal(s_bfdr$flag_bias[1], "positive_bias")
 })
 
 test_that("facet_summary formats quantile column names without rounding collisions", {
@@ -166,8 +171,11 @@ test_that("save_gq = 'minimal' omits GQ and R on-demand engine reproduces exact 
 
   ff <- facet_fit(obj, "judge")
   expect_equal(nrow(ff), 2L)
-  expect_true(all(is.finite(ff$infit_zstd)))
-  expect_true(all(c("infit_q", "outfit_q") %in% names(ff)))
+  expect_true(all(is.finite(ff$infit_ppp) & ff$infit_ppp >= 0 & ff$infit_ppp <= 1))
+  expect_false("infit_zstd" %in% names(ff))
+  ff_z <- facet_fit(obj, "judge", include_zstd = TRUE)
+  expect_true(all(is.finite(ff_z$infit_zstd)))
+  expect_true(all(c("infit_q", "outfit_q") %in% names(ff_z)))
 
   ppc <- suppressMessages(pp_check(obj, type = "all", ndraws = 4, seed = 7))
   expect_equal(dim(ppc$yrep_subset), c(4L, 4L))
@@ -199,7 +207,7 @@ test_that("hierarchical main facets, sparse interaction priors, and hierarchical
   expect_lt(max(abs(c(rowSums(p1$itemrater), colSums(p1$itemrater)))), 1e-12)
   code_hs <- build_stan_code(sim_hs$spec)
   expect_match(code_hs, "sigma_rater_raw ~ normal(0, 0.8);", fixed = TRUE)
-  expect_match(code_hs, "c2_itemrater ~ inv_gamma(2, 8);", fixed = TRUE)
+  expect_match(code_hs, "c2_itemrater ~ inv_gamma(hs_slab_shape_itemrater, hs_slab_rate_itemrater);", fixed = TRUE)
   expect_match(code_hs, "to_vector(lambda_itemrater) ~ cauchy(0, 1);", fixed = TRUE)
 
   # 2. Unit-variance Student-t local shrinkage interaction (scale = "marginal" matches SD = sigma, not sqrt(3)*sigma)
@@ -232,13 +240,13 @@ test_that("hierarchical main facets, sparse interaction priors, and hierarchical
   expect_true(all(c("tau_common", "sigma_tau", "tau") %in% names(ppcm)))
   expect_lt(abs(sum(ppcm$tau_common)), 1e-12)
   expect_lt(max(abs(rowSums(ppcm$tau))), 1e-12)
-  code_pcm <- build_stan_code(sim_pcm$spec)
+  code_pcm <- build_stan_code(sim_pcm$spec, save_gq = "full")
   expect_match(code_pcm, "tau_common", fixed = TRUE)
   expect_match(code_pcm, "sigma_tau_raw ~ normal(0, 0.4);", fixed = TRUE)
-  # Stan full GQ must use tau_common[k-1] when hierarchical PCM steps are on an adjusted facet
-  expect_match(code_pcm, "eta_fair - tau_common[k-1];", fixed = TRUE)
+  # Stan full GQ must use cum_tau_fair (tau_common) when hierarchical PCM steps are on an adjusted facet
+  expect_match(code_pcm, "cum_tau_fair = append_row(0.0, cumulative_sum(tau_common));", fixed = TRUE)
 
-  # Non-adjusted threshold facet ("item") must keep item-specific tau[threshold_n, k-1]
+  # Non-adjusted threshold facet ("item") must keep item-specific cum_tau[threshold_n]
   sim_pcm_item <- simulate_bmfrm(
     score ~ person + item + rater, d, K = 4,
     family = "pcm", threshold_facet = "item",
@@ -246,7 +254,7 @@ test_that("hierarchical main facets, sparse interaction priors, and hierarchical
     priors = get_default_priors(c("person", "item", "rater"), family = "pcm", hierarchical = c("person", "tau")),
     seed = 25
   )
-  expect_match(build_stan_code(sim_pcm_item$spec), "eta_fair - tau[threshold_n, k-1];", fixed = TRUE)
+  expect_match(build_stan_code(sim_pcm_item$spec, save_gq = "full"), "eta_fair[n] - cum_tau[threshold_n]", fixed = TRUE)
 
   # Hierarchical PCM fair scores must be identical between full GQ, minimal GQ, and stale-Stan fallback
   di_pcm <- prepare_data_bmfrm(sim_pcm$spec, sim_pcm$data)
@@ -280,8 +288,9 @@ test_that("hierarchical main facets, sparse interaction priors, and hierarchical
 
   fit_full    <- make_pcm_mock(TRUE,  mu_fair_common_mat, code_pcm)
   fit_minimal <- make_pcm_mock(FALSE, NULL, build_stan_code(sim_pcm$spec, save_gq = "minimal"))
-  # Stale Stan code that used tau[threshold_n, k-1] must automatically fall back to R tau_common
-  stale_code  <- sub("eta_fair - tau_common\\[k-1\\];", "eta_fair - tau[threshold_n, k-1];", code_pcm)
+  # Stale Stan code that used cum_tau[threshold_n] instead of cum_tau_fair must automatically fall back to R tau_common
+  stale_code  <- gsub("cum_tau_fair", "cum_tau[threshold_n]", code_pcm, fixed = TRUE)
+  stale_code  <- gsub("tau_common", "tau_unused", stale_code, fixed = TRUE)
   fit_stale   <- make_pcm_mock(TRUE,  mu_fair_wrong_mat, stale_code)
 
   expect_equal(suppressWarnings(fair_scores(fit_full, summary = FALSE)$mu_fair),
@@ -340,9 +349,10 @@ test_that("chunked streaming matches unchunked results identically and max_grid_
   expect_equal(q_small$kurt, q_large$kurt, tolerance = 1e-13)
   expect_equal(q_small$log_lik, q_large$log_lik, tolerance = 1e-13)
 
-  ff_small <- facet_fit(obj, "rater", chunk_size = 5L)
-  ff_large <- facet_fit(obj, "rater", chunk_size = 1000L)
+  ff_small <- facet_fit(obj, "rater", seed = 99L, include_zstd = TRUE, chunk_size = 5L)
+  ff_large <- facet_fit(obj, "rater", seed = 99L, include_zstd = TRUE, chunk_size = 1000L)
   expect_equal(ff_small$infit_msq, ff_large$infit_msq, tolerance = 1e-13)
+  expect_equal(ff_small$infit_ppp, ff_large$infit_ppp, tolerance = 1e-13)
   expect_equal(ff_small$outfit_zstd, ff_large$outfit_zstd, tolerance = 1e-13)
 
   fs_small <- fair_scores(obj, standardize = TRUE, chunk_size = 5L)
@@ -385,7 +395,9 @@ test_that("facet_fit falls back safely to saved mu/sigma2 for bundled hardcoded 
   expect_false(can_evaluate_in_r(obj_flag_false))
 
   expect_equal(nrow(residuals(obj)), N)
-  ff <- facet_fit(obj, "rater")
+  ff_def <- facet_fit(obj, "rater")
+  expect_false("infit_zstd" %in% names(ff_def))
+  ff <- facet_fit(obj, "rater", include_zstd = TRUE)
   expect_equal(nrow(ff), 2L)
   expect_true(all(is.finite(ff$infit_zstd)))
   expect_true(all(ff$zstd_method == "wilson_hilferty_chisq_approx"))
@@ -481,7 +493,7 @@ test_that("draw-level kurtosis q_d avoids swapping E[C]/E[W]^2 with E[C/W^2]", {
   sig_mat <- rbind(c(0.2, 0.2), c(2.0, 2.0))
   kurt_mat <- rbind(c(1.0, 1.0), c(6.0, 6.0))
 
-  ff <- facet_fit_from_matrices(x, fid, mu_mat, sig_mat, kurt_mat = kurt_mat, model_name = "m")
+  ff <- facet_fit_from_matrices(x, fid, mu_mat, sig_mat, kurt_mat = kurt_mat, model_name = "m", include_zstd = TRUE)
   # Per-draw q_outfit:
   # draw 1: C/W^2 - 1 = 1/0.04 - 1 = 24 -> sum=48 -> sqrt(48/4) = sqrt(12)
   # draw 2: C/W^2 - 1 = 6/4 - 1 = 0.5   -> sum=1  -> sqrt(1/4)  = 0.5
@@ -890,8 +902,8 @@ test_that("summarise_bias_ir and summarise_bias apply the exact same directional
                      data_clean = d),
     fit = list(draws = function(...) mat_new)
   ), class = "bmfrm_fit")
-  new95  <- summarise_bias(obj_new, "item:rater", prob_thresh = 0.95, delta = 0)
-  new975 <- summarise_bias(obj_new, "item:rater", prob_thresh = 0.975, delta = 0)
+  new95  <- summarise_bias(obj_new, "item:rater", prob_thresh = 0.95, delta = 0, flag_method = "prob")
+  new975 <- summarise_bias(obj_new, "item:rater", prob_thresh = 0.975, delta = 0, flag_method = "prob")
 
   # Align by (item, rater) and confirm identical flags at both 0.95 and 0.975
   ord_ir  <- order(ir95$i, ir95$r)

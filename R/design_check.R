@@ -24,6 +24,8 @@
 #' @param tol Relative singular-value tolerance.
 #' @param max_cells Cell limit for dense SVD (and for `p_other^2` in Schur mode).
 #' @param threshold_facet Required for PCM: the facet with within-level centered steps.
+#' @param person_facet Name of the unconstrained examinee / ability main facet in
+#'   `formula` (default `"person"`).
 #' @param method Solver mode: `"auto"` (dense SVD when within `max_cells`,
 #'   Schur-complement solver otherwise), `"dense"` (strict dense SVD limit), or
 #'   `"schur"` (always use within-person Schur-complement solver).
@@ -33,20 +35,24 @@
 check_design_bmfrm <- function(formula, data, K, family = "rsm",
                                observed_only = FALSE, tol = 1e-10,
                                max_cells = 2e6, threshold_facet = NULL,
-                               method = c("auto", "dense", "schur")) {
+                               method = c("auto", "dense", "schur"),
+                               person_facet = "person") {
   family <- match.arg(family, c("rsm", "pcm"))
   method <- match.arg(method)
   if (!is.data.frame(data) || !nrow(data)) stop("data must contain planned rating rows")
   if (length(tol) != 1L || !is.finite(tol) || tol <= 0) stop("tol must be positive")
   if (length(max_cells) != 1L || !is.finite(max_cells) || max_cells <= 0) stop("max_cells must be positive")
+  if (!is.character(person_facet) || length(person_facet) != 1L || is.na(person_facet) || !nzchar(person_facet)) {
+    stop("person_facet must be a single non-empty column name")
+  }
   response <- bmfrm_response_name(formula)
   terms <- attr(bmfrm_terms(formula, data = data), "term.labels")
   interactions <- gsub("[()]", "", terms[grepl(":", terms, fixed = TRUE)])
   facets <- terms[!grepl(":", terms, fixed = TRUE)]
-  validate_facet_names(facets)
+  validate_facet_names(facets, person_facet = person_facet)
   validate_interaction_terms(facets, interactions)
-  if (any(!facets %in% names(data)) || !"person" %in% facets) {
-    stop("Design checking requires person and named main facet columns")
+  if (any(!facets %in% names(data)) || !person_facet %in% facets) {
+    stop("Design checking requires person_facet ('", person_facet, "') and named main facet columns")
   }
   if (family == "pcm" && (!is.character(threshold_facet) || length(threshold_facet) != 1L ||
       is.na(threshold_facet) || !threshold_facet %in% facets)) {
@@ -74,9 +80,9 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
   ids <- lapply(fs, function(x) as.integer(x)[keep])
   sizes <- lengths(labels)
   n <- sum(keep)
-  P <- sizes[["person"]]
+  P <- sizes[[person_facet]]
   interaction_dims <- lapply(strsplit(interactions, ":", fixed = TRUE), function(f) sizes[f])
-  main_p <- sum(sizes - (facets != "person"))
+  main_p <- sum(sizes - (facets != person_facet))
   p <- main_p + sum(vapply(interaction_dims, function(sz) prod(sz - 1L), numeric(1)))
   p_other <- p - P
   n_effects <- sum(sizes) + sum(vapply(interaction_dims, prod, numeric(1)))
@@ -152,11 +158,11 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
   }
 
   # Prepare compact 1D factor bases and interaction cell metadata (zero Kronecker allocation)
-  bases_other <- lapply(setdiff(facets, "person"), function(f) sum_zero_basis(sizes[[f]]))
-  names(bases_other) <- setdiff(facets, "person")
+  bases_other <- lapply(setdiff(facets, person_facet), function(f) sum_zero_basis(sizes[[f]]))
+  names(bases_other) <- setdiff(facets, person_facet)
   person_sz_basis <- NULL
   get_sz_basis <- function(f) {
-    if (f != "person") return(bases_other[[f]])
+    if (f != person_facet) return(bases_other[[f]])
     if (is.null(person_sz_basis)) person_sz_basis <<- sum_zero_basis(P)
     person_sz_basis
   }
@@ -203,13 +209,13 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
   if (!use_schur) {
     # Dense SVD path (exact backward compatibility)
     bases <- lapply(seq_along(facets), function(j) {
-      if (facets[j] == "person") return(diag(sizes[j]))
+      if (facets[j] == person_facet) return(diag(sizes[j]))
       bases_other[[facets[j]]]
     })
     blocks <- lapply(seq_along(facets), function(j) {
       b <- bases[[j]][ids[[j]], , drop = FALSE]
-      if (facets[j] != "person") b <- -b
-      colnames(b) <- if (!ncol(b)) NULL else if (facets[j] == "person") paste0("theta[", labels[[j]], "]") else
+      if (facets[j] != person_facet) b <- -b
+      colnames(b) <- if (!ncol(b)) NULL else if (facets[j] == person_facet) paste0("theta[", labels[[j]], "]") else
         paste0(facets[j], "_contrast[", seq_len(ncol(b)), "]")
       b
     })
@@ -253,15 +259,15 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
     # Exact Schur-complement (within-person TSQR) solver:
     # Eliminates person indicators analytically: X = [X_P, X_O] where X_P^T X_P = diag(n_p).
     # Never materializes Kronecker interaction bases; evaluates rows and null maps in factored form.
-    other_facets <- setdiff(facets, "person")
-    p_id <- ids[["person"]]
+    other_facets <- setdiff(facets, person_facet)
+    p_id <- ids[[person_facet]]
     n_p <- tabulate(p_id, P)
     obs_p <- which(n_p > 0L)
     unobs_p <- which(n_p == 0L)
     rank_p <- length(obs_p)
 
     # Column names matching dense ordering (person first in Schur coordinate, then mapped cleanly)
-    col_names_p <- paste0("theta[", labels[["person"]], "]")
+    col_names_p <- paste0("theta[", labels[[person_facet]], "]")
     col_names_o <- unlist(c(
       lapply(other_facets, function(f) {
         q <- ncol(bases_other[[f]])
@@ -370,7 +376,7 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
       # Map directly into effect_null_space (nrow = length(effect_names), ncol = n_null) without forming p x effect_names
       effect_null <- matrix(0, length(effect_names), n_null,
                             dimnames = list(effect_names, colnames(null)))
-      p_facet_idx <- match("person", facets)
+      p_facet_idx <- match(person_facet, facets)
       effect_null[offset[p_facet_idx] + seq_len(P), ] <- null[seq_len(P), , drop = FALSE]
       o_pos <- P
       for (f in other_facets) {

@@ -3,12 +3,14 @@
 #' @param ... unused
 #' @export
 print.bmfrm_fit <- function(x, ...) {
+  pf <- spec_person_facet(x$spec)
   cat("Bayesian Many-Facet Rasch Model\n")
   cat("================================\n\n")
-  
+
   cat("Formula:", deparse(x$spec$formula), "\n")
   cat("Family: ", x$spec$family, "\n")
-  cat("Hierarchical facets:", paste(x$hierarchical %||% if (!is.null(x$model)) "person" else character(), collapse = ", "), "\n")
+  if (!identical(pf, "person")) cat("Ability facet:", pf, "\n")
+  cat("Hierarchical facets:", paste(x$hierarchical %||% if (!is.null(x$model)) pf else character(), collapse = ", "), "\n")
   cat("Observations:", x$data_info$stan_data$N, "\n")
   if (isTRUE(x$spec$K_heterogeneous) && !is.null(x$spec$K_by_level)) {
     cat("Rating categories: heterogeneous by ", x$spec$threshold_facet, " (",
@@ -17,24 +19,24 @@ print.bmfrm_fit <- function(x, ...) {
   } else {
     cat("Rating categories: 1 to", get_spec_K_max(x$spec), "\n\n")
   }
-  
+
   cat("Facets:\n")
   cat("  Main facets:", paste(x$spec$facets_main, collapse = ", "), "\n")
   if (length(x$spec$facets_bias) > 0) {
     cat("  Bias facets:", paste(x$spec$facets_bias, collapse = ", "), "\n")
   }
-  
+
   cat("\nFacet levels:\n")
   for (facet in x$spec$facets_main) {
     n_levels <- x$data_info$stan_data[[paste0("J_", facet)]]
     cat("  ", facet, ": ", n_levels, " levels\n", sep = "")
   }
-  
+
   cat("\nMCMC sampling:\n")
   cat("  Chains:", x$fit$num_chains(), "\n")
   cat("  Iterations per chain:", x$fit$metadata()$iter_sampling, "\n")
   cat("  Warmup per chain:", x$fit$metadata()$iter_warmup, "\n")
-  
+
   cat("\nDesign Identification:\n")
   if (is.null(x$design)) {
     cat("  NOT CHECKED: design_check = 'none' or custom Stan model (run check_design_bmfrm() to inspect)\n")
@@ -53,8 +55,12 @@ print.bmfrm_fit <- function(x, ...) {
   }
 
   cat("\nMCMC Convergence:\n")
-  if (x$convergence$converged) {
-    cat("  OK: MCMC diagnostics passed (R-hat < 1.01, ESS >= 400, 0 divergences, E-BFMI >= 0.3)\n")
+  if (isTRUE(x$convergence$converged)) {
+    cat("  OK: MCMC diagnostics passed (0 divergences, R-hat & ESS within thresholds)\n")
+    if (isTRUE(x$convergence$efficiency_warning) || isTRUE(x$convergence$n_max_treedepth > 0)) {
+      cat("    Efficiency note:", x$convergence$n_max_treedepth,
+          "transition(s) hit max_treedepth (consider increasing max_treedepth).\n")
+    }
     if (!is.null(x$design) && !isTRUE(x$design$identifiable)) {
       cat("    Note: Sampling stability does NOT resolve the design rank deficiency above.\n")
     } else {
@@ -73,16 +79,17 @@ print.bmfrm_fit <- function(x, ...) {
       cat("    Divergent transitions:", x$convergence$n_divergent, "\n")
     }
     if (isTRUE(x$convergence$n_max_treedepth > 0)) {
-      cat("    Max treedepth hits:", x$convergence$n_max_treedepth, "\n")
+      cat("    Max treedepth hits (efficiency):", x$convergence$n_max_treedepth, "\n")
     }
     cat("    Resolve sampling issues before interpreting parameter estimates.\n")
   }
-  
+
+  non_p <- setdiff(x$spec$facets_main, pf)
+  ex_facet <- if (length(non_p)) non_p[1L] else pf
   cat("\nNext steps (in priority order):\n")
   cat("  1. Design & convergence : summary(fit)\n")
-  cat("  2. Data fit (PPC)       : bayesplot::pp_check(fit, group = \"rater\")\n")
-  cat("  3. Residuals & misfit   : residuals(fit), facet_fit(fit, \"rater\")\n")
-  cat("  4. Substantive outputs  : fair_scores(fit, standardize = TRUE), summarise_bias(fit, delta = 0.3)\n")
+  cat("  2. Calibrated fit (PPP) : facet_fit(fit, \"", ex_facet, "\"), bayesplot::pp_check(fit, group = \"", ex_facet, "\")\n", sep = "")
+  cat("  3. Substantive outputs  : fair_scores(fit, standardize = TRUE), summarise_bias(fit, delta = 0.25)\n")
 }
 
 #' Summary method for bmfrm_fit objects
@@ -98,14 +105,15 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   if (is.null(facets)) {
     facets <- object$spec$facets_main
   }
-  
+  pf <- spec_person_facet(object$spec)
+
   cat("Bayesian Many-Facet Rasch Model Summary\n")
   cat("=======================================\n\n")
-  
-  # Model info
+
   cat("Formula:", deparse(object$spec$formula), "\n")
-  cat("Family: ", object$spec$family, "\n") 
-  cat("Hierarchical facets:", paste(object$hierarchical %||% if (!is.null(object$model)) "person" else character(), collapse = ", "), "\n")
+  cat("Family: ", object$spec$family, "\n")
+  if (!identical(pf, "person")) cat("Ability facet:", pf, "\n")
+  cat("Hierarchical facets:", paste(object$hierarchical %||% if (!is.null(object$model)) pf else character(), collapse = ", "), "\n")
   cat("Observations:", object$data_info$stan_data$N, "\n")
   if (isTRUE(object$spec$K_heterogeneous) && !is.null(object$spec$K_by_level)) {
     cat("Rating categories: heterogeneous by ", object$spec$threshold_facet, " (",
@@ -114,8 +122,7 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   } else {
     cat("Rating categories: 1 to", get_spec_K_max(object$spec), "\n\n")
   }
-  
-  # Design identification (always inspect before MCMC convergence and estimates)
+
   cat("Design Identification:\n")
   if (is.null(object$design)) {
     cat("  Status: Not checked (design_check = 'none' or custom Stan model)\n\n")
@@ -131,7 +138,6 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
     cat("        Inspect fit$design and check 'likelihood_identified' before reporting.\n\n")
   }
 
-  # MCMC diagnostics
   fmt_conv <- function(v, digits = NULL) {
     if (is.null(v) || length(v) == 0L || !is.numeric(v) || is.na(v)) return("NA")
     if (!is.null(digits)) as.character(round(v, digits)) else as.character(v)
@@ -144,18 +150,15 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   cat("  Min ESS (tail):", fmt_conv(object$convergence$min_ess_tail), "\n")
   cat("  Min E-BFMI:", fmt_conv(object$convergence$min_ebfmi), "\n")
   cat("  Max mean MCSE:", fmt_conv(object$convergence$max_mcse_mean), "\n")
-  cat("  Maximum-depth hits:", fmt_conv(object$convergence$n_max_treedepth), "\n")
-  
+  cat("  Maximum-depth hits (efficiency):", fmt_conv(object$convergence$n_max_treedepth), "\n")
   if (isTRUE(object$convergence$n_divergent > 0)) {
     cat("  Divergent transitions:", object$convergence$n_divergent, "\n")
   }
-  
   if (!isTRUE(object$convergence$converged)) {
     cat("  Warning: Potential convergence issues detected!\n")
   }
   cat("\n")
-  
-  # Threshold parameters
+
   cat("Centered step deviations (tau):\n")
   tau_probs <- if (length(probs) == 0L) c(0.025, 0.975) else sort(unique(range(probs)))
   tau_summary <- if (!isTRUE(object$spec$custom_stan) || fit_has_variable(object$fit, "tau")) {
@@ -200,15 +203,11 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
       lo_col <- min(3L, ncol(tau_summary))
       hi_col <- ncol(tau_summary)
       cat(sprintf("  %s: %6.2f [%6.2f, %6.2f]\n",
-                  label,
-                  tau_summary$mean[i],
-                  tau_summary[[lo_col]][i],
-                  tau_summary[[hi_col]][i]))
+                  label, tau_summary$mean[i], tau_summary[[lo_col]][i], tau_summary[[hi_col]][i]))
     }
     cat("\n")
   }
-  
-  # Facet summaries
+
   for (facet in facets) {
     cat(paste0(toupper(substring(facet, 1, 1)), substring(facet, 2)), " Parameters:\n")
     facet_summ <- tryCatch(
@@ -222,10 +221,9 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
       cat("\n")
     }
   }
-  
-  # Bias summaries if present
+
   if (length(object$spec$facets_bias) > 0) {
-    cat("Bias Effects:\n")
+    cat("Bias Effects (BFDR <= 0.05 on observed identified cells):\n")
     for (bias_facet in object$spec$facets_bias) {
       cat("  ", bias_facet, ":\n")
       bias_summ <- tryCatch(
@@ -238,16 +236,19 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
             sep = "")
       } else {
         n_flagged <- sum(bias_summ$flag_bias %in% c("positive_bias", "negative_bias"))
-        cat("    ", n_flagged, " bias effects flagged (out of ", nrow(bias_summ), ")\n")
-        cat("    ", sum(bias_summ$flag_bias == "not_likelihood_identified"), " effects lack likelihood identification\n")
-        cat("    Numerical decision stability: ", sum(bias_summ$decision_stable %in% TRUE),
+        n_unobs <- sum(bias_summ$flag_bias == "unobserved_cell")
+        n_unid <- sum(bias_summ$flag_bias == "not_likelihood_identified")
+        cat("    ", n_flagged, " bias effects flagged (out of ", nrow(bias_summ), " cells)\n", sep = "")
+        if (n_unobs > 0L) cat("    ", n_unobs, " unobserved cells (0 ratings; excluded from flagging)\n", sep = "")
+        if (n_unid > 0L) cat("    ", n_unid, " cells lack likelihood identification\n", sep = "")
+        cat("    Directional probability stability: ", sum(bias_summ$decision_stable %in% TRUE),
             " stable, ", sum(bias_summ$decision_stable %in% FALSE), " boundary-sensitive, ",
             sum(is.na(bias_summ$decision_stable)), " unavailable\n", sep = "")
       }
     }
     cat("    Use summarise_bias(fit) for details\n\n")
   }
-  
+
   invisible(object)
 }
 
@@ -257,8 +258,6 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
 #' @param ... unused
 #' @export
 residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
-
-  # Column names in stan_data have "_id" suffix (e.g., "person_id", "rater_id")
   facet_cols_stan <- paste0(object$spec$facets_main, "_id")
   res_reserved <- c(
     "n", "x", "mu_hat", "sigma2_hat", "resid", "weight", "z", "model",
@@ -278,8 +277,6 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
       save_draws = save_draws,
       model_name = object$spec$model_name
     )
-    # Restore facet labels by column index BEFORE renaming so facets named "x",
-    # "weight", "z", or "resid" never clobber observed scores or create duplicate names.
     out_facet_cols <- character(length(object$spec$facets_main))
     for (i in seq_along(object$spec$facets_main)) {
       orig_name <- object$spec$facets_main[i]
@@ -299,7 +296,6 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
     return(res_df)
   }
 
-  # On-demand computation for save_gq = "minimal" (requires verified R-engine contract)
   if (!can_evaluate_in_r(object)) {
     stop(
       "Cannot recompute residuals in R: ", get_eval_contract(object)$reason,
@@ -356,9 +352,7 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
 #' @export pp_check.bmfrm_fit
 #' @exportS3Method bayesplot::pp_check bmfrm_fit
 pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws = 200, seed = 123, group = NULL, ...) {
-  
   type <- match.arg(type)
-  
   y_obs <- object$data_info$stan_data$X
   if (is.null(group) && isTRUE(object$spec$K_heterogeneous)) {
     message(
@@ -388,28 +382,18 @@ pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws =
       object, draw_idx = idx, compute_y_rep = TRUE, seed = seed
     )$y_rep
   }
-  
-  if (type == "all") {
-    return(run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group, y_rep = y_rep_override))
-  } else if (type == "bars") {
-    ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group, y_rep = y_rep_override)
-    return(ppc_result$ppc_bars)
-  } else if (type == "stat") {
-    ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group, y_rep = y_rep_override)
-    return(list(
-      ppc_mean = ppc_result$ppc_mean,
-      ppc_var = ppc_result$ppc_var
-    ))
-  }
+
+  ppc_result <- run_ppc(object$fit, y_obs, ndraws = ndraws, seed = seed, group = group, y_rep = y_rep_override)
+  if (type == "all") return(ppc_result)
+  if (type == "bars") return(ppc_result$ppc_bars)
+  list(ppc_mean = ppc_result$ppc_mean, ppc_var = ppc_result$ppc_var)
 }
 
 #' Get Stan code from a fitted model object
 #' @param object A fitted model object (e.g., `bmfrm_fit`).
 #' @param ... Unused.
 #' @export
-stancode <- function(object, ...) {
-  UseMethod("stancode")
-}
+stancode <- function(object, ...) UseMethod("stancode")
 
 #' @rdname stancode
 #' @export stancode.bmfrm_fit
@@ -423,16 +407,12 @@ stancode.bmfrm_fit <- function(object, ...) {
 #' @param object A fitted model object (e.g., `bmfrm_fit`).
 #' @param ... Unused.
 #' @export
-standata <- function(object, ...) {
-  UseMethod("standata")
-}
+standata <- function(object, ...) UseMethod("standata")
 
 #' @rdname standata
 #' @export standata.bmfrm_fit
 #' @export
-standata.bmfrm_fit <- function(object, ...) {
-  object$data_info$stan_data
-}
+standata.bmfrm_fit <- function(object, ...) object$data_info$stan_data
 
 #' Extract facet-level summaries
 #' @param object bmfrm_fit object
@@ -451,23 +431,21 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
   }
   probs <- unique(as.numeric(probs))
 
-  # Check facet exists
   if (!facet %in% object$spec$facets_main) {
-    stop("Facet '", facet, "' not found in model. Available facets: ", 
+    stop("Facet '", facet, "' not found in model. Available facets: ",
          paste(object$spec$facets_main, collapse = ", "))
   }
-  
-  # Map facet name to Stan parameter name (including verified bundled models such as item -> beta)
+
+  pf <- spec_person_facet(object$spec)
   contract <- get_eval_contract(object)
   if (!is.null(contract$param_map) && facet %in% names(contract$param_map)) {
     param_name <- unname(contract$param_map[[facet]])
-  } else if (facet == "person") {
+  } else if (identical(facet, pf)) {
     param_name <- "theta"
   } else {
     param_name <- facet
   }
-  
-  # Extract parameter summary
+
   param_summary <- if (length(probs) > 0L) {
     object$fit$summary(param_name, "mean", "sd", ~stats::quantile(.x, probs = probs))
   } else {
@@ -478,34 +456,24 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
     p_idx <- as.integer(stringr::str_extract(param_summary$variable, "(?<=\\[)\\d+(?=\\])"))
     param_summary <- param_summary[order(p_idx), , drop = FALSE]
   }
-  
-  # Get original labels
+
   labels <- object$data_info$facet_labels[[facet]]
   if (nrow(param_summary) != length(labels)) {
     stop("Parameter '", param_name, "' has ", nrow(param_summary),
          " entries, expected ", length(labels), " for facet '", facet, "'")
   }
-  
-  # Build result
+
   result <- tibble::tibble(
     facet = facet,
     level = labels,
-    index = seq_along(labels)
+    index = seq_along(labels),
+    mean = unname(param_summary$mean),
+    sd = unname(param_summary$sd)
   )
-  
-  # Add parameter summaries
-  result$mean <- unname(param_summary$mean)
-  result$sd <- unname(param_summary$sd)
-  
-  # Add quantiles with exact non-colliding names (e.g., q2.5, q50, q97.5)
-  fmt_q <- function(p) {
-    paste0("q", sub("\\.?0+$", "", formatC(p * 100, format = "f", digits = 4)))
-  }
+  fmt_q <- function(p) paste0("q", sub("\\.?0+$", "", formatC(p * 100, format = "f", digits = 4)))
   for (i in seq_along(probs)) {
-    prob_name <- fmt_q(probs[i])
-    result[[prob_name]] <- param_summary[[ncol(param_summary) - length(probs) + i]]
+    result[[fmt_q(probs[i])]] <- param_summary[[ncol(param_summary) - length(probs) + i]]
   }
-  
   result
 }
 
@@ -516,77 +484,21 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #' logit-scale linear predictors (`type = "linpred"`) on observed or new data
 #' using the shared memory-bounded posterior evaluation engine.
 #'
-#' Explicitly distinguishes three prediction targets:
-#' \itemize{
-#'   \item **Conditional on known levels** (default `adjust_facets = character(0)`,
-#'     `allow_new_levels = FALSE`): predicts scores for observed examinees,
-#'     criteria, and raters.
-#'   \item **Population new levels** (`allow_new_levels = TRUE`,
-#'     `sample_new_levels = "hierarchical"`): draws unseen facet levels (e.g., a
-#'     new examinee or a new rater) once per posterior iteration from their
-#'     learned hierarchical population distribution, sharing the same draw across
-#'     repeated rows of the same unseen level ID. Raises an error if an unseen
-#'     level belongs to a non-hierarchical facet so unseen levels are never
-#'     silently replaced with 0.
-#'   \item **Adjusted / reference-zero predictions** (e.g.,
-#'     `adjust_facets = "rater"`): fixes adjusted nuisance facets (and any
-#'     interactions involving them) to 0 on the logit scale. Note that because
-#'     the RSM/PCM expectation is nonlinear, fixing a rater effect to 0 is not
-#'     identical to averaging over a new rater drawn from the rater population.
-#' }
-#'
-#' Metadata describing the prediction target, adjusted facets, unseen levels,
-#' and `K_obs`, `K_by_level`, `K_heterogeneous` is attached as
-#' `attr(res, "bmfrm_prediction_meta")`.
-#'
-#' For heterogeneous-category PCM, `type = "probs"` returns `NA_real_` for
-#' categories above a level's `K_j`, while existing-but-unobserved categories
-#' retain positive probability. Summarized probabilities include `K_obs`.
-#' Unseen levels of `threshold_facet` are unsupported in v1 even with
-#' `allow_new_levels = TRUE` or `sample_new_levels = "zero"`, because their
-#' rubric and step distribution are undefined. Adjusting `threshold_facet`
-#' via `adjust_facets` is also unsupported.
-#'
 #' @param object A `bmfrm_fit` object.
 #' @param newdata Optional data.frame of facet combinations to predict for.
-#'   Defaults to the cleaned fitted dataset (`object$data_info$data_clean`).
-#' @param type Quantity to compute: `"epred"` (expected score in `1..K`,
-#'   default), `"predict"` (replicated discrete rating in `1..K`), `"probs"`
-#'   (category probabilities `1..K`), or `"linpred"` (logit linear predictor).
-#' @param adjust_facets Character vector of non-person main facets to set to 0
-#'   (and exclude from `newdata` requirements). Default `character(0)` predicts
-#'   conditional on all model facets.
-#' @param allow_new_levels Logical; allow facet levels in `newdata` that were
-#'   not present in the fitted data? Default `FALSE` (raises an error).
-#' @param sample_new_levels How to handle unseen levels when
-#'   `allow_new_levels = TRUE`: `"hierarchical"` (default; sample from learned
-#'   hierarchical population distributions and error on non-hierarchical facets)
-#'   or `"zero"` (explicitly set unseen effects to 0 on the logit scale).
-#' @param summary Logical; if `TRUE` (default), return a row-aligned tibble of
-#'   posterior summaries (`estimate`, `sd`, and `probs` quantiles, or
-#'   `prob_1..prob_K` for `type = "probs"`). If `FALSE`, return raw posterior
-#'   draws (`D x N` matrix, or `D x N x K` array for `type = "probs"`).
-#' @param probs Numeric vector of quantile probabilities for `summary = TRUE`
-#'   (ignored for `type = "probs"`). Default `c(0.025, 0.975)`.
-#' @param ndraws Optional positive integer specifying a random subset of
-#'   posterior draws to evaluate. Mutually exclusive with `draw_ids`.
-#' @param draw_ids Optional integer vector of specific posterior draw indices.
-#'   Mutually exclusive with `ndraws`.
-#' @param seed Optional integer RNG seed for reproducible new-level sampling,
-#'   `ndraws` subsampling, and `type = "predict"` replicated draws.
-#' @param chunk_size Optional observation chunk size for memory-bounded
-#'   streaming evaluation. Multi-chunk unseen constrained interaction centering
-#'   offsets (`D * 8` bytes each) are cached up to `n_concurrent_offsets * D * 8`
-#'   bounded by a 64 MiB cap and freed immediately after their final chunk
-#'   (single-chunk levels retain 0 bytes; workloads exceeding the cap
-#'   deterministically recompute uncached offsets per chunk to preserve the
-#'   memory bound).
-#' @param max_cells Maximum total numeric entries allowed when `summary = FALSE`
-#'   (default `5e7`, ~400 MB) to prevent accidental memory exhaustion on large
-#'   `D x N x K` probability arrays.
+#' @param type `"epred"` (default), `"predict"`, `"probs"`, or `"linpred"`.
+#' @param adjust_facets Character vector of non-ability main facets to set to 0.
+#' @param allow_new_levels Logical; allow unseen facet levels in `newdata`?
+#' @param sample_new_levels `"hierarchical"` (default) or `"zero"`.
+#' @param summary Logical; return summary tibble (`TRUE`) or draw array (`FALSE`).
+#' @param probs Quantile probabilities for `summary = TRUE` (default `c(0.025, 0.975)`).
+#' @param ndraws Optional random subset size of posterior draws.
+#' @param draw_ids Optional specific posterior draw indices.
+#' @param seed Optional integer RNG seed.
+#' @param chunk_size Optional observation chunk size.
+#' @param max_cells Maximum numeric entries allowed when `summary = FALSE`.
 #' @param ... Unused.
-#' @return A tibble (when `summary = TRUE`) or numeric/integer matrix or 3D
-#'   array (when `summary = FALSE`), with attribute `"bmfrm_prediction_meta"`.
+#' @return A tibble (when `summary = TRUE`) or matrix/3D array (`summary = FALSE`).
 #' @export
 predict.bmfrm_fit <- function(object,
                               newdata = NULL,
@@ -605,100 +517,213 @@ predict.bmfrm_fit <- function(object,
   type <- match.arg(type)
   sample_new_levels <- match.arg(sample_new_levels)
   if (is.null(adjust_facets)) adjust_facets <- character(0)
-  resolved_adjust <- resolve_adjust_facets(
-    object$spec,
-    adjust_facets = adjust_facets,
-    warn_if_empty = FALSE
-  )
+  resolved_adjust <- resolve_adjust_facets(object$spec, adjust_facets = adjust_facets, warn_if_empty = FALSE)
   stream_bmfrm_predictions(
-    object = object,
-    newdata = newdata,
-    type = type,
-    adjust_facets = resolved_adjust,
-    allow_new_levels = allow_new_levels,
-    sample_new_levels = sample_new_levels,
-    summary = summary,
-    probs = probs,
-    ndraws = ndraws,
-    draw_ids = draw_ids,
-    seed = seed,
-    chunk_size = chunk_size,
-    max_cells = max_cells
+    object = object, newdata = newdata, type = type, adjust_facets = resolved_adjust,
+    allow_new_levels = allow_new_levels, sample_new_levels = sample_new_levels,
+    summary = summary, probs = probs, ndraws = ndraws, draw_ids = draw_ids,
+    seed = seed, chunk_size = chunk_size, max_cells = max_cells
   )
+}
+
+# Shared internal metadata builder for fair_scores()
+build_fair_reference_meta <- function(object, adjust_facets, standardized, summary,
+                                      reference_grid = NULL, reference_weights = NULL,
+                                      draw_meta = NULL) {
+  is_hetero <- isTRUE(object$spec$K_heterogeneous)
+  rm_list <- list(
+    adjust_facets = adjust_facets,
+    standardized = standardized,
+    summary = summary,
+    score_unit = if (summary) "native_weighted_mean" else "native_row_expected_score",
+    K_heterogeneous = is_hetero,
+    K_by_level = object$data_info$K_by_level %||% object$spec$K_by_level,
+    reference_grid = reference_grid,
+    reference_weights = reference_weights
+  )
+  if (!is.null(draw_meta)) {
+    rm_list$draw_ids <- draw_meta$draw_ids
+    rm_list$draw_info <- draw_meta$draw_info
+  }
+  if (is_hetero) {
+    tf <- object$spec$threshold_facet
+    rm_list$comparability_note <- if (standardized && summary) {
+      paste0("Heterogeneous category counts across '", tf,
+             "': scores are weighted means in native rubric units on the common reference configuration (not rescaled to 0-1).")
+    } else if (standardized) {
+      paste0("Heterogeneous category counts across '", tf,
+             "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+             tf, " level (not rescaled to 0-1); downstream aggregation across levels should use the common reference grid and reference_weights.")
+    } else {
+      paste0("Heterogeneous category counts across '", tf,
+             "': unstandardized averages depend on each examinee's assigned levels; use standardize = TRUE or reference_grid for cross-examinee comparisons.")
+    }
+  }
+  rm_list
+}
+
+# Shared internal person-level summary & decomposition builder for fair_scores()
+summarise_person_fair_draws <- function(object, pf, labels, fair_draws_by_j, keep_j,
+                                        obs_data, id_per_j, basis_per_j,
+                                        standardized, decompose, return_draws,
+                                        actual_draws_by_j = NULL, obs_fair_draws_by_j = NULL) {
+  D <- length(fair_draws_by_j[[keep_j[1L]]])
+  draw_meta <- extract_draw_index_info(object$fit, D)
+  kept_labels <- labels[keep_j]
+  n_kept <- length(keep_j)
+
+  if (isTRUE(return_draws)) {
+    alloc_dm <- function() matrix(NA_real_, nrow = D, ncol = n_kept, dimnames = list(draw_meta$draw_names, kept_labels))
+    fair_mat <- alloc_dm()
+    if (isTRUE(decompose)) {
+      act_mat <- alloc_dm()
+      adj_mat <- alloc_dm()
+      shr_mat <- alloc_dm()
+      if (standardized) {
+        obs_f_mat <- alloc_dm()
+        std_mat <- alloc_dm()
+      }
+    }
+  }
+
+  resp_vec <- obs_data[[object$spec$response]]
+  obs_pf <- as.character(obs_data[[pf]])
+
+  rows <- lapply(seq_along(keep_j), function(pos) {
+    j <- keep_j[pos]
+    label <- labels[j]
+    f_d <- fair_draws_by_j[[j]]
+    obs_idx <- which(obs_pf == label)
+    raw_m <- if (length(obs_idx)) mean(resp_vec[obs_idx]) else NA_real_
+    if (isTRUE(return_draws)) fair_mat[, pos] <<- f_d
+
+    row_df <- data.frame(
+      n_obs = length(obs_idx),
+      mean_score = raw_m,
+      mean_fair_score = mean(f_d),
+      sd_fair_score = stats::sd(f_d),
+      lower_95 = unname(stats::quantile(f_d, 0.025)),
+      upper_95 = unname(stats::quantile(f_d, 0.975)),
+      likelihood_identified = id_per_j[j],
+      identification_basis = basis_per_j[j],
+      stringsAsFactors = FALSE
+    )
+    row_df <- cbind(stats::setNames(data.frame(label, stringsAsFactors = FALSE), pf), row_df)
+    if (standardized) row_df$standardized <- TRUE
+
+    if (isTRUE(decompose)) {
+      act_d <- actual_draws_by_j[[j]]
+      has_obs <- !is.null(act_d) && (!standardized || !is.null(obs_fair_draws_by_j[[j]]))
+      if (has_obs) {
+        if (standardized) {
+          obs_f_d <- obs_fair_draws_by_j[[j]]
+          adj_d <- obs_f_d - act_d
+          std_d <- f_d - obs_f_d
+        } else {
+          adj_d <- f_d - act_d
+        }
+        shr_d <- act_d - raw_m
+        if (isTRUE(return_draws)) {
+          act_mat[, pos] <<- act_d
+          adj_mat[, pos] <<- adj_d
+          shr_mat[, pos] <<- shr_d
+          if (standardized) {
+            obs_f_mat[, pos] <<- obs_f_d
+            std_mat[, pos] <<- std_d
+          }
+        }
+        row_df$mean_actual_expected <- mean(act_d)
+        row_df$sd_actual_expected <- stats::sd(act_d)
+        if (standardized) row_df$mean_obs_fair_score <- mean(obs_f_d)
+        row_df$adjustment <- mean(adj_d)
+        row_df$adjustment_sd <- stats::sd(adj_d)
+        row_df$adjustment_lower_95 <- unname(stats::quantile(adj_d, 0.025))
+        row_df$adjustment_upper_95 <- unname(stats::quantile(adj_d, 0.975))
+        if (standardized) {
+          row_df$standardization_shift <- mean(std_d)
+          row_df$standardization_sd <- stats::sd(std_d)
+          row_df$standardization_lower_95 <- unname(stats::quantile(std_d, 0.025))
+          row_df$standardization_upper_95 <- unname(stats::quantile(std_d, 0.975))
+        }
+        row_df$shrinkage_and_noise <- mean(shr_d)
+        row_df$shrinkage_lower_95 <- unname(stats::quantile(shr_d, 0.025))
+        row_df$shrinkage_upper_95 <- unname(stats::quantile(shr_d, 0.975))
+        row_df$fair_minus_raw <- mean(f_d) - raw_m
+      } else {
+        row_df$mean_actual_expected <- NA_real_
+        row_df$sd_actual_expected <- NA_real_
+        if (standardized) row_df$mean_obs_fair_score <- NA_real_
+        row_df$adjustment <- NA_real_
+        row_df$adjustment_sd <- NA_real_
+        row_df$adjustment_lower_95 <- NA_real_
+        row_df$adjustment_upper_95 <- NA_real_
+        if (standardized) {
+          row_df$standardization_shift <- NA_real_
+          row_df$standardization_sd <- NA_real_
+          row_df$standardization_lower_95 <- NA_real_
+          row_df$standardization_upper_95 <- NA_real_
+        }
+        row_df$shrinkage_and_noise <- NA_real_
+        row_df$shrinkage_lower_95 <- NA_real_
+        row_df$shrinkage_upper_95 <- NA_real_
+        row_df$fair_minus_raw <- NA_real_
+      }
+    }
+    row_df
+  })
+
+  res <- tibble::as_tibble(do.call(rbind, rows))
+  if (isTRUE(return_draws)) {
+    dl <- list(fair = fair_mat)
+    if (isTRUE(decompose)) {
+      dl$actual <- act_mat
+      if (standardized) dl$obs_fair <- obs_f_mat
+      dl$adjustment <- adj_mat
+      if (standardized) dl$standardization_shift <- std_mat
+      dl$shrinkage_and_noise <- shr_mat
+    }
+    attr(res, "draws") <- dl
+  }
+  list(result = res, draw_meta = draw_meta)
 }
 
 #' Extract fair scores
 #'
-#' Computes expected scores after setting adjusted nuisance facets (and any
-#' interactions involving them) to zero (average severity). By default,
-#' `"rater"` and `"interlocutor"` are detected automatically; if neither is
-#' present and other non-person facets exist, a warning is issued so custom
-#' facet names (e.g., `"judge"`, `"examiner"`) are not silently left unadjusted.
+#' Computes expected scores on the rating rubric scale after setting adjusted
+#' nuisance facets (and interactions involving them) to zero.
 #'
-#' When `standardize = TRUE` (or `reference_grid` / `reference_weights` is
-#' supplied), person summaries are evaluated over a common reference condition
-#' spanning the unadjusted facets, optionally weighted by `reference_weights`
-#' (e.g., rubric blueprint weights such as `list(item = c(content = 0.4, org = 0.3, lang = 0.3))`
-#' or a numeric row-weight vector / `reference_grid$weight` column).
-#'
-#' When `decompose = TRUE` (with `summary = TRUE`), computes exact draw-matched
-#' decompositions of `Fair - Raw` on the same posterior draws:
-#' \itemize{
-#'   \item Under `standardize = FALSE`: `fair_minus_raw = adjustment + shrinkage_and_noise`,
-#'     separating pure nuisance-facet adjustment (`E[mu_fair - mu_actual]`) from
-#'     hierarchical shrinkage and sampling noise (`E[mu_actual] - mean_score`).
-#'   \item Under `standardize = TRUE`: `fair_minus_raw = standardization_shift + adjustment + shrinkage_and_noise`,
-#'     further separating the design/criterion weighting shift from pure rater adjustment.
+#' @section Relationship to FACETS "Fair Average":
+#' Distinguish three quantities when comparing across software:
+#' \enumerate{
+#'   \item **FACETS "Fair Average"** (`E[Y | theta_p, item = 0, rater = 0]`):
+#'     evaluates the nonlinear category expectation at the single reference
+#'     origin `0` for all non-person facets.
+#'   \item **`fair_scores(fit, standardize = FALSE)`**: averages `E[Y_n | theta_p, item_{i(n)}, rater = 0]`
+#'     over each examinee's *observed* tasks/items (retaining task difficulty
+#'     differences if task assignment is unbalanced).
+#'   \item **`fair_scores(fit, standardize = TRUE)`** (recommended for cross-examinee
+#'     comparison): averages `E[Y | theta_p, item_g, rater = 0]` across every
+#'     cell `g` of the common reference task/item grid (`reference_grid`,
+#'     optionally weighted by `reference_weights`). By Jensen's inequality on
+#'     the nonlinear ordinal expectation, averaging expected scores across real
+#'     item difficulties differs slightly from evaluating a single hypothetical
+#'     item at difficulty `0` (FACETS Fair Average).
 #' }
 #'
-#' When `return_draws = TRUE` (with `summary = TRUE`), attaches person-level
-#' posterior draw matrices (`D x P`) as `attr(res, "draws")` so users can
-#' compute draw-matched score contrasts across reference conditions without
-#' subtracting marginal credible intervals.
-#'
-#' For non-hierarchical PCM with steps on an adjusted facet, no reference step
-#' profile exists and an error is raised. For uniform hierarchical PCM
-#' (`hierarchical = "tau"`), the shared `tau_common` profile is used.
-#'
-#' For heterogeneous-category PCM, `mean_fair_score` is a weighted mean on
-#' the native rubric units; v1 does not add `expected_total_score`. Use
-#' `standardize = TRUE` with common reference cells/weights to compare persons.
-#' Rescaling to 0--1 alone does not establish interval-scale comparability
-#' across rubrics of different lengths. Adjusting `threshold_facet` is unsupported.
-#'
-#' `attr(res, "reference_meta")` is attached to all summary and row-level
-#' results, including when `return_draws = FALSE`. It records `score_unit`
-#' (`"native_weighted_mean"` for summaries, `"native_row_expected_score"` for
-#' rows), `K_by_level`, `reference_weights`, `standardized`, and comparability notes.
-#'
-#' @param object bmfrm_fit object
-#' @param summary whether to return person-level summaries or row-level scores
-#' @param adjust_facets Optional character vector of nuisance facet names to
-#'   remove (default NULL auto-detects `"rater"` and `"interlocutor"`).
-#' @param standardize Logical; if TRUE, standardize every person to the common
-#'   reference grid of unadjusted non-person facets (or `reference_grid`).
-#' @param reference_grid Optional data.frame of unadjusted non-person facet
-#'   combinations (and optional `weight` column) used for standardized
-#'   evaluation.
-#' @param reference_weights Optional weights over `reference_grid`: either a
-#'   non-negative numeric vector of length `nrow(reference_grid)` or a named
-#'   list of named facet-level weight vectors (e.g.,
-#'   `list(item = c(k1 = 0.4, k2 = 0.3, k3 = 0.3))`). Normalized internally to
-#'   sum to 1.
-#' @param decompose Logical; if TRUE (requires `summary = TRUE`), add exact
-#'   draw-matched decomposition columns separating pure facet adjustment,
-#'   optional standardization shift, and shrinkage/sampling noise with 95% CrIs.
-#' @param return_draws Logical; if TRUE (requires `summary = TRUE`), attach
-#'   `D x P` posterior draw matrices as `attr(res, "draws")` and reference
-#'   metadata as `attr(res, "reference_meta")`.
-#' @param max_grid_cells Maximum number of cells allowed when auto-expanding the
-#'   common reference grid for `standardize = TRUE` (default `10000L`). Prevents
-#'   combinatorial explosion with many unadjusted facets; supply an explicit
-#'   `reference_grid` or raise `max_grid_cells` deliberately for larger grids.
-#' @param max_output_rows Maximum total person x reference-grid rows allowed
-#'   when `standardize = TRUE` and `summary = FALSE` (default `1000000L`).
-#' @param chunk_size Optional observation chunk size for streaming posterior
-#'   evaluation (auto-sized to ~16 MB per chunk when NULL).
+#' @param object `bmfrm_fit` object
+#' @param summary whether to return examinee-level summaries (`TRUE`) or row-level scores (`FALSE`)
+#' @param adjust_facets Optional character vector of nuisance facet names to set
+#'   to zero (defaults to `adjust_facets` set in [bmfrm()], or auto-detects
+#'   `"rater"` and `"interlocutor"`).
+#' @param standardize Logical; evaluate every examinee over the common reference
+#'   grid of unadjusted facets?
+#' @param reference_grid Optional data.frame of unadjusted facet combinations.
+#' @param reference_weights Optional numeric or named-list weights over `reference_grid`.
+#' @param decompose Logical; include draw-matched `Fair - Raw` decomposition?
+#' @param return_draws Logical; attach `D x P` posterior draw matrices as `attr(res, "draws")`?
+#' @param max_grid_cells Maximum auto-expanded reference grid cells (default `10000L`).
+#' @param max_output_rows Maximum row-level standardized output rows (default `1e6L`).
+#' @param chunk_size Optional observation chunk size for streaming evaluation.
 #' @param ... unused
 #' @export
 fair_scores <- function(object, summary = TRUE, adjust_facets = NULL,
@@ -719,13 +744,12 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
                                   return_draws = FALSE,
                                   max_grid_cells = 10000L, max_output_rows = 1e6L,
                                   chunk_size = NULL, ...) {
-  if (isTRUE(decompose) && !isTRUE(summary)) {
-    stop("decompose = TRUE requires summary = TRUE")
-  }
+  if (isTRUE(decompose) && !isTRUE(summary)) stop("decompose = TRUE requires summary = TRUE")
   if (isTRUE(return_draws) && !isTRUE(summary)) {
     stop("return_draws = TRUE requires summary = TRUE; use predict(..., summary = FALSE) for row-level draw matrices")
   }
 
+  pf <- spec_person_facet(object$spec)
   has_stan_mu_fair <- fit_has_variable(object$fit, "mu_fair")
   use_default_adjust <- is.null(adjust_facets)
   stan_adjusted <- stan_mu_fair_adjusted_facets(object)
@@ -733,16 +757,14 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
   generic_adjust <- resolve_adjust_facets(
     object$spec,
     adjust_facets = adjust_facets,
-    warn_if_empty = !(has_stan_mu_fair && use_default_adjust &&
-                      !use_reference &&
-                      length(setdiff(object$spec$facets_main, "person")) <= 1L) &&
+    warn_if_empty = !(has_stan_mu_fair && use_default_adjust && !use_reference &&
+                      length(setdiff(object$spec$facets_main, pf)) <= 1L) &&
                     !(isTRUE(object$spec$custom_stan) && use_default_adjust && !is.null(stan_adjusted))
   )
   if (isTRUE(object$spec$custom_stan) && use_default_adjust && !is.null(stan_adjusted)) {
-    resolved_adjust <- intersect(stan_adjusted, setdiff(object$spec$facets_main, "person"))
+    resolved_adjust <- intersect(stan_adjusted, setdiff(object$spec$facets_main, pf))
     if (use_reference && !setequal(resolved_adjust, generic_adjust)) {
-      message("Using custom Stan built-in mu_fair (adjusts: ",
-              paste(resolved_adjust, collapse = ", "), ").")
+      message("Using custom Stan built-in mu_fair (adjusts: ", paste(resolved_adjust, collapse = ", "), ").")
     }
   } else {
     resolved_adjust <- generic_adjust
@@ -759,15 +781,10 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
   }
 
   is_hetero_pcm <- isTRUE(object$spec$K_heterogeneous)
-  K_by_level_meta <- object$data_info$K_by_level %||% object$spec$K_by_level
-
   if (identical(object$spec$family, "pcm") && object$spec$threshold_facet %in% resolved_adjust) {
     if (is_hetero_pcm) {
-      stop(
-        "Fair scores are not defined when adjusting threshold_facet '",
-        object$spec$threshold_facet, "' in heterogeneous-category PCM because no common ",
-        "reference step profile exists across differing category counts."
-      )
+      stop("Fair scores are not defined when adjusting threshold_facet '", object$spec$threshold_facet,
+           "' in heterogeneous-category PCM because no common reference step profile exists across differing category counts.")
     }
     if (!fit_has_variable(object$fit, "tau_common")) {
       stop("Fair scores are not defined for PCM steps on an adjusted facet; a reference step profile must be specified first")
@@ -779,8 +796,7 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     if (any(basis == "unidentified_predictor_or_step", na.rm = TRUE)) {
       warning(
         "One or more fair scores depend on likelihood-unidentified predictor/step directions and rely on the prior; ",
-        "inspect 'likelihood_identified' and 'identification_basis'.",
-        call. = FALSE
+        "inspect 'likelihood_identified' and 'identification_basis'.", call. = FALSE
       )
     } else if (any(basis == "hierarchical_step_prior", na.rm = TRUE)) {
       warning(
@@ -791,15 +807,23 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     }
   }
 
-  obs_data <- object$data_info$data_clean
-  labels <- object$data_info$facet_labels$person
+  collapse_person_basis <- function(bases) {
+    if (all(is.na(bases))) return(NA_character_)
+    if (any(bases == "unidentified_predictor_or_step", na.rm = TRUE)) return("unidentified_predictor_or_step")
+    if (any(bases == "hierarchical_step_prior", na.rm = TRUE)) return("hierarchical_step_prior")
+    "conditional_likelihood"
+  }
 
-  # Standardized / weighted common-reference fair scores across unadjusted facets (zero P x n_ref expansion)
+  obs_data <- object$data_info$data_clean
+  labels <- object$data_info$facet_labels[[pf]]
+  P <- length(labels)
+
+  # 1. Standardized / weighted common-reference fair scores
   if (use_reference) {
     if (!can_evaluate_in_r(object, adjust_facets = resolved_adjust)) {
       stop("Cannot compute standardized fair scores in R: ", get_eval_contract(object)$reason)
     }
-    keep_facets <- setdiff(object$spec$facets_main, c("person", resolved_adjust))
+    keep_facets <- setdiff(object$spec$facets_main, c(pf, resolved_adjust))
     if (is.null(reference_grid)) {
       if (length(keep_facets)) {
         ref_list <- object$data_info$facet_labels[keep_facets]
@@ -808,48 +832,37 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
           stop("max_grid_cells must be a positive number")
         }
         if (n_cells > max_grid_cells) {
-          stop(
-            "Auto-expanded reference grid has ", format(n_cells, big.mark = ","),
-            " cells across unadjusted facets (", paste(keep_facets, collapse = ", "),
-            "), exceeding max_grid_cells = ", format(max_grid_cells, big.mark = ","),
-            ". Supply an explicit 'reference_grid' or raise 'max_grid_cells' deliberately."
-          )
+          stop("Auto-expanded reference grid has ", format(n_cells, big.mark = ","),
+               " cells across unadjusted facets (", paste(keep_facets, collapse = ", "),
+               "), exceeding max_grid_cells = ", format(max_grid_cells, big.mark = ","),
+               ". Supply an explicit 'reference_grid' or raise 'max_grid_cells' deliberately.")
         }
         reference_grid <- expand.grid(ref_list, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
       } else {
         reference_grid <- data.frame(.row = 1L)
       }
     } else {
-      if (!is.data.frame(reference_grid) || !nrow(reference_grid)) {
-        stop("reference_grid must be a non-empty data.frame")
-      }
+      if (!is.data.frame(reference_grid) || !nrow(reference_grid)) stop("reference_grid must be a non-empty data.frame")
       missing_cols <- setdiff(keep_facets, names(reference_grid))
       if (length(missing_cols)) {
         stop("reference_grid is missing unadjusted facet column(s): ", paste(missing_cols, collapse = ", "))
       }
     }
 
-    ref_w <- resolve_reference_weights(
-      reference_grid = reference_grid,
-      reference_weights = reference_weights,
-      facet_labels = object$data_info$facet_labels
-    )
+    ref_w <- resolve_reference_weights(reference_grid, reference_weights, object$data_info$facet_labels)
     has_explicit_weights <- !is.null(reference_weights) ||
       ("weight" %in% names(reference_grid) && !("weight" %in% names(object$data_info$facet_labels)))
 
     n_ref <- nrow(reference_grid)
-    P <- length(labels)
     if (!summary) {
       total_rows <- as.numeric(P) * as.numeric(n_ref)
       if (!is.numeric(max_output_rows) || length(max_output_rows) != 1L || !is.finite(max_output_rows) || max_output_rows < 1) {
         stop("max_output_rows must be a positive number")
       }
       if (total_rows > max_output_rows) {
-        stop(
-          "Returning row-level standardized fair scores requires ", format(total_rows, big.mark = ","),
-          " rows (P * nrow(reference_grid)), exceeding max_output_rows = ", format(max_output_rows, big.mark = ","),
-          ". Use summary = TRUE or raise 'max_output_rows' deliberately."
-        )
+        stop("Returning row-level standardized fair scores requires ", format(total_rows, big.mark = ","),
+             " rows (P * nrow(reference_grid)), exceeding max_output_rows = ", format(max_output_rows, big.mark = ","),
+             ". Use summary = TRUE or raise 'max_output_rows' deliberately.")
       }
     }
 
@@ -857,13 +870,14 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       object, reference_grid = reference_grid, adjust_facets = resolved_adjust,
       weights = ref_w, summary = summary, chunk_size = chunk_size
     )
+    ref_grid_meta <- reference_grid
+    if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
+
     if (!summary) {
       out_grid <- reference_grid[rep(seq_len(n_ref), times = P), , drop = FALSE]
-      out_grid$person <- rep(labels, each = n_ref)
+      out_grid[[pf]] <- rep(labels, each = n_ref)
       if (".row" %in% names(out_grid)) out_grid$.row <- NULL
       rownames(out_grid) <- NULL
-      # Evaluate row-level identifiability BEFORE adding weight/output columns so
-      # facets named "weight", "mu_fair_sd", etc. are never overwritten beforehand.
       id_rows <- check_fair_score_identifiability(object, out_grid, resolved_adjust)
       warn_identifiability(id_rows)
       out_grid <- preserve_colliding_facets(out_grid, keep_facets)
@@ -876,27 +890,10 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       out_grid$likelihood_identified <- id_rows$likelihood_identified
       out_grid$identification_basis <- id_rows$identification_basis
       res_row <- tibble::as_tibble(out_grid)
-      ref_grid_meta <- reference_grid
-      if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
-      rm_list <- list(
-        adjust_facets = resolved_adjust,
-        standardized = TRUE,
-        summary = FALSE,
-        score_unit = "native_row_expected_score",
-        K_heterogeneous = is_hetero_pcm,
-        K_by_level = K_by_level_meta,
-        reference_grid = ref_grid_meta,
-        reference_weights = ref_w
+      attr(res_row, "reference_meta") <- build_fair_reference_meta(
+        object, resolved_adjust, standardized = TRUE, summary = FALSE,
+        reference_grid = ref_grid_meta, reference_weights = ref_w
       )
-      if (is_hetero_pcm) {
-        rm_list$comparability_note <- paste0(
-          "Heterogeneous category counts across '", object$spec$threshold_facet,
-          "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
-          object$spec$threshold_facet, " level (not rescaled to 0-1); downstream aggregation across ",
-          "levels should use the common reference grid and reference_weights."
-        )
-      }
-      attr(res_row, "reference_meta") <- rm_list
       return(res_row)
     }
 
@@ -904,137 +901,35 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     id_std <- check_standardized_fair_identifiability(object, labels, active_grid, resolved_adjust)
     warn_identifiability(id_std)
 
-    D <- nrow(st$sum_mu)
-    draw_meta <- extract_draw_index_info(object$fit, D)
-    fair_draws_mat <- st$sum_mu
-    dimnames(fair_draws_mat) <- list(draw_meta$draw_names, labels)
-
+    fair_by_j <- lapply(seq_len(P), function(j) st$sum_mu[, j])
+    act_by_j <- obs_f_by_j <- NULL
     if (isTRUE(decompose)) {
-      actual_st <- stream_bmfrm_fair_scores(
-        object, newdata = obs_data, adjust_facets = character(0),
-        summary = TRUE, chunk_size = chunk_size
-      )
-      obs_fair_st <- stream_bmfrm_fair_scores(
-        object, newdata = obs_data, adjust_facets = resolved_adjust,
-        summary = TRUE, chunk_size = chunk_size
-      )
-      actual_draws_mat <- matrix(NA_real_, nrow = D, ncol = P, dimnames = list(draw_meta$draw_names, labels))
-      obs_fair_draws_mat <- matrix(NA_real_, nrow = D, ncol = P, dimnames = list(draw_meta$draw_names, labels))
-      adj_draws_mat <- matrix(NA_real_, nrow = D, ncol = P, dimnames = list(draw_meta$draw_names, labels))
-      std_shift_mat <- matrix(NA_real_, nrow = D, ncol = P, dimnames = list(draw_meta$draw_names, labels))
-      shrink_mat <- matrix(NA_real_, nrow = D, ncol = P, dimnames = list(draw_meta$draw_names, labels))
+      actual_st <- stream_bmfrm_fair_scores(object, obs_data, character(0), summary = TRUE, chunk_size = chunk_size)
+      obs_fair_st <- stream_bmfrm_fair_scores(object, obs_data, resolved_adjust, summary = TRUE, chunk_size = chunk_size)
+      act_by_j <- lapply(seq_len(P), function(j) if (actual_st$count_p[j] > 0L) actual_st$sum_mu[, j] / actual_st$count_p[j] else NULL)
+      obs_f_by_j <- lapply(seq_len(P), function(j) if (obs_fair_st$count_p[j] > 0L) obs_fair_st$sum_mu[, j] / obs_fair_st$count_p[j] else NULL)
     }
 
-    rows <- lapply(seq_along(labels), function(j) {
-      label <- labels[j]
-      aggregate_draws <- fair_draws_mat[, j]
-      obs_idx <- which(as.character(obs_data$person) == label)
-      raw_m <- if (length(obs_idx)) mean(obs_data[[object$spec$response]][obs_idx]) else NA_real_
-      row_df <- data.frame(
-        person = label,
-        n_obs = length(obs_idx),
-        mean_score = raw_m,
-        mean_fair_score = mean(aggregate_draws),
-        sd_fair_score = stats::sd(aggregate_draws),
-        lower_95 = unname(stats::quantile(aggregate_draws, .025)),
-        upper_95 = unname(stats::quantile(aggregate_draws, .975)),
-        likelihood_identified = id_std$likelihood_identified[j],
-        identification_basis = id_std$identification_basis[j],
-        standardized = TRUE,
-        stringsAsFactors = FALSE
-      )
-      if (isTRUE(decompose)) {
-        if (actual_st$count_p[j] > 0L && obs_fair_st$count_p[j] > 0L) {
-          act_d <- actual_st$sum_mu[, j] / actual_st$count_p[j]
-          obs_f_d <- obs_fair_st$sum_mu[, j] / obs_fair_st$count_p[j]
-          adj_d <- obs_f_d - act_d
-          std_d <- aggregate_draws - obs_f_d
-          shr_d <- act_d - raw_m
-          actual_draws_mat[, j] <<- act_d
-          obs_fair_draws_mat[, j] <<- obs_f_d
-          adj_draws_mat[, j] <<- adj_d
-          std_shift_mat[, j] <<- std_d
-          shrink_mat[, j] <<- shr_d
-          row_df$mean_actual_expected <- mean(act_d)
-          row_df$sd_actual_expected <- stats::sd(act_d)
-          row_df$mean_obs_fair_score <- mean(obs_f_d)
-          row_df$adjustment <- mean(adj_d)
-          row_df$adjustment_sd <- stats::sd(adj_d)
-          row_df$adjustment_lower_95 <- unname(stats::quantile(adj_d, .025))
-          row_df$adjustment_upper_95 <- unname(stats::quantile(adj_d, .975))
-          row_df$standardization_shift <- mean(std_d)
-          row_df$standardization_sd <- stats::sd(std_d)
-          row_df$standardization_lower_95 <- unname(stats::quantile(std_d, .025))
-          row_df$standardization_upper_95 <- unname(stats::quantile(std_d, .975))
-          row_df$shrinkage_and_noise <- mean(shr_d)
-          row_df$shrinkage_lower_95 <- unname(stats::quantile(shr_d, .025))
-          row_df$shrinkage_upper_95 <- unname(stats::quantile(shr_d, .975))
-          row_df$fair_minus_raw <- mean(aggregate_draws) - raw_m
-        } else {
-          row_df$mean_actual_expected <- NA_real_
-          row_df$sd_actual_expected <- NA_real_
-          row_df$mean_obs_fair_score <- NA_real_
-          row_df$adjustment <- NA_real_
-          row_df$adjustment_sd <- NA_real_
-          row_df$adjustment_lower_95 <- NA_real_
-          row_df$adjustment_upper_95 <- NA_real_
-          row_df$standardization_shift <- NA_real_
-          row_df$standardization_sd <- NA_real_
-          row_df$standardization_lower_95 <- NA_real_
-          row_df$standardization_upper_95 <- NA_real_
-          row_df$shrinkage_and_noise <- NA_real_
-          row_df$shrinkage_lower_95 <- NA_real_
-          row_df$shrinkage_upper_95 <- NA_real_
-          row_df$fair_minus_raw <- NA_real_
-        }
-      }
-      row_df
-    })
-    res <- tibble::as_tibble(do.call(rbind, rows))
-    if (isTRUE(return_draws)) {
-      draw_list <- list(fair = fair_draws_mat)
-      if (isTRUE(decompose)) {
-        draw_list$actual <- actual_draws_mat
-        draw_list$obs_fair <- obs_fair_draws_mat
-        draw_list$adjustment <- adj_draws_mat
-        draw_list$standardization_shift <- std_shift_mat
-        draw_list$shrinkage_and_noise <- shrink_mat
-      }
-      attr(res, "draws") <- draw_list
-    }
-    ref_grid_meta <- reference_grid
-    if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
-    rm_list <- list(
-      adjust_facets = resolved_adjust,
-      standardized = TRUE,
-      summary = TRUE,
-      score_unit = "native_weighted_mean",
-      K_heterogeneous = is_hetero_pcm,
-      K_by_level = K_by_level_meta,
-      reference_grid = ref_grid_meta,
-      reference_weights = ref_w,
-      draw_ids = draw_meta$draw_ids,
-      draw_info = draw_meta$draw_info
+    built <- summarise_person_fair_draws(
+      object = object, pf = pf, labels = labels, fair_draws_by_j = fair_by_j, keep_j = seq_len(P),
+      obs_data = obs_data, id_per_j = id_std$likelihood_identified, basis_per_j = id_std$identification_basis,
+      standardized = TRUE, decompose = decompose, return_draws = return_draws,
+      actual_draws_by_j = act_by_j, obs_fair_draws_by_j = obs_f_by_j
     )
-    if (is_hetero_pcm) {
-      rm_list$comparability_note <- paste0(
-        "Heterogeneous category counts across '", object$spec$threshold_facet,
-        "': scores are weighted means in native rubric units on the common reference configuration ",
-        "(not rescaled to 0-1)."
-      )
-    }
-    attr(res, "reference_meta") <- rm_list
+    res <- built$result
+    attr(res, "reference_meta") <- build_fair_reference_meta(
+      object, resolved_adjust, standardized = TRUE, summary = TRUE,
+      reference_grid = ref_grid_meta, reference_weights = ref_w, draw_meta = built$draw_meta
+    )
     return(res)
   }
 
-  # Observation-level fair scores:
-  # Saved Stan mu_fair may ONLY be used when its actual adjustment specification
-  # matches the requested adjust_facets (or adjust_facets = NULL on a custom model).
+  # 2. Unstandardized observation-level / observed-mean fair scores
   hier_pcm_on_adjusted <- identical(object$spec$family, "pcm") &&
     (object$spec$threshold_facet %in% resolved_adjust) &&
     fit_has_variable(object$fit, "tau_common")
   stan_uses_common_tau <- !is.null(object$stan_code) &&
-    grepl("eta_fair\\s*-\\s*tau_common\\[k-1\\]", object$stan_code)
+    grepl("cum_tau_fair|tau_common\\[k-1\\]", object$stan_code)
 
   if (isTRUE(object$spec$custom_stan)) {
     contract <- get_eval_contract(object)
@@ -1042,8 +937,7 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       effective_adjust <- if (!is.null(stan_adjusted)) stan_adjusted else resolved_adjust
       can_use_stan <- TRUE
       if (!is.null(stan_adjusted) && !setequal(stan_adjusted, generic_adjust)) {
-        message("Using custom Stan built-in mu_fair (adjusts: ",
-                paste(stan_adjusted, collapse = ", "), ").")
+        message("Using custom Stan built-in mu_fair (adjusts: ", paste(stan_adjusted, collapse = ", "), ").")
       } else if (identical(contract$source, "custom_unverified")) {
         message("Using custom Stan built-in mu_fair (adjustment semantics are defined by the custom Stan model).")
       }
@@ -1062,146 +956,67 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
   id_obs <- check_fair_score_identifiability(object, obs_data, effective_adjust)
   warn_identifiability(id_obs)
 
-  collapse_person_basis <- function(bases) {
-    if (all(is.na(bases))) return(NA_character_)
-    if (any(bases == "unidentified_predictor_or_step", na.rm = TRUE)) return("unidentified_predictor_or_step")
-    if (any(bases == "hierarchical_step_prior", na.rm = TRUE)) return("hierarchical_step_prior")
-    "conditional_likelihood"
-  }
+  obs_pf <- as.character(obs_data[[pf]])
+  id_per_j <- vapply(labels, function(lb) {
+    idx <- which(obs_pf == lb)
+    if (!length(idx) || all(is.na(id_obs$likelihood_identified[idx]))) NA else all(id_obs$likelihood_identified[idx])
+  }, logical(1))
+  basis_per_j <- vapply(labels, function(lb) {
+    idx <- which(obs_pf == lb)
+    if (!length(idx)) NA_character_ else collapse_person_basis(id_obs$identification_basis[idx])
+  }, character(1))
 
   if (can_use_stan) {
     draws <- unclass(object$fit$draws("mu_fair", format = "matrix"))
     index <- as.integer(sub(".*\\[([0-9]+)\\]", "\\1", colnames(draws)))
     draws <- draws[, order(index), drop = FALSE]
     if (ncol(draws) != nrow(obs_data)) stop("mu_fair draws do not match fitted observations")
-    obs_out <- preserve_colliding_facets(obs_data, object$spec$facets_main)
-    obs_out$mu_fair <- colMeans(draws)
-    obs_out$mu_fair_sd <- apply(draws, 2L, stats::sd)
-    obs_out$likelihood_identified <- id_obs$likelihood_identified
-    obs_out$identification_basis <- id_obs$identification_basis
     if (!summary) {
-      rm_row_stan <- list(
-        adjust_facets = effective_adjust,
-        standardized = FALSE,
-        summary = FALSE,
-        score_unit = "native_row_expected_score",
-        K_heterogeneous = is_hetero_pcm,
-        K_by_level = K_by_level_meta,
-        reference_grid = NULL,
-        reference_weights = NULL
+      obs_out <- preserve_colliding_facets(obs_data, object$spec$facets_main)
+      obs_out$mu_fair <- colMeans(draws)
+      obs_out$mu_fair_sd <- apply(draws, 2L, stats::sd)
+      obs_out$likelihood_identified <- id_obs$likelihood_identified
+      obs_out$identification_basis <- id_obs$identification_basis
+      attr(obs_out, "reference_meta") <- build_fair_reference_meta(
+        object, effective_adjust, standardized = FALSE, summary = FALSE
       )
-      if (is_hetero_pcm) {
-        rm_row_stan$comparability_note <- paste0(
-          "Heterogeneous category counts across '", object$spec$threshold_facet,
-          "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
-          object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
-          "aggregation depends on each examinee's assigned levels."
-        )
-      }
-      attr(obs_out, "reference_meta") <- rm_row_stan
       return(obs_out)
     }
 
-    mu_draws_stan <- NULL
+    act_by_j <- NULL
     if (isTRUE(decompose)) {
       if (fit_has_variable(object$fit, "mu")) {
-        mu_draws_stan <- unclass(object$fit$draws("mu", format = "matrix"))
-        mu_idx <- as.integer(sub(".*\\[([0-9]+)\\]", "\\1", colnames(mu_draws_stan)))
-        mu_draws_stan <- mu_draws_stan[, order(mu_idx), drop = FALSE]
-        if (ncol(mu_draws_stan) != nrow(obs_data)) stop("mu draws do not match fitted observations")
+        mu_d <- unclass(object$fit$draws("mu", format = "matrix"))
+        mu_idx <- as.integer(sub(".*\\[([0-9]+)\\]", "\\1", colnames(mu_d)))
+        mu_d <- mu_d[, order(mu_idx), drop = FALSE]
+        if (ncol(mu_d) != nrow(obs_data)) stop("mu draws do not match fitted observations")
+        act_by_j <- lapply(labels, function(lb) {
+          idx <- which(obs_pf == lb)
+          if (length(idx)) rowMeans(mu_d[, idx, drop = FALSE]) else NULL
+        })
       } else if (can_evaluate_in_r(object, adjust_facets = character(0))) {
-        actual_st <- stream_bmfrm_fair_scores(
-          object, newdata = obs_data, adjust_facets = character(0),
-          summary = TRUE, chunk_size = chunk_size
-        )
+        actual_st <- stream_bmfrm_fair_scores(object, obs_data, character(0), summary = TRUE, chunk_size = chunk_size)
+        act_by_j <- lapply(seq_len(P), function(j) if (actual_st$count_p[j] > 0L) actual_st$sum_mu[, j] / actual_st$count_p[j] else NULL)
       } else {
         stop("decompose = TRUE requires saved Stan 'mu' draws or a verified R-engine model")
       }
     }
 
-    D <- nrow(draws)
-    kept_labels <- character(0)
-    fair_cols <- list()
-    actual_cols <- list()
-    adj_cols <- list()
-    shrink_cols <- list()
-
-    rows <- lapply(seq_along(labels), function(j) {
-      label <- labels[j]
-      idx <- which(as.character(obs_data$person) == label)
-      if (!length(idx)) return(NULL)
-      person_id_ok <- if (all(is.na(id_obs$likelihood_identified[idx]))) NA else all(id_obs$likelihood_identified[idx])
-      aggregate_draws <- rowMeans(draws[, idx, drop = FALSE])
-      raw_m <- mean(obs_data[[object$spec$response]][idx])
-      kept_labels <<- c(kept_labels, label)
-      fair_cols[[label]] <<- aggregate_draws
-      row_df <- data.frame(
-        person = label, n_obs = length(idx),
-        mean_score = raw_m,
-        mean_fair_score = mean(aggregate_draws), sd_fair_score = stats::sd(aggregate_draws),
-        lower_95 = unname(stats::quantile(aggregate_draws, .025)),
-        upper_95 = unname(stats::quantile(aggregate_draws, .975)),
-        likelihood_identified = person_id_ok,
-        identification_basis = collapse_person_basis(id_obs$identification_basis[idx]),
-        stringsAsFactors = FALSE
-      )
-      if (isTRUE(decompose)) {
-        act_d <- if (!is.null(mu_draws_stan)) {
-          rowMeans(mu_draws_stan[, idx, drop = FALSE])
-        } else {
-          actual_st$sum_mu[, j] / actual_st$count_p[j]
-        }
-        adj_d <- aggregate_draws - act_d
-        shr_d <- act_d - raw_m
-        actual_cols[[label]] <<- act_d
-        adj_cols[[label]] <<- adj_d
-        shrink_cols[[label]] <<- shr_d
-        row_df$mean_actual_expected <- mean(act_d)
-        row_df$sd_actual_expected <- stats::sd(act_d)
-        row_df$adjustment <- mean(adj_d)
-        row_df$adjustment_sd <- stats::sd(adj_d)
-        row_df$adjustment_lower_95 <- unname(stats::quantile(adj_d, .025))
-        row_df$adjustment_upper_95 <- unname(stats::quantile(adj_d, .975))
-        row_df$shrinkage_and_noise <- mean(shr_d)
-        row_df$shrinkage_lower_95 <- unname(stats::quantile(shr_d, .025))
-        row_df$shrinkage_upper_95 <- unname(stats::quantile(shr_d, .975))
-        row_df$fair_minus_raw <- mean(aggregate_draws) - raw_m
-      }
-      row_df
+    fair_by_j <- lapply(labels, function(lb) {
+      idx <- which(obs_pf == lb)
+      if (length(idx)) rowMeans(draws[, idx, drop = FALSE]) else NULL
     })
-    res <- tibble::as_tibble(do.call(rbind, rows))
-    if (isTRUE(return_draws)) {
-      draw_meta_stan <- extract_draw_index_info(object$fit, D)
-      set_dn <- function(m) { rownames(m) <- draw_meta_stan$draw_names; m }
-      draw_list <- list(fair = set_dn(do.call(cbind, fair_cols)))
-      if (isTRUE(decompose)) {
-        draw_list$actual <- set_dn(do.call(cbind, actual_cols))
-        draw_list$adjustment <- set_dn(do.call(cbind, adj_cols))
-        draw_list$shrinkage_and_noise <- set_dn(do.call(cbind, shrink_cols))
-      }
-      attr(res, "draws") <- draw_list
-    }
-    draw_meta_stan <- extract_draw_index_info(object$fit, D)
-    rm_list <- list(
-      adjust_facets = effective_adjust,
-      standardized = FALSE,
-      summary = TRUE,
-      score_unit = "native_weighted_mean",
-      K_heterogeneous = is_hetero_pcm,
-      K_by_level = K_by_level_meta,
-      reference_grid = NULL,
-      reference_weights = NULL,
-      draw_ids = draw_meta_stan$draw_ids,
-      draw_info = draw_meta_stan$draw_info
+    keep_j <- which(!vapply(fair_by_j, is.null, logical(1)))
+    built <- summarise_person_fair_draws(
+      object = object, pf = pf, labels = labels, fair_draws_by_j = fair_by_j, keep_j = keep_j,
+      obs_data = obs_data, id_per_j = id_per_j, basis_per_j = basis_per_j,
+      standardized = FALSE, decompose = decompose, return_draws = return_draws,
+      actual_draws_by_j = act_by_j
     )
-    if (is_hetero_pcm) {
-      rm_list$comparability_note <- paste0(
-        "Heterogeneous category counts across '", object$spec$threshold_facet,
-        "': unstandardized averages depend on each examinee's assigned levels; ",
-        "use standardize = TRUE or reference_grid for cross-examinee comparisons."
-      )
-    }
-    attr(res, "reference_meta") <- rm_list
+    res <- built$result
+    attr(res, "reference_meta") <- build_fair_reference_meta(
+      object, effective_adjust, standardized = FALSE, summary = TRUE, draw_meta = built$draw_meta
+    )
     return(res)
   }
 
@@ -1215,154 +1030,90 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     )
   }
 
-  # Memory-bounded streaming path when computing fair scores in R
-  st <- stream_bmfrm_fair_scores(
-    object, newdata = obs_data, adjust_facets = resolved_adjust,
-    summary = summary, chunk_size = chunk_size
-  )
+  st <- stream_bmfrm_fair_scores(object, obs_data, resolved_adjust, summary = summary, chunk_size = chunk_size)
   if (!summary) {
     obs_out <- preserve_colliding_facets(obs_data, object$spec$facets_main)
     obs_out$mu_fair <- st$mu_fair
     obs_out$mu_fair_sd <- st$mu_fair_sd
     obs_out$likelihood_identified <- id_obs$likelihood_identified
     obs_out$identification_basis <- id_obs$identification_basis
-    rm_row_stream <- list(
-      adjust_facets = resolved_adjust,
-      standardized = FALSE,
-      summary = FALSE,
-      score_unit = "native_row_expected_score",
-      K_heterogeneous = is_hetero_pcm,
-      K_by_level = K_by_level_meta,
-      reference_grid = NULL,
-      reference_weights = NULL
+    attr(obs_out, "reference_meta") <- build_fair_reference_meta(
+      object, resolved_adjust, standardized = FALSE, summary = FALSE
     )
-    if (is_hetero_pcm) {
-      rm_row_stream$comparability_note <- paste0(
-        "Heterogeneous category counts across '", object$spec$threshold_facet,
-        "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
-        object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
-        "aggregation depends on each examinee's assigned levels."
-      )
-    }
-    attr(obs_out, "reference_meta") <- rm_row_stream
     return(obs_out)
   }
 
-  actual_st <- if (isTRUE(decompose)) {
-    stream_bmfrm_fair_scores(
-      object, newdata = obs_data, adjust_facets = character(0),
-      summary = TRUE, chunk_size = chunk_size
-    )
-  } else {
-    NULL
+  act_by_j <- NULL
+  if (isTRUE(decompose)) {
+    actual_st <- stream_bmfrm_fair_scores(object, obs_data, character(0), summary = TRUE, chunk_size = chunk_size)
+    act_by_j <- lapply(seq_len(P), function(j) if (actual_st$count_p[j] > 0L) actual_st$sum_mu[, j] / actual_st$count_p[j] else NULL)
   }
+  fair_by_j <- lapply(seq_len(P), function(j) if (st$count_p[j] > 0L) st$sum_mu[, j] / st$count_p[j] else NULL)
+  keep_j <- which(st$count_p > 0L)
 
-  fair_cols <- list()
-  actual_cols <- list()
-  adj_cols <- list()
-  shrink_cols <- list()
-
-  rows <- lapply(seq_along(labels), function(j) {
-    if (st$count_p[j] == 0L) return(NULL)
-    label <- labels[j]
-    idx <- which(as.character(obs_data$person) == label)
-    person_id_ok <- if (all(is.na(id_obs$likelihood_identified[idx]))) NA else all(id_obs$likelihood_identified[idx])
-    aggregate_draws <- st$sum_mu[, j] / st$count_p[j]
-    raw_m <- mean(obs_data[[object$spec$response]][idx])
-    fair_cols[[label]] <<- aggregate_draws
-    row_df <- data.frame(
-      person = label, n_obs = length(idx),
-      mean_score = raw_m,
-      mean_fair_score = mean(aggregate_draws), sd_fair_score = stats::sd(aggregate_draws),
-      lower_95 = unname(stats::quantile(aggregate_draws, .025)),
-      upper_95 = unname(stats::quantile(aggregate_draws, .975)),
-      likelihood_identified = person_id_ok,
-      identification_basis = collapse_person_basis(id_obs$identification_basis[idx]),
-      stringsAsFactors = FALSE
-    )
-    if (isTRUE(decompose)) {
-      act_d <- actual_st$sum_mu[, j] / actual_st$count_p[j]
-      adj_d <- aggregate_draws - act_d
-      shr_d <- act_d - raw_m
-      actual_cols[[label]] <<- act_d
-      adj_cols[[label]] <<- adj_d
-      shrink_cols[[label]] <<- shr_d
-      row_df$mean_actual_expected <- mean(act_d)
-      row_df$sd_actual_expected <- stats::sd(act_d)
-      row_df$adjustment <- mean(adj_d)
-      row_df$adjustment_sd <- stats::sd(adj_d)
-      row_df$adjustment_lower_95 <- unname(stats::quantile(adj_d, .025))
-      row_df$adjustment_upper_95 <- unname(stats::quantile(adj_d, .975))
-      row_df$shrinkage_and_noise <- mean(shr_d)
-      row_df$shrinkage_lower_95 <- unname(stats::quantile(shr_d, .025))
-      row_df$shrinkage_upper_95 <- unname(stats::quantile(shr_d, .975))
-      row_df$fair_minus_raw <- mean(aggregate_draws) - raw_m
-    }
-    row_df
-  })
-  res <- tibble::as_tibble(do.call(rbind, rows))
-  if (isTRUE(return_draws)) {
-    draw_meta_stream <- extract_draw_index_info(object$fit, nrow(st$sum_mu))
-    set_dn <- function(m) { rownames(m) <- draw_meta_stream$draw_names; m }
-    draw_list <- list(fair = set_dn(do.call(cbind, fair_cols)))
-    if (isTRUE(decompose)) {
-      draw_list$actual <- set_dn(do.call(cbind, actual_cols))
-      draw_list$adjustment <- set_dn(do.call(cbind, adj_cols))
-      draw_list$shrinkage_and_noise <- set_dn(do.call(cbind, shrink_cols))
-    }
-    attr(res, "draws") <- draw_list
-  }
-  draw_meta_stream <- extract_draw_index_info(object$fit, nrow(st$sum_mu))
-  rm_list <- list(
-    adjust_facets = resolved_adjust,
-    standardized = FALSE,
-    summary = TRUE,
-    score_unit = "native_weighted_mean",
-    K_heterogeneous = is_hetero_pcm,
-    K_by_level = K_by_level_meta,
-    reference_grid = NULL,
-    reference_weights = NULL,
-    draw_ids = draw_meta_stream$draw_ids,
-    draw_info = draw_meta_stream$draw_info
+  built <- summarise_person_fair_draws(
+    object = object, pf = pf, labels = labels, fair_draws_by_j = fair_by_j, keep_j = keep_j,
+    obs_data = obs_data, id_per_j = id_per_j, basis_per_j = basis_per_j,
+    standardized = FALSE, decompose = decompose, return_draws = return_draws,
+    actual_draws_by_j = act_by_j
   )
-  if (is_hetero_pcm) {
-    rm_list$comparability_note <- paste0(
-      "Heterogeneous category counts across '", object$spec$threshold_facet,
-      "': unstandardized averages depend on each examinee's assigned levels; ",
-      "use standardize = TRUE or reference_grid for cross-examinee comparisons."
-    )
-  }
-  attr(res, "reference_meta") <- rm_list
+  res <- built$result
+  attr(res, "reference_meta") <- build_fair_reference_meta(
+    object, resolved_adjust, standardized = FALSE, summary = TRUE, draw_meta = built$draw_meta
+  )
   res
 }
 
-#' Extract facet fit statistics
-#' @param object bmfrm_fit object
-#' @param facet name of facet
-#' @param prob credible interval probability (default 0.95)
+#' Extract calibrated facet fit statistics (Sinharay 2006 posterior predictive p-values)
+#'
+#' Computes draw-matched realized and replicated mean-square discrepancies
+#' `MSQ(y, psi_d)` and `MSQ(y_rep_d, psi_d)` across posterior draws, returning
+#' calibrated posterior predictive p-values (`infit_ppp`, `outfit_ppp`) and
+#' posterior predictive reference bounds (`infit_rep_lo..hi`, `outfit_rep_lo..hi`)
+#' as primary fit diagnostics.
+#'
+#' Why PPP is primary: posterior parameter uncertainty inflates realized
+#' `(y - mu_d)^2 / sigma2_d` for sparse levels or small `n_obs`, causing raw MSQ
+#' rules of thumb and asymptotic Wilson-Hilferty `|ZSTD| > 2` thresholds to emit
+#' systematic false alarms. Comparing `MSQ(y, psi_d)` against `MSQ(y_rep_d, psi_d)`
+#' on the same posterior draws accounts for exact discrete category distributions,
+#' sample size `n_obs`, and parameter uncertainty (`PPP` near `0` indicates
+#' underfit/erratic noise; `PPP` near `1` indicates overfit/muted dispersion).
+#'
+#' @param object `bmfrm_fit` object
+#' @param facet name of main facet
+#' @param prob credible and predictive reference interval probability (default `0.95`)
+#' @param seed Optional integer RNG seed for reproducible posterior predictive
+#'   draws when `y_rep` is streamed in R (default `123L`).
+#' @param include_zstd Logical; include uncalibrated asymptotic Wilson-Hilferty
+#'   `infit_zstd` / `outfit_zstd` columns for legacy descriptive comparison?
+#'   Default `FALSE`.
 #' @param chunk_size Optional observation chunk size for streaming evaluation.
 #' @param ... unused
 #' @export
-facet_fit <- function(object, facet, prob = 0.95, chunk_size = NULL, ...) {
+facet_fit <- function(object, facet, prob = 0.95, seed = 123L, include_zstd = FALSE, chunk_size = NULL, ...) {
   UseMethod("facet_fit")
 }
 
 #' @export
-facet_fit.bmfrm_fit <- function(object, facet, prob = 0.95, chunk_size = NULL, ...) {
+facet_fit.bmfrm_fit <- function(object, facet, prob = 0.95, seed = 123L, include_zstd = FALSE, chunk_size = NULL, ...) {
   if (!facet %in% object$spec$facets_main) {
     stop("Facet '", facet, "' not found in model. Available facets: ",
          paste(object$spec$facets_main, collapse = ", "))
+  }
+  if (!is.numeric(prob) || length(prob) != 1L || !is.finite(prob) || prob <= 0 || prob >= 1) {
+    stop("prob must be in (0, 1)")
   }
 
   stan_data <- object$data_info$stan_data
   facet_id <- stan_data[[paste0(facet, "_id")]]
   x <- stan_data$X
 
-  # Only dispatch to the R recomputation engine when the explicit evaluation
-  # contract verifies R-engine compatibility AND all required parameters exist.
-  can_compute_exact <- can_evaluate_in_r(object)
-  if (can_compute_exact) {
-    fit_stats <- stream_bmfrm_facet_fit(object, facet = facet, prob = prob, chunk_size = chunk_size)
+  if (can_evaluate_in_r(object)) {
+    fit_stats <- stream_bmfrm_facet_fit(
+      object, facet = facet, prob = prob, seed = seed,
+      include_zstd = include_zstd, chunk_size = chunk_size
+    )
     fit_stats$df <- pmax(fit_stats$n_obs - 1, 1)
   } else {
     if (!fit_has_variable(object$fit, "mu") || !fit_has_variable(object$fit, "sigma2")) {
@@ -1373,171 +1124,190 @@ facet_fit.bmfrm_fit <- function(object, facet, prob = 0.95, chunk_size = NULL, .
     }
     mu_mat <- extract_ordered_draws(object$fit, "mu", length(x))
     sig_mat <- extract_ordered_draws(object$fit, "sigma2", length(x))
+    y_rep_mat <- if (fit_has_variable(object$fit, "y_rep")) {
+      extract_ordered_draws(object$fit, "y_rep", length(x))
+    } else {
+      NULL
+    }
     fit_stats <- facet_fit_from_matrices(
-      x = x,
-      facet_id = facet_id,
-      mu_mat = mu_mat,
-      sig_mat = sig_mat,
-      kurt_mat = NULL,
-      model_name = object$spec$model_name,
-      prob = prob
+      x = x, facet_id = facet_id, mu_mat = mu_mat, sig_mat = sig_mat,
+      kurt_mat = NULL, y_rep_mat = y_rep_mat, model_name = object$spec$model_name,
+      prob = prob, include_zstd = FALSE
     )
-    # Add approximate chi-square Wilson-Hilferty ZSTD when kurtosis is unavailable
-    fit_stats <- add_zstd(fit_stats)
+    fit_stats$df <- pmax(fit_stats$n_obs - 1, 1)
+    if (isTRUE(include_zstd)) {
+      fit_stats <- add_zstd(fit_stats)
+    }
   }
 
-  # Add original labels
   labels <- object$data_info$facet_labels[[facet]]
   fit_stats$label <- labels[fit_stats$facet_value]
 
-  # Reorder columns
-  fit_stats <- fit_stats %>%
-    dplyr::select(facet_value, label, n_obs, infit_msq, outfit_msq,
-                  infit_lo, infit_hi, outfit_lo, outfit_hi,
-                  infit_zstd, outfit_zstd, dplyr::everything())
-
-  fit_stats
+  front_cols <- c(
+    "facet_value", "label", "n_obs",
+    "infit_ppp", "outfit_ppp",
+    "infit_msq", "infit_rep_mean", "outfit_msq", "outfit_rep_mean",
+    "infit_lo", "infit_hi", "outfit_lo", "outfit_hi",
+    "infit_rep_lo", "infit_rep_hi", "outfit_rep_lo", "outfit_rep_hi"
+  )
+  front_cols <- intersect(front_cols, names(fit_stats))
+  fit_stats[, c(front_cols, setdiff(names(fit_stats), front_cols)), drop = FALSE]
 }
 
-#' Summarise bias effects (wrapper)
-#' @param object bmfrm_fit object  
-#' @param facet Two-way interaction name in either component order (if NULL,
-#'   uses the first interaction). The generated parameter name and original
-#'   level labels are used. For legacy raw CmdStan fits named `bias[I,R]`, use
-#'   summarise_bias_ir().
-#' @param prob_thresh Posterior directional probability threshold for flagging
-#'   bias beyond `+/-delta` (default 0.95; e.g., use 0.975 to match a two-sided
-#'   95% credible interval excluding `[-delta, delta]`).
-#' @param delta Nonnegative practically meaningful effect on the adjacent-logit
-#'   scale. Reports `prob_gt_delta`, `prob_lt_neg_delta`, `prob_outside_delta`,
-#'   and per-cell Bayesian expected false discovery rate (`bfdr`) among
-#'   likelihood-identified cells.
-#' @param diagnostics Logical; include probability Monte Carlo standard errors
-#'   (MCSE) and numerical decision stability (default `TRUE`). `FALSE` retains
-#'   the original summary columns and skips these calculations.
-#' @param mcse_multiplier Positive multiplier for the approximate Monte Carlo
-#'   error band `probability +/- mcse_multiplier * MCSE` (default 2). This does
-#'   not change `prob_thresh`, `delta`, or `flag_bias`.
-#' @return A tibble with original labels, posterior summaries, directional and
-#'   practical-effect probabilities, `bfdr`, cell observation counts, and a
-#'   likelihood identification indicator when a design check is available.
-#'   Unidentified cells retain posterior summaries but receive flag
-#'   `not_likelihood_identified`.
-#'   With diagnostics, additional columns are `mcse_prob_gt_delta`,
-#'   `mcse_prob_lt_neg_delta`, `mcse_prob_outside_delta`, `prob_thresh`,
-#'   `mcse_multiplier`, `decision_stable`, and `decision_status`.
-#' @details Probability MCSE uses [posterior::mcse_mean()] on binary indicators
-#'   in the original iteration-by-chain layout, accounting for autocorrelation.
-#'   Missing chain structure, fewer than four iterations, or an indicator
-#'   constant within any chain gives unavailable MCSE (`NA`), never zero by
-#'   assumption. At least two chains and passing fit-level sampler checks are
-#'   required to assess decision stability.
+#' Summarise two-way interaction (bias) effects with BFDR multiplicity control
 #'
-#'   `decision_status` is `stable_positive_bias` or `stable_negative_bias` when
-#'   the corresponding probability's lower Monte Carlo bound is strictly above
-#'   `prob_thresh`; `stable_no_clear_bias` when both upper bounds are strictly
-#'   below it; and `boundary_sensitive` otherwise. Only the relevant direction
-#'   needs finite MCSE for a positive/negative decision; both are required for
-#'   no clear bias. Unavailable diagnostics are reported as `mcse_unavailable`,
-#'   `chain_structure_unavailable`, `fit_diagnostics_unavailable`, or
-#'   `fit_diagnostics_failed`. `decision_stable` is `TRUE` for stable statuses,
-#'   `FALSE` for boundary sensitivity, and `NA` when assessment is unavailable.
+#' Summarises posterior interaction cells while accounting for structural
+#' likelihood identification, zero-observation cells, and multiple testing.
 #'
-#'   Stability concerns numerical error in the directional probability rule;
-#'   inspect `likelihood_identified` separately even when stability is `TRUE`.
-#'   These approximate error bands are not credible intervals for the bias and
-#'   do not certify BFDR ranking/selection, equivalence, or model adequacy.
-#'   `stable_no_clear_bias` does not establish absence of a meaningful effect.
-#'   For boundary sensitivity, inspect mixing and consider longer sampling.
-#'   For unavailable MCSE, inspect chain traces and threshold crossings; do not
-#'   treat an estimated probability of 0 or 1 as exact certainty.
+#' \itemize{
+#'   \item **Zero-observation cells (`n_observations == 0`)**: even when sum-to-zero
+#'     constraints algebraically determine an unobserved cell from other cells,
+#'     no ratings occurred in that cell; it is labeled `"unobserved_cell"` and
+#'     excluded from `bfdr` and bias flagging.
+#'   \item **Multiplicity control (`flag_method = "bfdr"`, default)**: flags
+#'     observed, likelihood-identified cells whose set-level Bayesian expected
+#'     false discovery rate (`bfdr`, evaluated tie-invariantly over directional
+#'     exceedance beyond `+/-delta`) satisfies `bfdr <= fdr_thresh` (default `0.05`).
+#'     Pass `flag_method = "prob"` to use per-cell unadjusted directional
+#'     probabilities (`prob_gt_delta >= prob_thresh`).
+#' }
+#'
+#' @param object `bmfrm_fit` object
+#' @param facet Two-way interaction name in either component order (defaults to first interaction).
+#' @param prob_thresh Per-cell directional probability threshold in `(0.5, 1]`
+#'   (used for `flag_method = "prob"` and directional MCSE stability; default `0.95`).
+#' @param delta Nonnegative practical effect threshold on the logit scale (default `0`).
+#' @param flag_method Multiplicity rule for `flag_bias`: `"bfdr"` (default; flags
+#'   cells with `bfdr <= fdr_thresh`) or `"prob"` (per-cell `prob_thresh`).
+#' @param fdr_thresh Target Bayesian false discovery rate in `(0, 0.5)` when
+#'   `flag_method = "bfdr"` (default `0.05`).
+#' @param ci_level Credible interval probability in `(0, 1)` for `ci_lower` and
+#'   `ci_upper` (default `0.95`; e.g., use `2 * prob_thresh - 1` to align two-sided
+#'   interval bounds with one-sided `prob_thresh`). `lower_95` and `upper_95` are
+#'   also retained for backward compatibility.
+#' @param diagnostics Logical; include autocorrelation-aware probability MCSE
+#'   and decision stability columns (default `TRUE`).
+#' @param mcse_multiplier Positive multiplier for MCSE error bands (default `2`).
 #' @param ... unused
 #' @export
 summarise_bias <- function(object, facet = NULL, prob_thresh = 0.95, delta = 0,
-                           diagnostics = TRUE, mcse_multiplier = 2, ...) {
+                           flag_method = c("bfdr", "prob"), fdr_thresh = 0.05,
+                           ci_level = 0.95, diagnostics = TRUE, mcse_multiplier = 2, ...) {
   UseMethod("summarise_bias")
 }
 
 #' @export
 summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, delta = 0,
-                                    diagnostics = TRUE, mcse_multiplier = 2, ...) {
+                                    flag_method = c("bfdr", "prob"), fdr_thresh = 0.05,
+                                    ci_level = 0.95, diagnostics = TRUE, mcse_multiplier = 2, ...) {
+  flag_method <- match.arg(flag_method)
   validate_bias_diagnostics(diagnostics, mcse_multiplier)
-  if (!is.numeric(delta) || length(delta) != 1L || !is.finite(delta) || delta < 0) stop("delta must be one finite nonnegative number")
-  if (!is.numeric(prob_thresh) || length(prob_thresh) != 1L || !is.finite(prob_thresh) || prob_thresh <= .5 || prob_thresh > 1) stop("prob_thresh must be in (0.5, 1]")
-  
-  if (length(object$spec$facets_bias) == 0) {
-    stop("No bias facets in model")
+  if (!is.numeric(delta) || length(delta) != 1L || !is.finite(delta) || delta < 0) {
+    stop("delta must be one finite nonnegative number")
   }
-  
+  if (!is.numeric(prob_thresh) || length(prob_thresh) != 1L || !is.finite(prob_thresh) || prob_thresh <= 0.5 || prob_thresh > 1) {
+    stop("prob_thresh must be in (0.5, 1]")
+  }
+  if (!is.numeric(fdr_thresh) || length(fdr_thresh) != 1L || !is.finite(fdr_thresh) || fdr_thresh <= 0 || fdr_thresh >= 0.5) {
+    stop("fdr_thresh must be in (0, 0.5)")
+  }
+  if (!is.numeric(ci_level) || length(ci_level) != 1L || !is.finite(ci_level) || ci_level <= 0 || ci_level >= 1) {
+    stop("ci_level must be in (0, 1)")
+  }
+
+  if (length(object$spec$facets_bias) == 0) stop("No bias facets in model")
   if (is.null(facet)) {
-    facet <- object$spec$facets_bias[1]
+    facet <- object$spec$facets_bias[1L]
     message("Using bias facet: ", facet)
   }
-  
   if (!is.character(facet) || length(facet) != 1L || is.na(facet)) stop("facet must identify one interaction")
   facet <- match_interaction_names(facet, object$spec$facets_bias)
   if (!facet %in% object$spec$facets_bias) {
-    stop("Bias facet '", facet, "' not found. Available: ", 
-         paste(object$spec$facets_bias, collapse = ", "))
+    stop("Bias facet '", facet, "' not found. Available: ", paste(object$spec$facets_bias, collapse = ", "))
   }
-  
+
   f <- strsplit(facet, ":", fixed = TRUE)[[1L]]
   labels <- object$data_info$facet_labels[f]
-  n <- lengths(labels); name <- gsub(":", "", facet)
+  n <- lengths(labels)
+  name <- gsub(":", "", facet)
   chained <- if (diagnostics) {
     tryCatch(object$fit$draws(name, format = "draws_array"), error = function(e) NULL)
   } else NULL
   if (length(dim(chained)) == 3L) {
-    draws <- matrix(chained, nrow = prod(dim(chained)[1:2]),
-                    dimnames = list(NULL, dimnames(chained)[[3L]]))
+    draws <- matrix(chained, nrow = prod(dim(chained)[1:2]), dimnames = list(NULL, dimnames(chained)[[3L]]))
   } else {
-    # Older adapters may return only matrices. Never invent their chains.
     chained <- NULL
     draws <- unclass(object$fit$draws(name, format = "matrix"))
   }
+
   cells <- expand.grid(index1 = seq_len(n[1L]), index2 = seq_len(n[2L]))
   variable <- paste0(name, "[", cells$index1, ",", cells$index2, "]")
-  if (!all(variable %in% colnames(draws))) stop("Generated interaction draws are missing; summarise_bias_ir() supports legacy raw fits with a parameter named bias")
+  if (!all(variable %in% colnames(draws))) {
+    stop("Generated interaction draws are missing; summarise_bias_ir() supports legacy raw fits with a parameter named bias")
+  }
   draws <- draws[, variable, drop = FALSE]
-  ci <- apply(draws, 2L, stats::quantile, probs = c(.025, .975))
-  result <- tibble::tibble(facet = facet, facet1 = f[1L], facet2 = f[2L],
-    level1 = labels[[1L]][cells$index1], level2 = labels[[2L]][cells$index2],
-    index1 = cells$index1, index2 = cells$index2, variable = variable,
-    bias_mean = unname(colMeans(draws)), bias_sd = unname(apply(draws, 2L, stats::sd)),
-    lower_95 = unname(ci[1L, ]), upper_95 = unname(ci[2L, ]),
-    prob_pos = unname(colMeans(draws > 0)), prob_neg = unname(colMeans(draws < 0)), delta = delta,
-    prob_gt_delta = unname(colMeans(draws > delta)), prob_lt_neg_delta = unname(colMeans(draws < -delta)),
-    prob_outside_delta = unname(colMeans(abs(draws) > delta)))
-  # Single consistent probability criterion shared with summarise_bias_ir()
-  result$flag_bias <- classify_bias_flags(result$prob_gt_delta, result$prob_lt_neg_delta, prob_thresh = prob_thresh)
+
+  ci_alpha <- (1 - ci_level) / 2
+  ci_custom <- apply(draws, 2L, stats::quantile, probs = c(ci_alpha, 1 - ci_alpha))
+  ci_95 <- if (abs(ci_level - 0.95) < 1e-12) ci_custom else apply(draws, 2L, stats::quantile, probs = c(0.025, 0.975))
+
   dat <- object$data_info$data_clean
   idx1 <- match(as.character(dat[[f[1L]]]), labels[[1L]])
   idx2 <- match(as.character(dat[[f[2L]]]), labels[[2L]])
-  result$n_observations <- tabulate(idx1 + (idx2 - 1L) * n[1L], prod(n))
+  n_obs_cell <- tabulate(idx1 + (idx2 - 1L) * n[1L], prod(n))
+
   dc <- object$design
-  result$likelihood_identified <- NA
+  lik_id <- rep(NA, nrow(cells))
   if (!is.null(dc$interaction_levels[[facet]])) {
     rows <- dc$interaction_levels[[facet]]$map_row
-    result$likelihood_identified <- rowSums(dc$effect_null_space[rows, , drop = FALSE]^2) < dc$tolerance^2
-    result$flag_bias[!result$likelihood_identified] <- "not_likelihood_identified"
+    lik_id <- rowSums(dc$effect_null_space[rows, , drop = FALSE]^2) < dc$tolerance^2
   }
-  # Tie-invariant Bayesian FDR across likelihood-identified cells:
-  # All cells sharing the same posterior error probability (within 1e-12) receive
-  # the cumulative mean evaluated at the END of their tie group, so selection
-  # never depends on arbitrary cell/label ordering.
-  pep <- 1 - pmax(result$prob_gt_delta, result$prob_lt_neg_delta)
-  result$bfdr <- NA_real_
-  elig <- which(is.na(result$likelihood_identified) | result$likelihood_identified)
+
+  p_gt <- unname(colMeans(draws > delta))
+  p_lt <- unname(colMeans(draws < -delta))
+
+  # Tie-invariant Bayesian FDR strictly across observed, likelihood-identified cells
+  pep <- 1 - pmax(p_gt, p_lt)
+  bfdr_vec <- rep(NA_real_, nrow(cells))
+  elig <- which((is.na(lik_id) | lik_id) & (n_obs_cell > 0L))
   if (length(elig)) {
     ord <- elig[order(pep[elig])]
     pep_ord <- pep[ord]
     cum_bfdr <- cumsum(pep_ord) / seq_along(pep_ord)
     tie_key <- round(pep_ord, 12)
-    # Last index of each tie group gives the exact set-level BFDR when including all tied cells
     end_idx <- stats::ave(seq_along(tie_key), tie_key, FUN = max)
-    result$bfdr[ord] <- cum_bfdr[end_idx]
+    bfdr_vec[ord] <- cum_bfdr[end_idx]
   }
-  # Preserve familiar column names for the item/rater use case in either order.
+
+  if (identical(flag_method, "bfdr")) {
+    flag_vec <- rep("no_clear_bias", nrow(cells))
+    sig <- !is.na(bfdr_vec) & (bfdr_vec <= fdr_thresh + 1e-12) & (pmax(p_gt, p_lt) > 0.5)
+    flag_vec[sig & (p_gt >= p_lt)] <- "positive_bias"
+    flag_vec[sig & (p_lt > p_gt)] <- "negative_bias"
+  } else {
+    flag_vec <- classify_bias_flags(p_gt, p_lt, prob_thresh = prob_thresh)
+  }
+  flag_vec[n_obs_cell == 0L] <- "unobserved_cell"
+  flag_vec[!is.na(lik_id) & !lik_id] <- "not_likelihood_identified"
+
+  result <- tibble::tibble(
+    facet = facet, facet1 = f[1L], facet2 = f[2L],
+    level1 = labels[[1L]][cells$index1], level2 = labels[[2L]][cells$index2],
+    index1 = cells$index1, index2 = cells$index2, variable = variable,
+    bias_mean = unname(colMeans(draws)), bias_sd = unname(apply(draws, 2L, stats::sd)),
+    ci_level = ci_level,
+    ci_lower = unname(ci_custom[1L, ]), ci_upper = unname(ci_custom[2L, ]),
+    lower_95 = unname(ci_95[1L, ]), upper_95 = unname(ci_95[2L, ]),
+    prob_pos = unname(colMeans(draws > 0)), prob_neg = unname(colMeans(draws < 0)), delta = delta,
+    prob_gt_delta = p_gt, prob_lt_neg_delta = p_lt,
+    prob_outside_delta = unname(colMeans(abs(draws) > delta)),
+    flag_method = flag_method,
+    flag_bias = flag_vec,
+    n_observations = n_obs_cell,
+    likelihood_identified = lik_id,
+    bfdr = bfdr_vec
+  )
+
   if (setequal(f, c("item", "rater"))) {
     result$item <- if (f[1L] == "item") result$level1 else result$level2
     result$rater <- if (f[1L] == "rater") result$level1 else result$level2
@@ -1545,11 +1315,17 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, d
     result$r <- if (f[1L] == "rater") result$index1 else result$index2
   }
   if (diagnostics) {
-    result <- dplyr::bind_cols(result, bias_probability_diagnostics(
+    diag_tbl <- bias_probability_diagnostics(
       chained, variable, result$prob_gt_delta, result$prob_lt_neg_delta,
       delta = delta, prob_thresh = prob_thresh, mcse_multiplier = mcse_multiplier,
       convergence = object$convergence
-    ))
+    )
+    unobs <- (n_obs_cell == 0L)
+    if (any(unobs)) {
+      diag_tbl$decision_stable[unobs] <- NA
+      diag_tbl$decision_status[unobs] <- "unobserved_cell"
+    }
+    result <- dplyr::bind_cols(result, diag_tbl)
   }
   result
 }

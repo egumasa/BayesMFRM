@@ -16,7 +16,9 @@ test_that("diagnostics use the sampler's configured depth limit and include E-BF
   expect_true(good$converged)
   expect_equal(good$status, "ok")
   expect_equal(good$max_mcse_mean, .03)
-  expect_false(check_convergence(mock_diagnostic_fit(depth = c(1, 0)))$converged)
+  td <- check_convergence(mock_diagnostic_fit(depth = c(1, 0)))
+  expect_true(td$converged)
+  expect_true(td$efficiency_warning)
   expect_false(check_convergence(mock_diagnostic_fit(ebfmi = c(.2, .9)))$converged)
 })
 

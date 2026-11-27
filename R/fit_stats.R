@@ -258,15 +258,23 @@ add_fit_cri_bayes <- function(fit_stats,
 #' @param mu_mat Numeric matrix (D x N) of expected scores per draw.
 #' @param sig_mat Numeric matrix (D x N) of model variances per draw.
 #' @param kurt_mat Optional numeric matrix (D x N) of fourth central moments
-#'   `E[(Y - mu)^4]` per draw for exact Wright & Masters ZSTD variance `q`.
+#'   `E[(Y - mu)^4]` per draw for legacy Wilson-Hilferty ZSTD variance `q`.
+#' @param y_rep_mat Optional integer/numeric matrix (D x N) of posterior
+#'   predictive replicated responses for Sinharay (2006) posterior predictive
+#'   p-values (`infit_ppp`, `outfit_ppp`) and predictive reference bounds.
 #' @param model_name Character model label.
 #' @param prob Credible interval probability (default 0.95).
-#' @return Tibble with draw-consistent posterior mean infit/outfit, credible
-#'   intervals, plug-in values, and optional exact `outfit_q` / `infit_q`.
+#' @param include_zstd Logical; include uncalibrated asymptotic Wilson-Hilferty
+#'   `infit_zstd` / `outfit_zstd` columns? Default `FALSE` (prefer calibrated
+#'   `infit_ppp` / `outfit_ppp`).
+#' @return Tibble with calibrated posterior predictive fit p-values (when
+#'   `y_rep_mat` is supplied), realized MSQ summaries, and plug-in values.
 #' @keywords internal
 facet_fit_from_matrices <- function(x, facet_id, mu_mat, sig_mat,
-                                    kurt_mat = NULL, model_name = "model",
-                                    prob = 0.95) {
+                                    kurt_mat = NULL, y_rep_mat = NULL,
+                                    model_name = "model",
+                                    prob = 0.95,
+                                    include_zstd = FALSE) {
   prob_lo <- (1 - prob) / 2
   prob_hi <- 1 - prob_lo
   D <- nrow(mu_mat)
@@ -281,49 +289,78 @@ facet_fit_from_matrices <- function(x, facet_id, mu_mat, sig_mat,
     mu_sub <- mu_mat[, idx, drop = FALSE]
     sig_sub <- pmax(sig_mat[, idx, drop = FALSE], 1e-12)
 
-    # Plug-in mean squares
     z2_plug <- (x_sub - mu_hat[idx])^2 / sig_hat[idx]
     w_plug <- sig_hat[idx]
     outfit_plug <- mean(z2_plug, na.rm = TRUE)
     infit_plug <- sum(w_plug * z2_plug, na.rm = TRUE) / sum(w_plug, na.rm = TRUE)
 
-    # Posterior draw-level mean squares (consistent with credible intervals)
     X_mat <- matrix(x_sub, nrow = D, ncol = n_obs, byrow = TRUE)
-    z2_draw <- (X_mat - mu_sub)^2 / sig_sub
+    resid2_obs <- (X_mat - mu_sub)^2
+    z2_draw <- resid2_obs / sig_sub
+    w_sum <- rowSums(sig_sub)
     outfit_draws <- rowMeans(z2_draw)
-    infit_draws <- rowSums(sig_sub * z2_draw) / rowSums(sig_sub)
+    infit_draws <- rowSums(resid2_obs) / w_sum
+
+    infit_ppp <- outfit_ppp <- NA_real_
+    infit_rep_mean <- outfit_rep_mean <- NA_real_
+    infit_rep_lo <- infit_rep_hi <- outfit_rep_lo <- outfit_rep_hi <- NA_real_
+    if (!is.null(y_rep_mat)) {
+      yr_sub <- y_rep_mat[, idx, drop = FALSE]
+      resid2_rep <- (yr_sub - mu_sub)^2
+      outfit_rep_draws <- rowMeans(resid2_rep / sig_sub)
+      infit_rep_draws <- rowSums(resid2_rep) / w_sum
+      tol_tie <- 1e-12
+      in_diff <- infit_rep_draws - infit_draws
+      out_diff <- outfit_rep_draws - outfit_draws
+      infit_ppp <- mean((in_diff > tol_tie) + 0.5 * (abs(in_diff) <= tol_tie))
+      outfit_ppp <- mean((out_diff > tol_tie) + 0.5 * (abs(out_diff) <= tol_tie))
+      infit_rep_mean <- mean(infit_rep_draws)
+      outfit_rep_mean <- mean(outfit_rep_draws)
+      infit_rep_lo <- unname(stats::quantile(infit_rep_draws, prob_lo))
+      infit_rep_hi <- unname(stats::quantile(infit_rep_draws, prob_hi))
+      outfit_rep_lo <- unname(stats::quantile(outfit_rep_draws, prob_lo))
+      outfit_rep_hi <- unname(stats::quantile(outfit_rep_draws, prob_hi))
+    }
 
     out <- tibble::tibble(
       facet_value = f_val,
       model = model_name,
       n_obs = n_obs,
+      infit_ppp = infit_ppp,
+      outfit_ppp = outfit_ppp,
       infit_msq = mean(infit_draws),
       outfit_msq = mean(outfit_draws),
       infit_lo = unname(stats::quantile(infit_draws, prob_lo)),
       infit_hi = unname(stats::quantile(infit_draws, prob_hi)),
       outfit_lo = unname(stats::quantile(outfit_draws, prob_lo)),
       outfit_hi = unname(stats::quantile(outfit_draws, prob_hi)),
+      infit_rep_mean = infit_rep_mean,
+      outfit_rep_mean = outfit_rep_mean,
+      infit_rep_lo = infit_rep_lo,
+      infit_rep_hi = infit_rep_hi,
+      outfit_rep_lo = outfit_rep_lo,
+      outfit_rep_hi = outfit_rep_hi,
       infit_msq_plugin = infit_plug,
       outfit_msq_plugin = outfit_plug
     )
     if (!is.null(kurt_mat)) {
       kurt_sub <- kurt_mat[, idx, drop = FALSE]
       w2_draw <- sig_sub * sig_sub
-      # Compute q_d and Wilson-Hilferty ZSTD inside each posterior draw
-      # (avoids swapping expectations: E[C]/E[W]^2 != E[C/W^2])
       q_out_draws <- sqrt(pmax(rowSums(pmax(kurt_sub / w2_draw - 1, 0)) / (n_obs^2), 1e-12))
-      q_in_draws <- sqrt(pmax(rowSums(pmax(kurt_sub - w2_draw, 0)) / (rowSums(sig_sub)^2), 1e-12))
-      out_z_draws <- (outfit_draws^(1/3) - 1) * (3 / q_out_draws) + q_out_draws / 3
-      in_z_draws <- (infit_draws^(1/3) - 1) * (3 / q_in_draws) + q_in_draws / 3
+      q_in_draws <- sqrt(pmax(rowSums(pmax(kurt_sub - w2_draw, 0)) / (w_sum^2), 1e-12))
       out$outfit_q <- mean(q_out_draws)
       out$infit_q <- mean(q_in_draws)
-      out$infit_zstd <- mean(in_z_draws)
-      out$outfit_zstd <- mean(out_z_draws)
-      out$infit_zstd_lo <- unname(stats::quantile(in_z_draws, prob_lo))
-      out$infit_zstd_hi <- unname(stats::quantile(in_z_draws, prob_hi))
-      out$outfit_zstd_lo <- unname(stats::quantile(out_z_draws, prob_lo))
-      out$outfit_zstd_hi <- unname(stats::quantile(out_z_draws, prob_hi))
-      out$zstd_method <- "draw_wilson_hilferty_approx"
+      if (isTRUE(include_zstd)) {
+        out_z_draws <- (outfit_draws^(1/3) - 1) * (3 / q_out_draws) + q_out_draws / 3
+        in_z_draws <- (infit_draws^(1/3) - 1) * (3 / q_in_draws) + q_in_draws / 3
+        out$infit_zstd <- mean(in_z_draws)
+        out$outfit_zstd <- mean(out_z_draws)
+        out$infit_zstd_lo <- unname(stats::quantile(in_z_draws, prob_lo))
+        out$infit_zstd_hi <- unname(stats::quantile(in_z_draws, prob_hi))
+        out$outfit_zstd_lo <- unname(stats::quantile(out_z_draws, prob_lo))
+        out$outfit_zstd_hi <- unname(stats::quantile(out_z_draws, prob_hi))
+        out$zstd_method <- "draw_wilson_hilferty_approx"
+      }
     }
     out
   })

@@ -2,7 +2,7 @@
 % Please edit documentation in R/caching.R
 \name{fit_cmdstan_cached}
 \alias{fit_cmdstan_cached}
-\title{Cached cmdstanr fitting with hash-based validation}
+\title{Cached cmdstanr fitting with portable relative CSV resolution}
 \usage{
 fit_cmdstan_cached(
   model,
@@ -24,7 +24,7 @@ fit_cmdstan_cached(
 
 \item{refit}{one of "never", "always", "on_change"}
 
-\item{seed}{random seed}
+\item{seed}{random seed (\code{NULL} draws fresh chains under \code{refit = "on_change"})}
 
 \item{chains}{number of chains}
 
@@ -36,6 +36,10 @@ fit_cmdstan_cached(
 cmdstanr fit object
 }
 \description{
-This function provides a robust caching mechanism for cmdstanr fits, with
-hash-based validation to ensure the cached fit matches the current model and data.
+Caches compiled CmdStan fits with a full model/data/sampler signature hash.
+Stores chain CSV paths both directly and relative to \code{dirname(file)} so
+moving or renaming a project/cache directory does not invalidate saved caches.
+When \code{seed = NULL} and \code{refit = "on_change"}, fresh chains are sampled rather
+than silently returning a previous unseeded run; pass an explicit integer
+\code{seed} (or \code{refit = "never"}) to reuse cached draws deterministically.
 }

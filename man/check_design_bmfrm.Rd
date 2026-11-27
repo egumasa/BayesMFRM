@@ -13,7 +13,8 @@ check_design_bmfrm(
   tol = 1e-10,
   max_cells = 2e+06,
   threshold_facet = NULL,
-  method = c("auto", "dense", "schur")
+  method = c("auto", "dense", "schur"),
+  person_facet = "person"
 )
 }
 \arguments{
@@ -38,6 +39,9 @@ heterogeneous-category PCM.}
 \item{method}{Solver mode: \code{"auto"} (dense SVD when within \code{max_cells},
 Schur-complement solver otherwise), \code{"dense"} (strict dense SVD limit), or
 \code{"schur"} (always use within-person Schur-complement solver).}
+
+\item{person_facet}{Name of the unconstrained examinee / ability main facet in
+\code{formula} (default \code{"person"}).}
 }
 \value{
 A bmfrm_design_check with component membership, rank, null spaces,

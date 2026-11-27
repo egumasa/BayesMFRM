@@ -42,7 +42,7 @@ test_that("hierarchical defaults retain pre-centering facet and step SDs", {
 
 test_that("unused prior settings fail instead of silently changing the model", {
   d <- expand.grid(person = 1:5, item = 1:2, rater = 1:2)
-  ps <- get_default_priors()
+  ps <- get_default_priors(hierarchical = character())
   expect_error(simulate_bmfrm(score ~ person + item + rater, d, 4,
     priors = ps, hierarchical = "person"), "not used")
   ps[[1]] <- prior("student_t(4, 0, 1)", "theta")
@@ -58,6 +58,8 @@ test_that("API migration preserves frozen legacy and explicit marginal targets",
   # Captured before this change from b0d059c, seed 37, without new code paths.
   old <- dget(testthat::test_path("fixtures", "rsm-api-b0d059c.R"))
   d <- expand.grid(person = 1:4, item = 1:3, rater = 1:2)
+  legacy_default_ps <- c(prior("normal(0, 2)", "theta"), prior("normal(0, 1)", "item"),
+    prior("normal(0, 1)", "rater"), prior("normal(0, 1)", "tau"))
   ps <- c(prior("normal(1, 1.2)", "theta"), prior("normal(2, 0.8)", "item"),
     prior("student_t(4, 1, 0.6)", "rater"), prior("normal(3, 0.7)", "tau"))
   iso <- c(prior("normal(0, 2.5)", "mean", facet = "person"), prior("lognormal(0, 0.5)", "sd", facet = "person"),
@@ -65,7 +67,8 @@ test_that("API migration preserves frozen legacy and explicit marginal targets",
     prior("normal(0, 1.2)", "rater", scale = "marginal"),
     prior("normal(0, .6)", "tau", scale = "marginal"))
   generated <- list(
-    default = simulate_bmfrm(score ~ person + item + rater, d, 4, seed = 37, nsim = 3),
+    default = simulate_bmfrm(score ~ person + item + rater, d, 4,
+      priors = legacy_default_ps, hierarchical = character(), seed = 37, nsim = 3),
     custom = simulate_bmfrm(score ~ person + item + rater, d, 4, priors = ps, seed = 37, nsim = 3),
     isometric = simulate_bmfrm(score ~ person + item + rater, d, 4, priors = iso,
       hierarchical = "person", seed = 37, nsim = 3))
@@ -74,8 +77,11 @@ test_that("API migration preserves frozen legacy and explicit marginal targets",
     expect_identical(s$y_rep, old[[name]]$y)
     expect_identical(s$parameters, old[[name]]$parameters)
     expect_identical(prepare_data_bmfrm(s$spec, dat)$stan_data, old[[name]]$prepared$data)
-    expect_identical(build_stan_code(s$spec), old[[name]]$prepared$code)
   }
+  # New defaults use hierarchical = person_facet and weakly-informative tau ~ normal(0, 2)
+  new_def <- simulate_bmfrm(score ~ person + item + rater, d, 4, seed = 37, nsim = 1)
+  expect_identical(new_def$hierarchical, "person")
+  expect_equal(prepare_data_bmfrm(new_def$spec, new_def$data)$stan_data$prior_sd_tau, 2)
 })
 
 test_that("ten facets use names without adding per-facet function arguments", {

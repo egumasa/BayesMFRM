@@ -9,66 +9,59 @@ prior(
   class,
   facet = NULL,
   scale = c("raw", "marginal"),
-  local_shrinkage = c("none", "horseshoe", "student_t")
+  local_shrinkage = c("none", "horseshoe", "student_t"),
+  slab_df = 4,
+  slab_scale = 2,
+  person_facet = "person"
 )
 }
 \arguments{
-\item{spec}{Prior distribution string. For a population mean or SD, a numeric
-value fixes that parameter (SD must be positive).}
+\item{spec}{Prior distribution string (e.g., \code{"normal(0, 1)"}), validated as
+a single literal distribution call. For a population mean or SD, a numeric
+scalar fixes that parameter (SD must be positive).}
 
-\item{class}{Parameter class: theta, item, rater, bias, tau, facet_\if{html}{\out{<name>}},
-mean, or sd. The last two specify a hierarchical population or scale.}
+\item{class}{Parameter class:
+\itemize{
+\item \code{"facet"} (with \code{facet = "<name>"}): fixed-scale prior for any
+sum-to-zero main facet (recommended role-agnostic form; legacy aliases
+\code{"item"}, \code{"rater"}, and \code{"facet_<name>"} remain supported).
+\item \code{"theta"}: non-hierarchical ability prior when \code{person_facet} is omitted
+from \code{hierarchical}.
+\item \code{"tau"}: category step threshold prior (or common step prior in
+hierarchical PCM).
+\item \code{"bias"} (with \code{facet = "f1:f2"}): non-hierarchical two-way interaction prior.
+\item \code{"mean"}, \code{"sd"}: population mean (\code{person_facet} only) or hierarchical
+scale (\code{person_facet}, any centered main facet, \code{"tau"}, or \code{"f1:f2"}).
+}}
 
-\item{facet}{Target facet for mean/sd, or interaction name for bias.
-For a hierarchical main facet (\code{"rater"}, \code{"item"}, etc.), hierarchical PCM
-steps (\code{"tau"}), or a hierarchical two-way interaction (\code{"item:rater"}),
-use \code{class = "sd"} and its facet/term name. Supported positive-scale priors
-are \code{normal(0,s)}, \code{student_t(df,0,s)}, and \code{cauchy(0,s)} (restricted to
-positive values), or \code{lognormal(m,s)}. A positive numeric value fixes the
-SD. Population means (\code{class = "mean"}) apply only to \code{"person"}.}
+\item{facet}{Target facet name for \code{class = "facet"}, \code{"mean"}, \code{"sd"}, or
+two-way interaction term for \code{class = "bias"} / \code{"sd"}.}
 
 \item{scale}{Meaning of the SD for a constrained Gaussian facet, step, or
-interaction prior: \code{"raw"} retains the historical pre-centering SD;
-\code{"marginal"} specifies the constrained level SD. Marginal scaling requires
-a \code{normal(0, sd)} prior (or a hierarchical \code{class = "sd"} prior). Singleton
-blocks remain identically zero.}
+interaction prior: \code{"raw"} (pre-centering SD) or \code{"marginal"} (post-centering
+per-level / per-cell SD; requires \code{normal(0, sd)} or hierarchical \code{class = "sd"}).}
 
 \item{local_shrinkage}{Optional local-global shrinkage structure for
-hierarchical two-way interactions (\code{class = "sd"} with an interaction
-\code{facet}): \code{"none"} (isotropic Gaussian conditional prior, default),
-\code{"student_t"} (unit-variance Student-t scale mixture with df = 3,
-\code{lambda ~ inv_gamma(1.5, 0.5)}, so conditional cell variance given \code{sigma}
-is exactly \code{sigma^2} under \code{scale = "marginal"} and
-\code{sigma^2 * (1 - 1/J1) * (1 - 1/J2)} under \code{scale = "raw"}), or
-\code{"horseshoe"} (regularized horseshoe in latent cell space followed by
-double centering; because its global scale parameter is a
-distribution-specific shrinkage scale rather than a marginal cell SD,
-\code{"horseshoe"} requires \code{scale = "raw"}). Note that local shrinkage acts on
-unconstrained latent cells \code{U} prior to double centering \verb{B = P1 U P2}:
-double centering preserves label-permutation invariance and exact zero
-row/column sums, but redistributes a single sparse latent deviation across
-other cells of \code{B}. Thus latent-cell sparsity is distinct from exact zeros
-in the reported relative bias matrix \code{B}; use a practical threshold
-\code{delta > 0} in \code{summarise_bias()} to separate large deviations from small
-centering spillover.}
+hierarchical two-way interactions (\code{class = "sd"}, \code{facet = "f1:f2"}):
+\code{"none"}, \code{"student_t"} (unit-variance Student-t mixture, df = 3), or
+\code{"horseshoe"} (regularized horseshoe in latent cell space; requires \code{scale = "raw"}).
+Note: local shrinkage acts on latent cells prior to double centering
+\verb{B = P1 U P2}, so sparse latent deviations redistribute small centering
+offsets across rows/columns of \code{B}; combine \code{delta > 0} and BFDR control in
+\code{\link[=summarise_bias]{summarise_bias()}} when screening for substantive bias.}
+
+\item{slab_df}{Positive degrees of freedom for the regularized horseshoe slab
+\code{c^2 ~ inv_gamma(slab_df / 2, slab_df * slab_scale^2 / 2)} (default \code{4}).}
+
+\item{slab_scale}{Positive scale for the regularized horseshoe slab (default
+\code{2}, yielding \code{c^2 ~ inv_gamma(2, 8)} with \code{slab_df = 4}).}
+
+\item{person_facet}{Name of the ability facet when specifying \code{class = "mean"}
+with a custom examinee column name (default \code{"person"}).}
 }
 \value{
-bmfrm_prior object
+A \code{bmfrm_prior} object.
 }
 \description{
 Create a prior specification for bmfrm models
-}
-\examples{
-# Basic priors
-prior("normal(0, 2)", class = "theta")
-prior("normal(0, 1)", class = "item")
-prior("student_t(3, 0, 1)", class = "rater")
-prior("normal(0, 1)", class = "tau")
-
-# Bias and hierarchical scale priors
-prior("normal(0, 0.5)", class = "bias", facet = "rater:item")
-prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal")
-prior("normal(0, 0.5)", class = "sd", facet = "item:rater", local_shrinkage = "horseshoe")
-prior("normal(0, 0.5)", class = "sd", facet = "item:rater", scale = "marginal", local_shrinkage = "student_t")
-prior("normal(0, 1)", class = "sd", facet = "rater", scale = "marginal")
 }

@@ -115,6 +115,7 @@ summarise_bias_ir <- function(fit,
                               item_labels  = NULL,
                               rater_labels = NULL,
                               prob_thresh  = 0.95,
+                              ci_level     = 0.95,
                               diagnostics = TRUE,
                               mcse_multiplier = 2) {
   validate_bias_diagnostics(diagnostics, mcse_multiplier)
@@ -122,6 +123,11 @@ summarise_bias_ir <- function(fit,
       prob_thresh <= 0.5 || prob_thresh > 1) {
     stop("prob_thresh must be in (0.5, 1]")
   }
+  if (!is.numeric(ci_level) || length(ci_level) != 1L || !is.finite(ci_level) ||
+      ci_level <= 0 || ci_level >= 1) {
+    stop("ci_level must be in (0, 1)")
+  }
+  ci_alpha <- (1 - ci_level) / 2
   # Draws for bias as a matrix
   draws_bias <- fit$draws("bias", format = "draws_array")
   # draws_bias: iterations x chains x (I*R) -> convert to draws_df
@@ -151,6 +157,8 @@ summarise_bias_ir <- function(fit,
     dplyr::summarise(
       bias_mean = mean(value),
       bias_sd   = stats::sd(value),
+      ci_lower  = stats::quantile(value, ci_alpha),
+      ci_upper  = stats::quantile(value, 1 - ci_alpha),
       lower_95  = stats::quantile(value, 0.025),
       upper_95  = stats::quantile(value, 0.975),
       prob_pos  = mean(value > 0),
@@ -183,7 +191,7 @@ summarise_bias_ir <- function(fit,
   
   bias_summ <- bias_summ %>%
     dplyr::select(item, rater, i, r,
-           bias_mean, bias_sd, lower_95, upper_95,
+           bias_mean, bias_sd, ci_lower, ci_upper, lower_95, upper_95,
            prob_pos, prob_neg, flag_bias)
   ord_i <- if (is.null(item_labels)) bias_summ$i else bias_summ$item
   ord_r <- if (is.null(rater_labels)) bias_summ$r else bias_summ$rater

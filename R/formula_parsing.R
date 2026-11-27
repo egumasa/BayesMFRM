@@ -1,76 +1,101 @@
 #' Parse bmfrm formula to extract facets and model structure
 #'
-#' @param formula R formula (e.g., score ~ person + item + rater + (rater:item)).
+#' @param formula R formula (e.g., `score ~ person + item + rater + rater:item`).
 #'   The response must be a single column name; transform scores in `data` first.
 #' @param data data.frame containing variables
 #' @param K Number of rating categories: a scalar integer `>= 2`, a named
 #'   integer vector matching `threshold_facet` levels for heterogeneous PCM,
 #'   or `NULL` (inferred from `max(score)`).
-#' @param family model family: "rsm" (Rating Scale Model) or "pcm" (Partial Credit Model)
-#' @param threshold_facet for PCM only: which facet gets item-specific thresholds (e.g., "item")
+#' @param family model family: `"rsm"` (Rating Scale Model) or `"pcm"` (Partial Credit Model)
+#' @param threshold_facet for PCM only: which facet gets level-specific step thresholds
+#' @param person_facet Name of the unconstrained examinee / ability main facet in
+#'   `formula` (default `"person"`). Allows custom column names such as
+#'   `"student"` or `"candidate"` without renaming input data.
+#' @param adjust_facets Optional character vector of nuisance main facets (e.g.,
+#'   `"judge"`, `"rater"`) to set to zero in built-in fair-score calculations
+#'   and as the default for [fair_scores()]. When `NULL`, auto-detects `"rater"`
+#'   and `"interlocutor"` if present.
 #' @param model_name optional model name for caching
-#' @param cache_dir cache directory
+#' @param cache_dir directory for compiled Stan binaries and fit caches. Defaults
+#'   to `tempdir()` so package functions never write into the working directory
+#'   by default; pass `tools::R_user_dir("BayesMFRM", "cache")` for persistent
+#'   cross-session caching.
 #' @param hierarchical Names of facets or terms with hierarchical distributions
-#'   (e.g., `"person"`, centered main facets such as `"rater"` / `"item"`,
-#'   two-way interactions such as `"item:rater"`, or `"tau"` for hierarchical
-#'   PCM). Component order in interaction names does not affect prior matching.
-#' @param save_gq Either `"full"` (default; generate observation-level
-#'   `log_lik`, `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan `generated quantities`)
-#'   or `"minimal"` (omit observation-level `generated quantities` and compute
-#'   downstream quantities in memory-bounded R chunks).
+#'   (default `person_facet`; pass `character(0)` for non-hierarchical priors).
+#' @param save_gq Either `"minimal"` (default; omits observation-level Stan
+#'   `generated quantities` and computes residuals, fit statistics, fair scores,
+#'   LOO, and PPC in memory-bounded R chunks) or `"full"` (saves `log_lik`,
+#'   `y_rep`, `mu`, `sigma2`, `mu_fair` in Stan CSV outputs).
 #'
-#' @return bmfrm_spec object with model specification
+#' @return `bmfrm_spec` object with model specification
 #' @export
 parse_bmfrm_formula <- function(formula,
                                data,
                                K = NULL,
                                family = "rsm",
                                threshold_facet = NULL,
+                               person_facet = "person",
+                               adjust_facets = NULL,
                                model_name = NULL,
-                               cache_dir = "stan_cache",
-                               hierarchical = character(),
-                               save_gq = c("full", "minimal")) {
+                               cache_dir = tempdir(),
+                               hierarchical = person_facet,
+                               save_gq = c("minimal", "full")) {
 
-  # Validate family
   allowed_families <- c("rsm", "pcm")
   family <- match.arg(family, allowed_families)
   save_gq <- match.arg(save_gq)
-  
-  # Parse formula terms
+
+  if (!is.character(person_facet) || length(person_facet) != 1L || is.na(person_facet) || !nzchar(person_facet)) {
+    stop("person_facet must be a single non-empty column name")
+  }
+
   response_name <- bmfrm_response_name(formula)
   terms_obj <- bmfrm_terms(formula, data = data)
-  
-  # Check response exists in data
+
   if (!response_name %in% names(data)) {
     stop("Response variable '", response_name, "' not found in data")
   }
-  
-  # Extract RHS variables
+
   rhs_vars <- attr(terms_obj, "term.labels")
-  
-  # Separate main facets from bias facets (interactions)
   is_interaction <- grepl(":", rhs_vars)
   facets_main <- rhs_vars[!is_interaction]
-  facets_bias <- rhs_vars[is_interaction]
-  
-  # Remove parentheses from bias terms if present
-  facets_bias <- gsub("[()]", "", facets_bias)
-  validate_facet_names(facets_main)
+  facets_bias <- gsub("[()]", "", rhs_vars[is_interaction])
+
+  if (!person_facet %in% facets_main) {
+    stop("Model formula must include person_facet ('", person_facet, "') as a main facet")
+  }
+  validate_facet_names(facets_main, person_facet = person_facet)
   validate_interaction_terms(facets_main, facets_bias)
-  
-  # Check all variables exist in data
+
   all_vars <- unique(c(facets_main, unlist(strsplit(facets_bias, ":"))))
   missing_vars <- setdiff(all_vars, names(data))
   if (length(missing_vars) > 0) {
     stop("Variables not found in data: ", paste(missing_vars, collapse = ", "))
   }
 
-  # Validate threshold_facet for PCM
+  adjust_explicit <- !is.null(adjust_facets)
+  non_person <- setdiff(facets_main, person_facet)
+  if (adjust_explicit) {
+    if (!is.character(adjust_facets) || anyNA(adjust_facets)) {
+      stop("adjust_facets must be a character vector of main facet names")
+    }
+    if (person_facet %in% adjust_facets) {
+      stop("person_facet ('", person_facet, "') cannot be included in adjust_facets")
+    }
+    unknown_adj <- setdiff(adjust_facets, facets_main)
+    if (length(unknown_adj)) {
+      stop("Unknown facet(s) in adjust_facets: ", paste(unknown_adj, collapse = ", "),
+           ". Available non-person main facets: ", paste(non_person, collapse = ", "))
+    }
+    adjust_resolved <- unique(adjust_facets)
+  } else {
+    adjust_resolved <- intersect(c("rater", "interlocutor"), non_person)
+  }
 
   if (family == "pcm") {
     if (is.null(threshold_facet)) {
       stop("PCM family requires 'threshold_facet' to specify which facet gets ",
-           "item-specific thresholds (e.g., threshold_facet = 'item')")
+           "level-specific thresholds (e.g., threshold_facet = 'item')")
     }
     if (!threshold_facet %in% facets_main) {
       stop("threshold_facet '", threshold_facet, "' must be one of the main facets: ",
@@ -83,9 +108,9 @@ parse_bmfrm_formula <- function(formula,
     }
   }
 
+  hierarchical_explicit <- !missing(hierarchical)
   hierarchical <- validate_hierarchical(hierarchical, facets_main, facets_bias, family)
 
-  # Infer K if not provided
   if (is.null(K)) {
     resp <- data[[response_name]]
     non_na <- !is.na(resp)
@@ -127,31 +152,32 @@ parse_bmfrm_formula <- function(formula,
     )
   }
 
-  # Generate model name if not provided
   if (is.null(model_name)) {
-    # Create a hash based on formula and facets
-    facet_string <- paste(c(facets_main, facets_bias), collapse = "_")
+    facet_string <- paste(c(person_facet, facets_main, facets_bias), collapse = "_")
     model_name <- paste0("bmfrm_", substr(digest::digest(facet_string), 1, 8))
   }
-  
-  # Create spec object
+
   spec <- list(
-    response        = response_name,
-    facets_main     = facets_main,
-    facets_bias     = facets_bias,
-    K               = k_info$K,
-    K_by_level      = k_info$K_by_level,
-    K_max           = k_info$K_max,
-    K_heterogeneous = k_info$K_heterogeneous,
-    family          = family,
-    hierarchical    = hierarchical,
-    threshold_facet = threshold_facet,
-    save_gq         = save_gq,
-    formula         = formula,
-    model_name      = model_name,
-    cache_dir       = cache_dir
+    response               = response_name,
+    person_facet           = person_facet,
+    adjust_facets          = adjust_resolved,
+    adjust_facets_explicit = adjust_explicit,
+    facets_main            = facets_main,
+    facets_bias            = facets_bias,
+    K                      = k_info$K,
+    K_by_level             = k_info$K_by_level,
+    K_max                  = k_info$K_max,
+    K_heterogeneous        = k_info$K_heterogeneous,
+    family                 = family,
+    hierarchical           = hierarchical,
+    hierarchical_explicit  = hierarchical_explicit,
+    threshold_facet        = threshold_facet,
+    save_gq                = save_gq,
+    formula                = formula,
+    model_name             = model_name,
+    cache_dir              = cache_dir
   )
-  
+
   class(spec) <- "bmfrm_spec"
   spec
 }
@@ -227,9 +253,6 @@ resolve_category_spec <- function(K,
       )
     }
 
-    # After validating input rubric names against full data, project onto levels
-    # that survive missing-score filtering (for non-factor columns) so uniform
-    # remaining levels (including binary K = 2) normalize to the uniform PCM path.
     active_tf_levels <- tf_levels
     if (isTRUE(drop_na_response_levels) && !is.null(response_name) &&
         response_name %in% names(data) && !is.factor(tf_vec)) {
@@ -317,6 +340,7 @@ print.bmfrm_spec <- function(x, ...) {
   cat("BMFRM Model Specification\n")
   cat("Formula:", deparse(x$formula), "\n")
   cat("Response:", x$response, "\n")
+  cat("Ability facet:", spec_person_facet(x), "\n")
   if (isTRUE(x$K_heterogeneous) && !is.null(x$K_by_level)) {
     cat("Rating categories: heterogeneous by ", x$threshold_facet, " (",
         paste(sprintf("%s=1..%d", names(x$K_by_level), as.integer(x$K_by_level)), collapse = ", "),
@@ -341,38 +365,25 @@ print.bmfrm_spec <- function(x, ...) {
 }
 
 #' Validate bmfrm model specification
-#'
-#' @param spec bmfrm_spec object
-#' @param data data.frame
-#'
-#' @return TRUE if valid (invisibly), otherwise stops with error
 #' @keywords internal
 validate_spec <- function(spec, data) {
-  # Check required facets
-  if (!"person" %in% spec$facets_main) {
-    stop("Model must include 'person' as a main facet")
+  pf <- spec_person_facet(spec)
+  if (!pf %in% spec$facets_main) {
+    stop("Model must include person_facet ('", pf, "') as a main facet")
   }
-  
-  # Check for at least one item-like facet
-  item_facets <- intersect(c("item", "criterion", "task"), spec$facets_main)
-  if (length(item_facets) == 0) {
-    message("Note: No standard item facet found. Make sure you have an appropriate difficulty facet.")
-  }
-  
-  # Validate bias facets reference existing main facets
+
   if (length(spec$facets_bias) > 0) {
     all_bias_components <- unique(unlist(strsplit(spec$facets_bias, ":")))
     missing_components <- setdiff(all_bias_components, spec$facets_main)
     if (length(missing_components) > 0) {
-      stop("Bias facets reference undefined main facets: ", 
+      stop("Bias facets reference undefined main facets: ",
            paste(missing_components, collapse = ", "))
     }
   }
-  
-  # Check data has sufficient observations
+
   if (nrow(data) < 10) {
     warning("Very few observations (", nrow(data), "). Results may be unreliable.")
   }
-  
+
   invisible(TRUE)
 }

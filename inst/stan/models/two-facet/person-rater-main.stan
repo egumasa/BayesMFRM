@@ -1,5 +1,5 @@
-// Rating-scale MFRM with 3 facets:
-// person, rater, scenario
+// Legacy reference Rating-scale MFRM with 2 facets:
+// person, rater (prefer bmfrm() generated models for new analyses)
 data {
   int<lower=1> J_person;         // # persons
   int<lower=1> J_rater;          // # raters
@@ -60,7 +60,7 @@ generated quantities {
   array[N] int<lower=1, upper=K> y_rep;
   vector[N] mu;        // expected score E[Y_n] under actual facets
   vector[N] sigma2;    // model variance Var(Y_n) under actual facets
-  vector[N] mu_fair;   // expected score with "fair" rater & scenario
+    vector[N] mu_fair;   // expected score with "fair" rater = 0
 
   for (n in 1:N) {
     int j = person_id[n];
@@ -75,7 +75,7 @@ generated quantities {
     real ex;
     real ex2;
 
-    // build cumulative logits for rating-scale model
+    // build adjacent-category logits for rating-scale model
     logits[1] = 0;
     for (k in 2:K) {
       logits[k] = logits[k - 1] + eta - tau[k - 1];

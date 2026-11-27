@@ -4,23 +4,17 @@
 \alias{postprocess_bmfrm}
 \title{Post-process bmfrm fit results}
 \usage{
-postprocess_bmfrm(fit, spec, data_info, priors, stan_code, stan_code_hash)
-}
-\arguments{
-\item{fit}{cmdstanr fit object}
-
-\item{spec}{bmfrm_spec object}
-
-\item{data_info}{data preparation results}
-
-\item{priors}{list of priors used}
-
-\item{stan_code}{Stan code string}
-
-\item{stan_code_hash}{hash of Stan code}
-}
-\value{
-bmfrm_fit object
+postprocess_bmfrm(
+  fit,
+  spec,
+  data_info,
+  priors,
+  stan_code,
+  stan_code_hash,
+  rhat_max = 1.01,
+  ess_min = 400,
+  ebfmi_min = 0.3
+)
 }
 \description{
 Post-process bmfrm fit results

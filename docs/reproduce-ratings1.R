@@ -5,7 +5,7 @@
 #   From the repository root: Rscript --vanilla docs/reproduce-ratings1.R [cache_dir] [output_json]
 
 args <- commandArgs(trailingOnly = TRUE)
-cache_dir <- if (length(args) >= 1L) args[1L] else file.path("stan_cache_ratings1")
+cache_dir <- if (length(args) >= 1L) args[1L] else file.path(tempdir(), "stan_cache_ratings1")
 out_json  <- if (length(args) >= 2L) args[2L] else file.path("docs", "ratings1_results.json")
 
 # Match the implementation and templates in this checkout, not an older installed build.
@@ -114,9 +114,9 @@ fit_iso <- bmfrm(
 # 5. Identical diagnostic battery across all 3 models (PPC + facet_fit + residual_cor)
 extract_model_diagnostics <- function(fit_obj, label_str) {
   rt <- facet_summary(fit_obj, "rater")
-  rf <- facet_fit(fit_obj, "rater")
+  rf <- facet_fit(fit_obj, "rater", include_zstd = TRUE)
   it <- facet_summary(fit_obj, "item")
-  if_fit <- facet_fit(fit_obj, "item")
+  if_fit <- facet_fit(fit_obj, "item", include_zstd = TRUE)
   res <- residuals(fit_obj)
   rc <- residual_cor_criteria(res, unit_facets = c("person", "rater"))
   cor_mat <- as.matrix(rc$cor_matrix)
@@ -157,13 +157,13 @@ extract_model_diagnostics <- function(fit_obj, label_str) {
 
   rater_tbl <- as.data.frame(merge(
     rt,
-    rf[, c("label", "n_obs", "infit_msq", "infit_lo", "infit_hi", "infit_zstd",
+    rf[, c("label", "n_obs", "infit_ppp", "outfit_ppp", "infit_msq", "infit_lo", "infit_hi", "infit_zstd",
            "outfit_msq", "outfit_lo", "outfit_hi", "outfit_zstd")],
     by.x = "level", by.y = "label", sort = FALSE
   ))
   item_tbl <- as.data.frame(merge(
     it,
-    if_fit[, c("label", "n_obs", "infit_msq", "infit_lo", "infit_hi", "infit_zstd",
+    if_fit[, c("label", "n_obs", "infit_ppp", "outfit_ppp", "infit_msq", "infit_lo", "infit_hi", "infit_zstd",
                "outfit_msq", "outfit_lo", "outfit_hi", "outfit_zstd")],
     by.x = "level", by.y = "label", sort = FALSE
   ))
