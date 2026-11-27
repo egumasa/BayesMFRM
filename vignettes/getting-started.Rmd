@@ -241,6 +241,90 @@ For uncertainty across calibrations, use `test_information(fit, plan, grid[, 1])
 The mirt bank contains a synthetic response template for the declared rubric
 categories. Observed-data diagnostics such as infit use the original fit.
 
+### Is B's effect on Structure negligible? Did the ratings change our evidence?
+
+Suppose an assessment team considers a criterion-by-rater interaction within
+±0.3 logits small enough to tolerate. Choose that margin from the consequences
+for scoring before inspecting the ratings. If the team uses a tolerance in
+score-probability points, evaluate that quantity with `category_contrast()`.
+Here the target is B's extra leniency or severity on Structure, in logits.
+The example fits the same 216 ratings with 40,000 post-warmup draws across
+four chains to estimate densities. The earlier sign summaries use 4,000 draws.
+
+```{r writing-evidence-code, eval=FALSE}
+# Requires CmdStan, bayestestR and logspline
+source(system.file("examples", "evidence-writing.R", package = "BayesMFRM"))
+```
+
+| Question | Method | Result for Structure scored by B |
+| --- | --- | --- |
+| Which effects have high posterior density? | 95% highest density interval (HDI) | −0.08 to +0.54 logits. Zero and some effects above +0.3 are plausible. |
+| How probable is a negligible effect? | ROPE mass using all draws (`rope(..., ci = 1)`) | 68.3% inside the margin, up from 63.2% under the prior. |
+| Can the team declare practical equivalence? | `equivalence_test(..., ci = 0.95, ci_method = "HDI")` | Undecided. The HDI overlaps the margin and extends beyond +0.3. An HDI fully inside supports equivalence under this rule. An HDI entirely outside rejects equivalence. |
+| Which effects gained support? | 1-support interval (`si(..., BF = 1)`) | Approximately +0.04 to +0.54 logits. Here the posterior density equals or exceeds the prior density. The threshold specifies a density ratio and implies no fixed posterior coverage. |
+| Did the ratings favor a freely varying effect over exactly zero? | Point-null BF, unrestricted / zero | 1.33. The density at zero decreased slightly. |
+| Did the ratings favor a practically important effect? | Interval BF, outside / inside the ROPE | 0.80, or 1.25 in favor of the inside. The change in odds is small. |
+
+```{r writing-evidence-figure, echo=FALSE, out.width="100%", fig.alt="Prior and posterior densities for the Structure-by-B interaction. The posterior is higher around positive effects, while its 95 percent HDI spans zero and crosses the upper ROPE boundary."}
+knitr::include_graphics(system.file("help", "figures", "writing-evidence.png",
+                                    package = "BayesMFRM"))
+```
+
+Zero lies inside the 95% HDI even though its density fell after observing the
+ratings. The interval BF answers a different question again. Dividing the
+posterior outside/inside odds (0.317/0.683) by the prior odds (0.368/0.632)
+gives about 0.80. Thus a small positive effect can gain support while the
+practical-equivalence decision remains open.
+
+The zero-sum constraints matter for the Bayes factors. The fitted Gaussian SD
+of 0.5 belongs to the four independent contrasts in the three-by-three
+interaction. Each cell has marginal prior SD
+$0.5\sqrt{(1-1/3)(1-1/3)}=1/3$. The script uses quantiles of this cell prior.
+For a hierarchical or local-shrinkage prior, obtain the corresponding cell
+from the parameter draws of `pp_bmfrm()` with the fitted priors, hierarchy,
+rubric and facet labels. A point-null Savage–Dickey comparison conditions the
+other parameters' priors on this one cell being zero. All nine cells share
+constraints. Removing the whole interaction sets four independent contrasts to
+zero. Density estimation also affects the last digits, especially in tails.
+[Single-parameter Bayes factors](https://easystats.github.io/bayestestR/reference/bayesfactor_parameters.html)
+and [support intervals](https://easystats.github.io/bayestestR/reference/si.html).
+
+### Does the evidence favor one model, and which model predicts better?
+
+In the writing example, consider two **whole models** with the same interaction.
+They differ only in its Gaussian raw SD, 0.5 or $0.5/\sqrt{1.25}$ (about 0.447).
+Under the original posterior, averaging the ratio of the **normalized joint
+prior densities** on the four contrasts estimates the marginal likelihood
+ratio, tighter / original. The script gives **0.183** (Monte Carlo SE 0.0005),
+or about 5.5 to 1 in favor of the original scale. A reverse calculation using
+the tighter-prior refit in Section 7 gives 0.179 in the same orientation. The
+ratio is bounded in the forward direction for this tighter Gaussian prior.
+This calculation applies to this prior change and common likelihood. A general
+marginal-likelihood interface for arbitrary `bmfrm_fit` pairs is unavailable.
+
+For prediction, first specify who or what will be new. In `sirt::data.ratings1`
+(135 examinees, 1,370 ratings), adding a Gaussian criterion-by-rater interaction
+to the main-effects model increased expected log predictive density (ELPD).
+Leaving out one rating at known facet levels gave a gain of **30.8 nats**
+(paired SE 8.7, after an exact refit of the high Pareto-$k$ case). Holding out
+whole examinees in five shared folds and scoring each examinee's ratings
+jointly gave a gain of **28.9 nats** (paired SE 7.4). Yet the RMS change in
+standardized fair scores was only **0.009 points** on the 1–4 scale. Better
+prediction can matter for rater feedback even when fair scores barely move.
+
+```{r evidence-predictive-comparison, eval=FALSE}
+# Given two converged fits on identical ratings in the same row order
+compare_bmfrm(main = loo::loo(fit_main), interaction = loo::loo(fit_interaction))
+cv_main <- cv_bmfrm(fit_main, target = "person", K_folds = 5, M = 300, seed = 42)
+cv_int <- cv_bmfrm(fit_interaction, target = "person", folds = cv_main$folds,
+                   M = 300, seed = 42)
+compare_bmfrm(main = cv_main, interaction = cv_int, score = "group")
+```
+
+Compare ELPD differences and their paired uncertainty within each prediction
+target. A Bayes factor instead uses the probability of the observed data under
+each model's priors. [Predictive comparison with loo](https://mc-stan.org/loo/reference/loo_compare.html).
+
 The six-category assessment below shows the full workflow, starting with the
 rating plan.
 

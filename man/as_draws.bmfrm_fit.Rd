@@ -23,6 +23,12 @@ chain and iteration identifiers. Use the facet labels to interpret indices.
 Pass the fit to \code{tidybayes::spread_draws()} for long-format draws, or pass
 the selected draws to bayestestR for parameter-wise summaries.
 }
+\details{
+For HDIs, ROPE decisions, support intervals and Bayes factors, see
+\code{system.file("examples", "evidence-writing.R", package = "BayesMFRM")}.
+The example matches the prior to the constrained interaction cell. For
+held-out predictive comparisons of whole models, see \code{\link[=compare_bmfrm]{compare_bmfrm()}}.
+}
 \examples{
 \donttest{
 if (check_cmdstan()) {

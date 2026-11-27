@@ -2,6 +2,8 @@
 
 ## 0.1.0.9008 (Development)
 
+- Added a writing-assessment example for HDIs, support intervals, ROPE decisions and Bayes factors. The vignette compares the evidence for one interaction with evidence for a prior scale and with held-out predictive accuracy.
+
 - Added `pp_bmfrm()` as a short name for `prior_predict_bmfrm()`. The writing vignette shows how to visualize criterion-by-rater draws with tidybayes and quantify their direction and practical equivalence with bayestestR.
 
 - Interaction flags now require a rating and confirmed likelihood identification with either screening rule. An observed cell with an unchecked design has `flag_bias = "identification_unchecked"` and `bfdr = NA`. Cells without ratings are always labeled `"unobserved_cell"`.

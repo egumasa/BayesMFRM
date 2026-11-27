@@ -106,9 +106,11 @@ numbers of ratings per examinee.
 | --- | --- |
 | How does rater severity vary across posterior draws? | `posterior::as_draws(fit, variables = "rater")` retains the chains and iterations. Use `tidybayes::spread_draws(fit, rater[r])` for one row per draw and rater. |
 | Is a criterion-by-rater effect large enough to matter? | Give `posterior::as_draws(fit, variables = "itemrater")` to `bayestestR::p_direction()` for sign certainty or `bayestestR::rope(..., range = c(-0.3, 0.3), ci = 1)` for the mass within a chosen logit margin. [View the labeled tidybayes distributions](man/figures/writing-interaction-rope.png). |
+| Did the ratings increase support for a practically negligible interaction? | For B scoring Structure, the probability inside ±0.3 logits rose from 63.2% to 68.3%. The 95% HDI crosses the upper margin, so equivalence remains undecided. The [runnable bayestestR example](inst/examples/evidence-writing.R) and [prior and posterior density plot](man/figures/writing-evidence.png) show the support interval and Bayes factors for point and interval hypotheses. |
 | How sensitive are the conclusions to interaction shrinkage? | The optional **priorsense** example scales the interaction prior and rating likelihood separately. It reports changes in bias, rater severity and information, with Pareto diagnostics. [View the sensitivity curves](man/figures/writing-power-sensitivity.png). |
 | Where is this particular rating plan informative? | `as_mirt(fit, plan, draw = 1L)` gives an optional **mirt** item bank. Use `mirt::testinfo()` for the plan or `mirt::probtrace()` on an individual rating. |
-| Does the model reproduce the ratings or predict held-out ratings? | `bayesplot::pp_check(fit)` draws replicated ratings. `loo::loo(fit)` estimates leave-one-rating-out predictive accuracy. |
+| Does the model reproduce the observed ratings? | `bayesplot::pp_check(fit)` compares replicated ratings with the observed scores. |
+| Does an interaction improve prediction? | Use `compare_bmfrm()` on `loo::loo()` results for another rating at known facet levels, or on matched person-fold `cv_bmfrm()` results for a new examinee. [Worked model comparison with 1,370 ratings](docs/model-comparison-ratings1.md). |
 | How can I customize the maps? | The native figures return **ggplot2** objects. The vignette shows how to supply person measures and adjacent thresholds to **WrightMap**. |
 
 The mirt bank preserves the selected draw's logit scale, including the rater,

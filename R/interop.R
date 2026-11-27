@@ -4,6 +4,10 @@
 #' chain and iteration identifiers. Use the facet labels to interpret indices.
 #' Pass the fit to `tidybayes::spread_draws()` for long-format draws, or pass
 #' the selected draws to bayestestR for parameter-wise summaries.
+#' @details For HDIs, ROPE decisions, support intervals and Bayes factors, see
+#' `system.file("examples", "evidence-writing.R", package = "BayesMFRM")`.
+#' The example matches the prior to the constrained interaction cell. For
+#' held-out predictive comparisons of whole models, see [compare_bmfrm()].
 #'
 #' @param x A fitted `bmfrm_fit`.
 #' @param ... Arguments to the CmdStan fit's `$draws()` method. For example,

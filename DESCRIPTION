@@ -42,6 +42,7 @@ Suggests:
     renv,
     corrplot,
     bayestestR,
+    logspline,
     mirt,
     priorsense,
     tidybayes,
