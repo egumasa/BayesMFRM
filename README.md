@@ -106,9 +106,26 @@ specified score and ability. [View the contrast across abilities](man/figures/wr
   Compare each point with that rater's replicated fit range.
   [View the Pathway map](man/figures/writing-pathway-map.png).
 
-Each plot is a ggplot2 object. Use `category_thresholds()` for a table of
+The curve, Wright and Pathway plots return ggplot2 objects. Use `category_thresholds()` for a table of
 crossings, including item-specific rubrics. The getting-started vignette shows
 how to pass these thresholds to WrightMap.
+
+### What happens to the score probabilities if this rating becomes more severe?
+
+```r
+profile <- data.frame(item = "Content", rater = "A")
+plot(fit, type = "surface", newdata = profile)  # one surface per rubric score
+s <- category_surfaces(fit, profile, theta = 0, severity_shift = c(0, 1))
+subset(s, category == 4, select = c(severity_shift, probability, lower, upper))
+```
+
+For a writer at ability zero, the chance of a 4 is **60.2%** under the fitted
+profile. It falls to **30.1%** if all adjacent thresholds move up by one logit
+while the criterion and its interaction with A stay fixed. The zero-shift
+slice reproduces the ordinary category curves. The panels share one
+probability scale. [Rotate the surfaces with the optional plotly example](inst/examples/category-surface-widget.R).
+
+![Four surfaces showing how the probability of each writing score varies with ability and a hypothetical severity shift for Content rated by A.](man/figures/writing-category-surfaces.png)
 
 ### Can we distinguish the three raters' severities?
 

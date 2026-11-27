@@ -78,6 +78,6 @@ if (check_cmdstan()) {
 }
 }
 \seealso{
-\code{\link[=plot_category_curves]{plot_category_curves()}}, \code{\link[=category_contrast]{category_contrast()}}, \code{\link[=plot_wright_map]{plot_wright_map()}},
+\code{\link[=plot_category_curves]{plot_category_curves()}}, \code{\link[=category_surfaces]{category_surfaces()}}, \code{\link[=category_contrast]{category_contrast()}}, \code{\link[=plot_wright_map]{plot_wright_map()}},
 \code{\link[=predict.bmfrm_fit]{predict.bmfrm_fit()}}
 }

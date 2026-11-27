@@ -2,6 +2,11 @@
 
 ## 0.1.0.9008 (Development)
 
+- `category_surfaces()` computes posterior category probabilities over ability
+  and a hypothetical severity shift. `plot(fit, type = "surface", newdata = ...)`
+  displays each supported score on a common 0–1 colour scale. The writing
+  example includes an optional rotatable plotly view.
+
 - `plot(fit)` draws facet intervals. Wright maps, category curves and
   Pathway maps are available through its `type` argument. `coef()` and
   `confint()` report posterior means and equal-tailed credible intervals.

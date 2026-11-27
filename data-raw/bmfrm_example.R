@@ -32,6 +32,9 @@ grDevices::png("man/figures/writing-facet-estimates.png", width = 1080, height =
 plot(fit)
 grDevices::dev.off()
 on_content <- data.frame(item = "Content", rater = c("A", "B"))
+grDevices::png("man/figures/writing-category-surfaces.png", width = 1320, height = 990, res = 135)
+plot(fit, type = "surface", newdata = on_content[1L, , drop = FALSE])
+grDevices::dev.off()
 at_A <- data.frame(item = items, rater = "A")
 figures <- list("category-curves" = plot_category_curves(fit, on_content),
                 "category-contrast" = plot_category_contrast(fit, on_content, margin_pp = 5),

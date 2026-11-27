@@ -829,6 +829,36 @@ test_that("mixed-rubric curves and ridges agree with independently indexed adjac
   }
 })
 
+test_that("category surfaces preserve each rubric and shift its fitted curves in logits", {
+  fit <- make_mock_hetero_pcm_fit(include_bias = TRUE)
+  profiles <- data.frame(item = c("I1", "I2", "I3"), rater = "R1")
+  dat <- category_surfaces(fit, profiles, theta = c(1, 0, 1),
+                           severity_shift = c(1, 0, -1), ci_level = 0.8)
+  expect_equal(nrow(dat), 2L * 3L * (2L + 4L + 6L))
+  totals <- with(dat, tapply(probability, list(theta, severity_shift, profile), sum))
+  expect_equal(as.numeric(totals), rep(1, length(totals)), tolerance = 1e-12)
+  for (s in c(-1, 0, 1)) {
+    slice <- dat[dat$severity_shift == s, ]
+    ref <- category_curves(fit, profiles, theta = 0:1 - s, ci_level = 0.8)
+    ref <- ref[order(ref$profile, ref$category, ref$theta), ]
+    expect_equal(slice$theta, ref$theta + s)
+    expect_equal(slice[names(ref)[names(ref) != "theta"]], ref[names(ref) != "theta"])
+  }
+  top <- subset(dat, profile == 3 & category == 6 & theta == 0)
+  expect_true(all(diff(top$probability) < 0))
+
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off())
+  g <- withVisible(plot(fit, type = "surface", newdata = profiles, category = 4,
+                        theta = 0:1, severity_shift = 0:1))
+  expect_false(g$visible)
+  expect_s3_class(g$value, "trellis")
+  expect_length(g$value$panel.args, 2L)
+  expect_error(plot_category_surfaces(fit, profiles, 0:1, 0:1, category = 7), "supported")
+  expect_error(plot_category_surfaces(fit, profiles, 0:1, 0), "two distinct")
+  expect_error(category_surfaces(fit, profiles, 0, Inf), "severity_shift")
+})
+
 test_that("category contrasts respect mixed rubrics and count retained profile ratings", {
   base <- make_mock_hetero_pcm_fit()
   d <- base$data_info$data_clean

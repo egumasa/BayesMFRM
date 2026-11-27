@@ -7,14 +7,16 @@
 #' with a practical threshold, use [plot_bias()].
 #' @param x A fitted `bmfrm_fit` model.
 #' @param type `"intervals"` (default), `"wright"` for the ridgeline Wright
-#'   map, `"category"` for category characteristic curves, or `"pathway"`
+#'   map, `"category"` for category characteristic curves, `"surface"` for
+#'   coloured category surfaces over ability and severity shift, or `"pathway"`
 #'   for measures against infit or outfit.
 #' @param ... For `"intervals"`, supply `facet` (one or more main facets or
-#'   interactions) and optionally `ci_level`. For `"wright"` and `"category"`,
+#'   interactions) and optionally `ci_level`. For `"wright"`, `"category"`, and `"surface"`,
 #'   supply `newdata` with the facet profiles to display. For `"pathway"`,
 #'   specify one main `facet`. Further arguments are passed to
-#'   [plot_wright_map()], [plot_category_curves()] or [plot_pathway_map()].
-#' @return Draws the plot and invisibly returns its ggplot object for reuse.
+#'   [plot_wright_map()], [plot_category_curves()], [plot_category_surfaces()] or [plot_pathway_map()].
+#' @return Draws the plot and invisibly returns it for reuse. Surface plots are
+#'   lattice `trellis` objects. Other types are ggplot objects.
 #' @examples
 #' \donttest{
 #' if (check_cmdstan()) {
@@ -27,11 +29,12 @@
 #' }
 #' }
 #' @export
-plot.bmfrm_fit <- function(x, type = c("intervals", "wright", "category", "pathway"), ...) {
+plot.bmfrm_fit <- function(x, type = c("intervals", "wright", "category", "pathway", "surface"), ...) {
   p <- switch(match.arg(type),
               intervals = bmfrm_interval_plot(x, ...),
               wright = plot_wright_map(x, ...),
               category = plot_category_curves(x, ...),
+              surface = plot_category_surfaces(x, ...),
               pathway = plot_pathway_map(x, ...))
   print(p)
   invisible(p)

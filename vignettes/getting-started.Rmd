@@ -123,6 +123,33 @@ At zero logits, the posterior mean probability of a 4 is 0.602 with A
 The bands describe uncertainty about each category probability at each
 ability. A new rating is a single integer from 1 to 4.
 
+#### Read a category probability surface
+
+Hold Content and rater A fixed. Each surface represents one possible score.
+Read along the ability axis at zero severity shift to recover A's category
+curve. Moving along the other axis asks what would happen if all adjacent
+thresholds for this profile increased or decreased together. Positive shifts
+mean stricter scoring. Score 4 becomes less likely as severity increases.
+Scores 2 and 3 reach their highest probability in the middle of the effective
+ability range, giving their surfaces ridges.
+
+```{r writing-surface, echo=FALSE, out.width="100%", fig.alt="Four coloured surfaces for Content rated by A. Scores 2 and 3 form ridges. Score 4 is most probable at high ability and low severity."}
+knitr::include_graphics(system.file("help", "figures", "writing-category-surfaces.png",
+                                    package = "BayesMFRM"))
+```
+
+```{r writing-surface-code, eval=FALSE}
+profile <- data.frame(item = "Content", rater = "A")
+plot(fit, type = "surface", newdata = profile)
+s <- category_surfaces(fit, profile, theta = 0, severity_shift = c(0, 1))
+subset(s, category == 4, select = c(severity_shift, probability, lower, upper))
+```
+
+At ability zero, the posterior mean chance of a 4 falls from 0.602 (95%
+credible interval 0.450–0.746) to 0.301 (0.161–0.473) for a one-logit
+increase in severity. The change is hypothetical. To compare A with an
+observed rater B, use B's own fitted main effect and interaction as below.
+
 #### How similar are the two raters' score probabilities?
 
 Subtract B's probability from A's within each posterior draw. Pairing the

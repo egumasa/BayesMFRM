@@ -32,6 +32,7 @@ Imports:
     matrixStats,
     bayesplot,
     ggplot2 (>= 3.4.0),
+    lattice,
     loo,
     stats,
     utils,
@@ -47,6 +48,7 @@ Suggests:
     mirt,
     priorsense,
     tidybayes,
+    plotly,
     knitr,
     rmarkdown
 VignetteBuilder: knitr

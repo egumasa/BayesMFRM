@@ -4,23 +4,25 @@
 \alias{plot.bmfrm_fit}
 \title{Plot a fitted many-facet Rasch model}
 \usage{
-\method{plot}{bmfrm_fit}(x, type = c("intervals", "wright", "category", "pathway"), ...)
+\method{plot}{bmfrm_fit}(x, type = c("intervals", "wright", "category", "pathway", "surface"), ...)
 }
 \arguments{
 \item{x}{A fitted \code{bmfrm_fit} model.}
 
 \item{type}{\code{"intervals"} (default), \code{"wright"} for the ridgeline Wright
-map, \code{"category"} for category characteristic curves, or \code{"pathway"}
+map, \code{"category"} for category characteristic curves, \code{"surface"} for
+coloured category surfaces over ability and severity shift, or \code{"pathway"}
 for measures against infit or outfit.}
 
 \item{...}{For \code{"intervals"}, supply \code{facet} (one or more main facets or
-interactions) and optionally \code{ci_level}. For \code{"wright"} and \code{"category"},
+interactions) and optionally \code{ci_level}. For \code{"wright"}, \code{"category"}, and \code{"surface"},
 supply \code{newdata} with the facet profiles to display. For \code{"pathway"},
 specify one main \code{facet}. Further arguments are passed to
-\code{\link[=plot_wright_map]{plot_wright_map()}}, \code{\link[=plot_category_curves]{plot_category_curves()}} or \code{\link[=plot_pathway_map]{plot_pathway_map()}}.}
+\code{\link[=plot_wright_map]{plot_wright_map()}}, \code{\link[=plot_category_curves]{plot_category_curves()}}, \code{\link[=plot_category_surfaces]{plot_category_surfaces()}} or \code{\link[=plot_pathway_map]{plot_pathway_map()}}.}
 }
 \value{
-Draws the plot and invisibly returns its ggplot object for reuse.
+Draws the plot and invisibly returns it for reuse. Surface plots are
+lattice \code{trellis} objects. Other types are ggplot objects.
 }
 \description{
 The default interval plot shows the same main effects as \code{\link[=tab_bmfrm]{tab_bmfrm()}}.

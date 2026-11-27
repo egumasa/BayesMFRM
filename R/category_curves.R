@@ -28,7 +28,7 @@
 #'   `from`, `to`, and posterior `median`, `lower`, `upper` in logits.
 #'   Both tables can be used directly with ggplot2 or exported with
 #'   `utils::write.csv()`.
-#' @seealso [plot_category_curves()], [category_contrast()], [plot_wright_map()],
+#' @seealso [plot_category_curves()], [category_surfaces()], [category_contrast()], [plot_wright_map()],
 #'   [predict.bmfrm_fit()]
 #' @examples
 #' \donttest{
@@ -77,9 +77,10 @@ category_curves <- function(object, newdata, theta = seq(-4, 4, length.out = 81)
   add_curve_profile_levels(dplyr::bind_rows(tables), newdata)
 }
 
-bmfrm_curve_grid <- function(theta) {
+bmfrm_curve_grid <- function(theta, name = "theta") {
   if (!is.numeric(theta) || !is.null(dim(theta)) || !length(theta) || any(!is.finite(theta))) {
-    stop("theta must be a nonempty vector of finite abilities")
+    unit <- if (name == "theta") "abilities" else "severity shifts"
+    stop(name, " must be a nonempty vector of finite ", unit)
   }
   sort(unique(theta))
 }
