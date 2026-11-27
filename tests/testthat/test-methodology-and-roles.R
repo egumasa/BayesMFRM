@@ -174,8 +174,8 @@ test_that("summarise_bias excludes zero-observation cells from BFDR/flags and ho
   expect_equal(cell_33$flag_bias, "unobserved_cell")
   expect_true(is.na(cell_33$bfdr))
   expect_equal(cell_33$decision_status, "unobserved_cell")
-  # Observed cells with strong signal are flagged under BFDR without (I3, R3) polluting the set
-  expect_equal(sb$flag_bias[sb$item == "I1" & sb$rater == "R1"], "positive_bias")
+  expect_true(all(sb$flag_bias[sb$n_observations > 0] == "identification_unchecked"))
+  expect_true(all(is.na(sb$bfdr)))
 
   # Case B: with design check attached, rank-deficient cells get "not_likelihood_identified" and NA bfdr
   obj_dc <- obj_nodc; obj_dc$design <- dc

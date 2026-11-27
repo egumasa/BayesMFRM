@@ -94,8 +94,9 @@ read output CSVs. Use \code{save_gq = "minimal"} (default) to keep CSVs compact.
 \item{seed}{Optional integer RNG seed (\code{NULL} runs fresh random chains).}
 
 \item{hierarchical}{Character vector of hierarchical facets/terms. Defaults to
-\code{person_facet} (empirical/Bayesian partial pooling of examinee abilities,
-matching MML-EAP); pass \code{character(0)} for unpooled fixed-scale priors.}
+\code{person_facet}. Ability estimates borrow information across people, and
+posterior draws propagate uncertainty in their population mean and SD.
+Pass \code{character(0)} for independent fixed-scale priors.}
 
 \item{obs_id}{Optional column name or length-\code{nrow(data)} vector of unique
 observation IDs for model-comparison alignment across missing-score filtering.}
@@ -108,10 +109,33 @@ observation IDs for model-comparison alignment across missing-score filtering.}
 \code{adapt_delta = 0.95}, \code{max_treedepth = 12}).}
 }
 \value{
-A \code{bmfrm_fit} object.
+A \code{bmfrm_fit}. Inspect \code{fit$design$identifiable} for separation of
+facet effects by the rating plan and \code{fit$convergence} for sampler checks.
+\code{\link[=facet_summary]{facet_summary()}} reports parameter estimates, \code{\link[=fair_scores]{fair_scores()}} returns
+expected rubric scores, and \code{\link[=summarise_bias]{summarise_bias()}} examines an interaction.
 }
 \description{
 Fits Rating Scale Models (RSM) or Partial Credit Models (PCM) with arbitrary
 main facets, hierarchical partial pooling, and two-way interactions (including
 Student-t and regularized horseshoe local shrinkage) via CmdStan.
+}
+\examples{
+data(bmfrm_example)
+ratings <- bmfrm_example$ratings
+model <- score ~ person + item + rater + item:rater
+check_design_bmfrm(model, ratings, K = 4)$identifiable
+# The stored fit summaries can be explored before installing CmdStan.
+plot_bias(bmfrm_example$bias)
+\donttest{
+if (check_cmdstan()) {
+  fit <- bmfrm(model, ratings, K = 4, design_check = "error",
+               seed = 2409, chains = 4, cores = 2, iter = 2000, adapt_delta = 0.95,
+               cpp_options = list(PRECOMPILED_HEADERS = "false"))
+  print(fit)
+  facet_summary(fit, "rater")       # Positive severity lowers expected scores.
+  head(fair_scores(fit, standardize = TRUE))
+  facet_fit(fit, "rater")
+  plot_bias(summarise_bias(fit, "item:rater", delta = 0.3))
+}
+}
 }

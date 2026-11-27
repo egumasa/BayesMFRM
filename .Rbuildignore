@@ -19,3 +19,4 @@
 ^\.playwright-mcp$
 ^\.DS_Store$
 ^\.github$
+^data-raw$

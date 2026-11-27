@@ -23,6 +23,31 @@ This vignette walks through a complete Bayesian Many-Facet Rasch Model (MFRM) wo
 
 ---
 
+## Reading an interaction plot
+
+In a simulated four-category writing assessment, 36 writers received six
+ratings each. The fit summaries are distributed with the package. The plot
+and table below use that fit and run without CmdStan.
+
+```{r writing-intervals, fig.width=7, fig.height=4.4, fig.alt="Interaction estimates with 95 percent intervals. A rates Content more generously and Evidence more severely, and B shows the reverse pattern. Four of nine cells are flagged."}
+library(BayesMFRM)
+data(bmfrm_example)
+b <- bmfrm_example$bias
+plot_bias(b)
+b[b$flag_bias == "positive_bias",
+  c("level1", "level2", "n_observations", "bias_mean", "bfdr")]
+```
+
+For A on Content, the estimated interaction is +1.12 logits (95% credible
+interval 0.76 to 1.49). A positive interaction raises expected ratings relative
+to what the writer, criterion and rater main effects predict. Dashed lines mark
+the practical threshold. The filled symbol reports the BFDR selection across
+eligible cells. To focus on one rater while retaining the original comparison
+across nine cells, use `plot_bias(b[b$level2 == "A", ])`.
+
+The six-category assessment below shows the full workflow, starting with the
+rating plan.
+
 ## 1. Study Context & Model Specification Choices
 
 Suppose we analyze an analytic speaking assessment with:
@@ -39,9 +64,9 @@ Suppose we analyze an analytic speaking assessment with:
 | Option | Choices & Default | Rationale & Assumptions |
 | --- | --- | --- |
 | `K` | Scalar integer `>= 2` or named vector (PCM) | **Always pass `K` explicitly.** Omitting `K` infers `max(score)` from observed data (emitting a message), which silently drops unobserved top categories and alters the probability model. |
-| `family` | `"rsm"` (default) vs `"pcm"` | `"rsm"` shares category step widths across all items; `"pcm"` (`threshold_facet = "item"`) allows item-specific step widths (including heterogeneous `K`). Include `"tau"` in `hierarchical` for partial pooling toward common steps (`tau_common`). |
+| `family` | `"rsm"` (default) vs `"pcm"` | `"rsm"` shares category step widths across all items; `"pcm"` (`threshold_facet = "item"`) allows item-specific step widths (including heterogeneous `K`). With equal category counts, include `"tau"` in `hierarchical` for partial pooling toward common steps (`tau_common`). |
 | `person_facet` & `adjust_facets` | `"person"` (default); `NULL` (auto `"rater"`/`"interlocutor"`) | Declares the unconstrained ability facet and the nuisance facets set to zero in `fair_scores()`. |
-| `hierarchical` | `person_facet` (default) vs `character(0)` or `c("person", "rater", "item:rater", "tau")` | Default `person_facet` partially pools examinee abilities (matching MML-EAP). Add `"rater"` or `"item:rater"` when pooling across raters/cells is appropriate; when $R \le 5$, compare against fixed marginal priors to check funnel sensitivity. |
+| `hierarchical` | `person_facet` (default) vs `character(0)` or `c("person", "rater", "item:rater", "tau")` | Default `person_facet` partially pools examinee abilities, with uncertainty in the population mean and SD. Add `"rater"` or `"item:rater"` when pooling across raters/cells is appropriate; when $R \le 5$, compare against fixed marginal priors to check funnel sensitivity. |
 | `scale` in `prior()` | `"raw"` (default) vs `"marginal"` | Under sum-to-zero constraints on $J$ levels, `"raw"` sets the pre-centering SD (induced marginal SD is $\sigma\sqrt{1 - 1/J}$). `"marginal"` keeps each level's post-centering SD equal to $\sigma$ regardless of $J$. |
 | `local_shrinkage` | `"none"` (default), `"student_t"`, `"horseshoe"` | Shrinkage structure for hierarchical 2-way interactions. `"none"` shrinks isotropically; `"student_t"` (`scale = "marginal"`) provides heavier tails at the same cell SD; `"horseshoe"` (`scale = "raw"`, configurable `slab_df` and `slab_scale`) concentrates mass near zero while preserving large deviations. Note that local shrinkage precedes double centering $B = P_1 U P_2$, so large sparse deviations induce small centering offsets in neighboring cells. |
 | `flag_method` & `delta` | `flag_method = "bfdr"` (default, `fdr_thresh = 0.05`), `delta = 0` | Flags observed, likelihood-identified cells with Bayesian expected FDR $\le 0.05$ beyond practical logit threshold `delta` (cells with `n_observations == 0` are marked `"unobserved_cell"` and excluded). |
@@ -226,7 +251,7 @@ MCMC Convergence:
 Next steps (in priority order):
   1. Design & convergence : summary(fit)
   2. Calibrated fit (PPP) : facet_fit(fit, "item"), bayesplot::pp_check(fit, group = "item")
-  3. Substantive outputs  : fair_scores(fit, standardize = TRUE), summarise_bias(fit, delta = 0.25)
+  3. Substantive outputs  : fair_scores(fit, standardize = TRUE)
 ```
 
 Verbatim `summary(fit_rsm, facets = c("item", "rater"))` output:
@@ -291,7 +316,7 @@ Evaluate every fitted model strictly in the following order:
 | **1. Identification** | `fit$design`, `likelihood_identified` | Fix confounded rating blocks or restrict claims strictly to identified contrasts. | *"$\hat{R} = 1.00$ means all facets are identified."* (Proper priors guarantee a posterior even on rank-deficient designs.) |
 | **2. Computation** | `summary(fit)` ($\hat{R} < 1.01$, ESS $\ge 400$, 0 divergences, E-BFMI $\ge 0.3$) | Raise `adapt_delta` (`0.98`–`0.995`), increase `iter`, or tighten diffuse priors. (`max_treedepth` hits indicate efficiency, not bias.) | *"Chains converged, so the RSM fits our rubric."* (Convergence verifies HMC integration only.) |
 | **3. Calibrated Fit** | `facet_fit()` (`infit_ppp`, `outfit_ppp`), `bayesplot::pp_check()`, `residual_cor_criteria()` | Inspect extreme `PPP` values (`< 0.025` noisy underfit; `> 0.975` muted overfit); consider PCM or interactions if rater/item distributions misfit. | Applying `|ZSTD| > 2` to raw posterior MSQ on small `n_obs` (posterior parameter variance inflates realized MSQ above `1.0`; use `PPP`). |
-| **4. Substantive** | `fair_scores(..., standardize = TRUE)`, `summarise_bias(..., delta = 0.3)` | Check `identification_basis`, `n_observations`, `bfdr`, `decision_stable`, and prior sensitivity. | Treating a bias flag as an automatic rule to discard a rater without checking `delta`, cell count, and rater-training context. |
+| **4. Substantive** | `fair_scores(..., standardize = TRUE)`, `summarise_bias(..., delta = 0.3)` | Check `identification_basis`, `n_observations`, `bfdr`, `prob_threshold_stable`, and prior sensitivity. | Treating a bias flag as an automatic rule to discard a rater without checking `delta`, cell count, and rater-training context. |
 
 ```{r postprocessing-code, eval = FALSE}
 # 1. Conditional posterior predictive check by rater (note explicit bayesplot:: namespace)
@@ -374,14 +399,14 @@ fit_st  <- bmfrm(score ~ person + item + rater + item:rater, ratings, K = 6,
 bias_iso <- summarise_bias(fit_iso, "item:rater", delta = 0.3)
 bias_st  <- summarise_bias(fit_st,  "item:rater", delta = 0.3)
 head(bias_iso[, c("item", "rater", "n_observations", "bias_mean", "ci_lower",
-                  "ci_upper", "prob_gt_delta", "bfdr", "flag_bias", "decision_stable")], 6)
+                  "ci_upper", "prob_gt_delta", "bfdr", "flag_bias", "prob_threshold_stable")], 6)
 ```
 
 Verbatim `head(bias_iso, 6)` output on our null-interaction dataset (correctly finding `no_clear_bias` with high `bfdr` across all cells):
 
 ```text
 # A tibble: 6 x 10
-  item  rater n_observations bias_mean ci_lower ci_upper prob_gt_delta  bfdr flag_bias     decision_stable
+  item  rater n_observations bias_mean ci_lower ci_upper prob_gt_delta  bfdr flag_bias     prob_threshold_stable
   <chr> <chr>          <int>     <dbl>    <dbl>    <dbl>         <dbl> <dbl> <chr>         <lgl>          
 1 I01   R01               14    0.0786   -0.208    0.554       0.113   0.850 no_clear_bias TRUE           
 2 I02   R01               14    0.0862   -0.187    0.547       0.109   0.856 no_clear_bias TRUE           
@@ -391,7 +416,7 @@ Verbatim `head(bias_iso, 6)` output on our null-interaction dataset (correctly f
 6 I02   R02               12   -0.131    -0.655    0.128       0.00175 0.818 no_clear_bias NA             
 ```
 
-`decision_stable` checks whether the chain-aware band `probability +/- 2 * MCSE` lies wholly on one side of `prob_thresh` (`NA` on row 6 indicates a chain with zero indicator variance where `prob_gt_delta` is near `0`). Note that `stable_no_clear_bias` means the non-detection is numerically stable across MCMC draws, **not** proof that true interaction bias equals zero, and cells with `n_observations == 0` are automatically marked `"unobserved_cell"` and excluded from `bfdr`.
+Read `flag_bias` with `flag_method`, the cell count and its likelihood identification. With BFDR, `decision_stable` is `NA`: the stability of the selected set has not been estimated. Separately, `prob_threshold_stable` checks whether Monte Carlo error leaves the single-cell probability on a clear side of `prob_thresh`. In row 6 the indicator was constant within a chain, so its error could not be estimated. Unobserved cells and cells with unknown or failed identification all have a withheld flag and `bfdr = NA`.
 
 ---
 

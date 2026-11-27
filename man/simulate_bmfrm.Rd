@@ -43,8 +43,8 @@ labels. Hierarchical interactions also require sigma_<interaction_name>.}
 \code{"person"} (classes \code{"mean"} and \code{"sd"} with \code{facet = "person"}), centered
 main facets (e.g., \code{"rater"}, \code{"item"} with \code{class = "sd"}), two-way
 interaction terms (e.g., \code{"item:rater"} with \code{class = "sd"}), and \code{"tau"}
-for uniform hierarchical PCM step sharing. The default \code{character(0)}
-retains fixed-scale priors.}
+for uniform hierarchical PCM step sharing. The default pools abilities.
+Use \code{character(0)} for fixed-scale priors.}
 
 \item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
 
@@ -68,4 +68,9 @@ student_t and double_exponential numeric literals. Hierarchical priors and margi
 Gaussian zero-sum blocks and the declared population priors.
 Fixed parameters must already satisfy the constraints. Unnamed vectors follow
 facet_labels order; named vectors are matched to the original facet labels.
+}
+\examples{
+plan <- expand.grid(person = 1:12, item = 1:3, rater = 1:2)
+sim <- simulate_bmfrm(score ~ person + item + rater, plan, K = 4, seed = 25)
+table(factor(sim$data$score, levels = 1:4))
 }

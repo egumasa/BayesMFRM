@@ -52,10 +52,26 @@
 }
 \value{
 A tibble (when \code{summary = TRUE}) or matrix/3D array (\code{summary = FALSE}).
+An expected rating is on the original rubric scale. A replicated rating
+also includes variation from assigning an observed category.
 }
 \description{
 Computes posterior expectations (\code{type = "epred"}), replicated discrete
 ratings (\code{type = "predict"}), category probabilities (\code{type = "probs"}), or
 logit-scale linear predictors (\code{type = "linpred"}) on observed or new data
 using the shared memory-bounded posterior evaluation engine.
+}
+\examples{
+\donttest{
+if (check_cmdstan()) {
+  source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+  # One column per supported category for this single design row.
+  p <- predict(fit, ratings[1L, ], type = "probs", summary = FALSE)
+  graphics::barplot(colMeans(p[, 1L, ]), names.arg = 1:4, ylim = c(0, 1),
+                    xlab = "Rubric category", ylab = "Posterior probability")
+}
+}
+}
+\seealso{
+\code{\link[=bmfrm]{bmfrm()}}, \code{\link[=fair_scores]{fair_scores()}}
 }

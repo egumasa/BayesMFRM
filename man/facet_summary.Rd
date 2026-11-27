@@ -15,6 +15,24 @@ facet_summary(object, facet, probs = c(0.025, 0.5, 0.975), ...)
 
 \item{...}{unused}
 }
+\value{
+A table with facet labels, posterior means, SDs and requested quantiles.
+For a rater main effect, positive values indicate greater severity.
+}
 \description{
 Extract facet-level summaries
+}
+\examples{
+data(bmfrm_example)
+# From facet_summary(fit, "rater") in the worked example.
+bmfrm_example$rater[, c("level", "mean", "q2.5", "q97.5")]
+\donttest{
+if (check_cmdstan()) {
+  source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+  facet_summary(fit, "rater")
+}
+}
+}
+\seealso{
+\code{\link[=bmfrm]{bmfrm()}} for the complete fit.
 }

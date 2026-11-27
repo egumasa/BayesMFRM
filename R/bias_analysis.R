@@ -90,8 +90,8 @@ bias_probability_diagnostics <- function(draws, variables, prob_pos, prob_neg,
 
 #' Summarize rater x criterion bias effects (legacy raw `bias[I,R]` fits)
 #'
-#' Applies the same single directional posterior probability rule as
-#' [summarise_bias()] (`prob_pos >= prob_thresh` for `"positive_bias"`,
+#' Applies the single-cell rule from [summarise_bias()] with
+#' `flag_method = "prob"` and `delta = 0` (`prob_pos >= prob_thresh` for `"positive_bias"`,
 #' `prob_neg >= prob_thresh` for `"negative_bias"`). Pass `prob_thresh = 0.975`
 #' to match a two-sided 95% credible interval excluding 0.
 #'
@@ -210,4 +210,70 @@ summarise_bias_ir <- function(fit,
     bias_summ <- dplyr::bind_cols(bias_summ, diagnostic)
   }
   bias_summ
+}
+
+#' Plot posterior intervals and screening decisions for interaction cells
+#'
+#' Each row is one pair of facet levels. The point is the posterior mean and
+#' the line is the credible interval selected by `ci_level`. Dashed vertical
+#' lines show the practical threshold on the logit scale. A positive interaction
+#' raises the adjacent-category log odds relative to the additive prediction.
+#' Filled points mark cells selected by the rule in `flag_method`. Open points
+#' mark eligible cells without a flag. Crosses show estimates for which a
+#' decision was withheld. Interval endpoints and screening use different rules.
+#'
+#' @param x A table from [summarise_bias()] for one interaction and one set of
+#'   thresholds. Subset rows to focus on particular raters or criteria.
+#' @return Invisibly returns the plotted rows.
+#' @examples
+#' data(bmfrm_example)
+#' b <- bmfrm_example$bias
+#' plot_bias(b)
+#' b[b$flag_bias == "positive_bias", c("level1", "level2", "bfdr")]
+#' @export
+plot_bias <- function(x) {
+  required <- c("facet1", "facet2", "level1", "level2", "bias_mean", "ci_lower",
+                "ci_upper", "ci_level", "delta", "flag_method", "flag_bias",
+                "n_observations", "likelihood_identified")
+  if (!is.data.frame(x) || !nrow(x) || !all(required %in% names(x))) {
+    stop("Supply one or more rows from summarise_bias()")
+  }
+  settings <- intersect(c("facet1", "facet2", "delta", "ci_level", "flag_method",
+                          "fdr_thresh", "prob_thresh"), names(x))
+  if (nrow(unique(x[settings])) != 1L) stop("Plot one interaction and one set of screening settings at a time")
+  eligible <- x$likelihood_identified %in% TRUE & x$n_observations > 0L
+  flagged <- eligible & x$flag_bias %in% c("positive_bias", "negative_bias")
+  symbols <- ifelse(flagged, 19L, ifelse(eligible, 1L, 4L))
+  colors <- ifelse(flagged, "#125B72", ifelse(eligible, "#333333", "#747474"))
+  y <- rev(seq_len(nrow(x)))
+  labels <- paste(x$level1, x$level2, sep = " / ")
+  delta <- x$delta[1L]
+  limits <- range(x$ci_lower, x$ci_upper, x$bias_mean, -delta, delta, finite = TRUE)
+  bfdr_rule <- x$flag_method[1L] == "bfdr"
+  rule <- if (bfdr_rule) "BFDR flag" else "Probability flag"
+  cutoff <- if (bfdr_rule) x[["fdr_thresh"]] else x[["prob_thresh"]]
+  if (length(cutoff)) rule <- sprintf("%s (%g%%)", rule, 100 * cutoff[1L])
+  xlab <- "Interaction effect (logits)"
+  if (delta > 0) xlab <- sprintf("%s   (dashed lines at +/-%g)", xlab, delta)
+  old <- graphics::par(mar = c(4.3, 2, 3.6, 1))
+  on.exit(graphics::par(old))
+  left <- max(graphics::strwidth(labels, units = "inches", cex = 0.85)) + 0.35
+  margins <- graphics::par("mai")
+  margins[2L] <- min(left, graphics::par("fin")[1L] * 0.45)
+  graphics::par(mai = margins)
+  graphics::plot(NA, xlim = limits, ylim = c(0.5, length(y) + 0.5), yaxt = "n",
+                 ylab = "", xlab = xlab, bty = "n")
+  graphics::title(main = sprintf("%s by %s (%g%% credible intervals)",
+                                 x$facet1[1L], x$facet2[1L], 100 * x$ci_level[1L]), line = 2)
+  bounds <- graphics::par("usr")
+  graphics::legend(mean(bounds[1:2]), bounds[4L], xpd = NA, xjust = 0.5, yjust = 0,
+                   legend = c(rule, "Unflagged", "Withheld"),
+                   pch = c(19, 1, 4), col = c("#125B72", "#333333", "#747474"),
+                   horiz = TRUE, bty = "n", cex = 0.8)
+  graphics::abline(v = 0, col = "#A6A6A6")
+  if (delta > 0) graphics::abline(v = c(-delta, delta), lty = 2, col = "#93733B")
+  graphics::axis(2, at = y, labels = labels, las = 1, tick = FALSE, cex.axis = 0.85)
+  graphics::segments(x$ci_lower, y, x$ci_upper, y, col = colors)
+  graphics::points(x$bias_mean, y, pch = symbols, col = colors)
+  invisible(x)
 }

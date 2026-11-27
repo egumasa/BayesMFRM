@@ -586,7 +586,7 @@ eval_softmax_ragged <- function(eta, tau_info, t_idx, resp_chunk = NULL,
                                 compute_probs = FALSE,
                                 compute_kurtosis = FALSE,
                                 compute_log_lik = FALSE,
-                                compute_y_rep = FALSE) {
+                                compute_y_rep = FALSE, compute_variance = compute_mu) {
   D <- nrow(eta)
   nc <- ncol(eta)
   K_max <- tau_info$K_max
@@ -594,7 +594,7 @@ eval_softmax_ragged <- function(eta, tau_info, t_idx, resp_chunk = NULL,
 
   out <- list()
   mu_mat <- if (compute_mu || compute_kurtosis) matrix(NA_real_, nrow = D, ncol = nc) else NULL
-  s2_mat <- if (compute_mu) matrix(NA_real_, nrow = D, ncol = nc) else NULL
+  s2_mat <- if (compute_variance) matrix(NA_real_, nrow = D, ncol = nc) else NULL
   probs_arr <- if (compute_probs) array(NA_real_, dim = c(D, nc, K_max)) else NULL
   kurt_mat <- if (compute_kurtosis) matrix(0, nrow = D, ncol = nc) else NULL
   ll_mat <- if (compute_log_lik) matrix(NA_real_, nrow = D, ncol = nc) else NULL
@@ -632,20 +632,18 @@ eval_softmax_ragged <- function(eta, tau_info, t_idx, resp_chunk = NULL,
     e1 <- exp(-max_logit)
     denom <- e1
     num_mu <- if (compute_mu || compute_kurtosis) e1 else NULL
-    num_ex2 <- if (compute_mu) e1 else NULL
+    num_ex2 <- if (compute_variance) e1 else NULL
     if (Kj >= 2L) {
       for (k in 2:Kj) {
         ek <- exp((k - 1) * eta_s - ct_list[[k]] - max_logit)
         denom <- denom + ek
         if (compute_mu || compute_kurtosis) num_mu <- num_mu + k * ek
-        if (compute_mu) num_ex2 <- num_ex2 + (k * k) * ek
+        if (compute_variance) num_ex2 <- num_ex2 + (k * k) * ek
       }
     }
     mu_s <- if (compute_mu || compute_kurtosis) num_mu / denom else NULL
-    if (compute_mu) {
-      mu_mat[, sub] <- mu_s
-      s2_mat[, sub] <- pmax(num_ex2 / denom - mu_s * mu_s, 1e-12)
-    }
+    if (compute_mu) mu_mat[, sub] <- mu_s
+    if (compute_variance) s2_mat[, sub] <- pmax(num_ex2 / denom - mu_s * mu_s, 1e-12)
 
     if (compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep) {
       log_denom <- if (compute_log_lik) log(denom) + max_logit else NULL
@@ -678,10 +676,8 @@ eval_softmax_ragged <- function(eta, tau_info, t_idx, resp_chunk = NULL,
     }
   }
 
-  if (compute_mu) {
-    out$mu <- mu_mat
-    out$sigma2 <- s2_mat
-  }
+  if (compute_mu) out$mu <- mu_mat
+  if (compute_variance) out$sigma2 <- s2_mat
   if (compute_probs) out$probs <- probs_arr
   if (compute_kurtosis) out$kurt <- kurt_mat
   if (compute_log_lik) out$log_lik <- ll_mat
@@ -701,10 +697,7 @@ eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
                              compute_kurtosis = FALSE,
                              compute_log_lik = FALSE,
                              compute_y_rep = FALSE) {
-  D <- params$D
-  K <- params$K
   pf <- params$person_facet %||% "person"
-  nc <- length(rows)
 
   eta <- params$theta[, ids[[pf]][rows], drop = FALSE]
   for (f in names(params$facet_draws)) {
@@ -719,28 +712,88 @@ eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
     eta <- eta + b$draws[, cell_idx, drop = FALSE]
   }
 
+  tau_info <- params$tau_info
+  t_idx <- if (tau_info$mode != "shared") ids[[tau_info$threshold_facet]][rows]
+  eval_bmfrm_categories(eta, params$K, tau_info, t_idx, resp_chunk,
+                        compute_mu, compute_linpred, compute_probs, compute_kurtosis,
+                        compute_log_lik, compute_y_rep)
+}
+
+# Per-chunk thresholds for population predictions of unseen uniform-PCM levels.
+new_pcm_chunk_thresholds <- function(tau_info, tau_new, t_idx, D, K, seed_salt) {
+  nc <- length(t_idx)
+  n_k_tf <- tau_new$n_known
+  u_pos <- which(t_idx > n_k_tf)
+  if (!length(u_pos)) return(NULL)
+  k_pos <- which(t_idx <= n_k_tf)
+  chunk_cum_tau_pcm <- lapply(seq_len(K), function(k) {
+    mat_k <- matrix(0, nrow = D, ncol = nc)
+    if (length(k_pos)) mat_k[, k_pos] <- tau_info$cum_tau_list[[k]][, t_idx[k_pos], drop = FALSE]
+    mat_k
+  })
+  u_local <- t_idx[u_pos] - n_k_tf
+  if (identical(tau_new$mode, "zero")) {
+    for (k in seq_len(K)) {
+      chunk_cum_tau_pcm[[k]][, u_pos] <- tau_new$cum_zero[, k]
+    }
+  } else {
+    for (m in unique(u_local)) {
+      s_t <- mix_bmfrm_seed(tau_new$seeds[m], seed_salt)
+      tau_m <- with_bmfrm_seed(s_t, {
+        if (K > 2L) {
+          z_dev <- matrix(stats::rnorm(D * (K - 2L)), nrow = D, ncol = K - 2L)
+          tau_new$tau_common + (z_dev %*% t(tau_new$B_dev)) * tau_new$sd
+        } else {
+          tau_new$tau_common
+        }
+      })
+      cum_m <- matrix(0, nrow = D, ncol = K)
+      if (K > 1L) {
+        for (k in 2:K) cum_m[, k] <- cum_m[, k - 1L] + tau_m[, k - 1L]
+      }
+      pos_m <- u_pos[u_local == m]
+      for (k in seq_len(K)) {
+        chunk_cum_tau_pcm[[k]][, pos_m] <- cum_m[, k]
+      }
+    }
+  }
+  chunk_cum_tau_pcm
+}
+
+# The ordinary and prediction paths build eta differently, then use the same
+# category probabilities, moments, log likelihood and replicated-rating draws.
+eval_bmfrm_categories <- function(eta, K, tau_info, t_idx, resp_chunk = NULL,
+                                  compute_mu = TRUE, compute_linpred = FALSE,
+                                  compute_probs = FALSE, compute_kurtosis = FALSE,
+                                  compute_log_lik = FALSE, compute_y_rep = FALSE,
+                                  tau_new = NULL, seed_salt = NULL,
+                                  compute_variance = compute_mu) {
+  D <- nrow(eta)
+  nc <- ncol(eta)
   out <- list()
   if (compute_linpred) out$eta <- eta
 
   need_softmax <- compute_mu || compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep
   if (!need_softmax) return(out)
 
-  tau_info <- params$tau_info
   if (identical(tau_info$mode, "pcm_ragged")) {
-    t_idx <- ids[[tau_info$threshold_facet]][rows]
     rag <- eval_softmax_ragged(
       eta = eta, tau_info = tau_info, t_idx = t_idx, resp_chunk = resp_chunk,
       compute_mu = compute_mu, compute_probs = compute_probs,
       compute_kurtosis = compute_kurtosis, compute_log_lik = compute_log_lik,
-      compute_y_rep = compute_y_rep
+      compute_y_rep = compute_y_rep, compute_variance = compute_variance
     )
     for (nm in names(rag)) out[[nm]] <- rag[[nm]]
     return(out)
   }
-  t_idx <- if (tau_info$mode == "pcm") ids[[tau_info$threshold_facet]][rows] else NULL
+  chunk_cum_tau_pcm <- if (!is.null(tau_new) && tau_info$mode == "pcm") {
+    new_pcm_chunk_thresholds(tau_info, tau_new, t_idx, D, K, seed_salt)
+  }
   get_cum_tau_k <- function(k) {
     if (tau_info$mode == "shared") {
       matrix(tau_info$cum_tau[, k], nrow = D, ncol = nc)
+    } else if (!is.null(chunk_cum_tau_pcm)) {
+      chunk_cum_tau_pcm[[k]]
     } else {
       tau_info$cum_tau_list[[k]][, t_idx, drop = FALSE]
     }
@@ -759,20 +812,18 @@ eval_bmfrm_chunk <- function(params, ids, rows, resp_chunk = NULL,
   e1 <- exp(-max_logit)
   denom <- e1
   num_mu <- if (compute_mu || compute_kurtosis) e1 else NULL
-  num_ex2 <- if (compute_mu) e1 else NULL
+  num_ex2 <- if (compute_variance) e1 else NULL
   if (K >= 2L) {
     for (k in 2:K) {
       ek <- exp((k - 1) * eta - get_cum_tau_k(k) - max_logit)
       denom <- denom + ek
       if (compute_mu || compute_kurtosis) num_mu <- num_mu + k * ek
-      if (compute_mu) num_ex2 <- num_ex2 + (k * k) * ek
+      if (compute_variance) num_ex2 <- num_ex2 + (k * k) * ek
     }
   }
   mu <- if (compute_mu || compute_kurtosis) num_mu / denom else NULL
-  if (compute_mu) {
-    out$mu <- mu
-    out$sigma2 <- pmax(num_ex2 / denom - mu * mu, 1e-12)
-  }
+  if (compute_mu) out$mu <- mu
+  if (compute_variance) out$sigma2 <- pmax(num_ex2 / denom - mu * mu, 1e-12)
 
   # Pass 3 (only if probs, kurtosis, log_lik, or y_rep requested)
   if (compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep) {
@@ -1152,7 +1203,6 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
       pe <- min(P, ps + p_chunk_sz - 1L)
       p_rows <- ps:pe
       np <- length(p_rows)
-      nc <- np * nr
 
       p_rep <- rep(p_rows, each = nr)
       r_rep <- rep(seq_len(nr), times = np)
@@ -1164,43 +1214,8 @@ stream_bmfrm_standardized_fair_scores <- function(object, reference_grid, adjust
         eta <- eta + b$draws[, cell_idx, drop = FALSE]
       }
 
-      if (identical(tau_info$mode, "pcm_ragged")) {
-        t_rep <- if (is_person_pcm) p_rep else t_idx_r[r_rep]
-        mu_block <- eval_softmax_ragged(
-          eta = eta, tau_info = tau_info, t_idx = t_rep,
-          compute_mu = TRUE, compute_probs = FALSE,
-          compute_kurtosis = FALSE, compute_log_lik = FALSE, compute_y_rep = FALSE
-        )$mu
-      } else {
-        get_ct <- function(k) {
-          if (tau_info$mode == "shared") {
-            matrix(tau_info$cum_tau[, k], nrow = D, ncol = nc)
-          } else if (is_person_pcm) {
-            tau_info$cum_tau_list[[k]][, p_rep, drop = FALSE]
-          } else {
-            tau_info$cum_tau_list[[k]][, t_idx_r[r_rep], drop = FALSE]
-          }
-        }
-
-        max_logit <- matrix(0, nrow = D, ncol = nc)
-        if (K >= 2L) {
-          for (k in 2:K) {
-            lk <- (k - 1) * eta - get_ct(k)
-            max_logit <- pmax(max_logit, lk)
-          }
-        }
-        e1 <- exp(-max_logit)
-        denom <- e1
-        num_mu <- e1
-        if (K >= 2L) {
-          for (k in 2:K) {
-            ek <- exp((k - 1) * eta - get_ct(k) - max_logit)
-            denom <- denom + ek
-            num_mu <- num_mu + k * ek
-          }
-        }
-        mu_block <- num_mu / denom
-      }
+      t_rep <- if (is_person_pcm) p_rep else t_idx_r[r_rep]
+      mu_block <- eval_bmfrm_categories(eta, K, tau_info, t_rep, compute_variance = FALSE)$mu
 
       if (summary) {
         for (j_loc in seq_len(np)) {
@@ -1920,7 +1935,6 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
   params <- plan$params
   ids <- plan$ids
   D <- params$D
-  K <- params$K
   nc <- length(rows)
 
   # 1. Person / ability linear predictor contribution
@@ -2046,141 +2060,11 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
     }
   }
 
-  out <- list()
-  if (compute_linpred) out$eta <- eta
-
-  need_softmax <- compute_mu || compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep
-  if (!need_softmax) return(out)
-
-  # 4. Step thresholds (materializing unseen PCM levels only for this chunk)
   tau_info <- params$tau_info
-  if (identical(tau_info$mode, "pcm_ragged")) {
-    t_idx <- ids[[tau_info$threshold_facet]][rows]
-    rag <- eval_softmax_ragged(
-      eta = eta, tau_info = tau_info, t_idx = t_idx, resp_chunk = resp_chunk,
-      compute_mu = compute_mu, compute_probs = compute_probs,
-      compute_kurtosis = compute_kurtosis, compute_log_lik = compute_log_lik,
-      compute_y_rep = compute_y_rep
-    )
-    for (nm in names(rag)) out[[nm]] <- rag[[nm]]
-    return(out)
-  }
-  t_idx <- if (tau_info$mode == "pcm") ids[[tau_info$threshold_facet]][rows] else NULL
-  chunk_cum_tau_pcm <- NULL
-  if (identical(tau_info$mode, "pcm") && !is.null(plan$tau_new)) {
-    tn <- plan$tau_new
-    n_k_tf <- tn$n_known
-    u_pos <- which(t_idx > n_k_tf)
-    if (length(u_pos)) {
-      chunk_cum_tau_pcm <- lapply(seq_len(K), function(k) {
-        mat_k <- matrix(0, nrow = D, ncol = nc)
-        k_pos <- which(t_idx <= n_k_tf)
-        if (length(k_pos)) mat_k[, k_pos] <- tau_info$cum_tau_list[[k]][, t_idx[k_pos], drop = FALSE]
-        mat_k
-      })
-      u_local <- t_idx[u_pos] - n_k_tf
-      if (identical(tn$mode, "zero")) {
-        for (k in seq_len(K)) {
-          chunk_cum_tau_pcm[[k]][, u_pos] <- tn$cum_zero[, k]
-        }
-      } else {
-        for (m in unique(u_local)) {
-          s_t <- mix_bmfrm_seed(tn$seeds[m], seed_salt)
-          tau_m <- with_bmfrm_seed(s_t, {
-            if (K > 2L) {
-              z_dev <- matrix(stats::rnorm(D * (K - 2L)), nrow = D, ncol = K - 2L)
-              tn$tau_common + (z_dev %*% t(tn$B_dev)) * tn$sd
-            } else {
-              tn$tau_common
-            }
-          })
-          cum_m <- matrix(0, nrow = D, ncol = K)
-          if (K > 1L) {
-            for (k in 2:K) cum_m[, k] <- cum_m[, k - 1L] + tau_m[, k - 1L]
-          }
-          pos_m <- u_pos[u_local == m]
-          for (k in seq_len(K)) {
-            chunk_cum_tau_pcm[[k]][, pos_m] <- cum_m[, k]
-          }
-        }
-      }
-    }
-  }
-
-  get_cum_tau_k <- function(k) {
-    if (tau_info$mode == "shared") {
-      matrix(tau_info$cum_tau[, k], nrow = D, ncol = nc)
-    } else if (!is.null(chunk_cum_tau_pcm)) {
-      chunk_cum_tau_pcm[[k]]
-    } else {
-      tau_info$cum_tau_list[[k]][, t_idx, drop = FALSE]
-    }
-  }
-
-  # Two-pass softmax (identical numeric engine to eval_bmfrm_chunk)
-  max_logit <- matrix(0, nrow = D, ncol = nc)
-  if (K >= 2L) {
-    for (k in 2:K) {
-      lk <- (k - 1) * eta - get_cum_tau_k(k)
-      max_logit <- pmax(max_logit, lk)
-    }
-  }
-
-  e1 <- exp(-max_logit)
-  denom <- e1
-  num_mu <- if (compute_mu || compute_kurtosis) e1 else NULL
-  num_ex2 <- if (compute_mu) e1 else NULL
-  if (K >= 2L) {
-    for (k in 2:K) {
-      ek <- exp((k - 1) * eta - get_cum_tau_k(k) - max_logit)
-      denom <- denom + ek
-      if (compute_mu || compute_kurtosis) num_mu <- num_mu + k * ek
-      if (compute_mu) num_ex2 <- num_ex2 + (k * k) * ek
-    }
-  }
-  mu <- if (compute_mu || compute_kurtosis) num_mu / denom else NULL
-  if (compute_mu) {
-    out$mu <- mu
-    out$sigma2 <- pmax(num_ex2 / denom - mu * mu, 1e-12)
-  }
-
-  if (compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep) {
-    probs_arr <- if (compute_probs) array(NA_real_, dim = c(D, nc, K)) else NULL
-    kurt <- if (compute_kurtosis) matrix(0, nrow = D, ncol = nc) else NULL
-    ll <- if (compute_log_lik) matrix(NA_real_, nrow = D, ncol = nc) else NULL
-    log_denom <- if (compute_log_lik) log(denom) + max_logit else NULL
-    u <- if (compute_y_rep) matrix(stats::runif(D * nc), nrow = D, ncol = nc) else NULL
-    y_rep <- if (compute_y_rep) matrix(1L, nrow = D, ncol = nc) else NULL
-    cum_p <- if (compute_y_rep) matrix(0, nrow = D, ncol = nc) else NULL
-
-    for (k in seq_len(K)) {
-      lk <- if (k == 1L) matrix(0, nrow = D, ncol = nc) else (k - 1) * eta - get_cum_tau_k(k)
-      if (compute_probs || compute_kurtosis || compute_y_rep) {
-        pk <- exp(lk - max_logit) / denom
-        if (compute_probs) probs_arr[, , k] <- pk
-        if (compute_kurtosis) kurt <- kurt + ((k - mu)^4) * pk
-        if (compute_y_rep && k < K) {
-          cum_p <- cum_p + pk
-          y_rep <- y_rep + (u > cum_p)
-        }
-      }
-      if (compute_log_lik) {
-        cols <- which(resp_chunk == k)
-        if (length(cols)) {
-          ll[, cols] <- lk[, cols, drop = FALSE] - log_denom[, cols, drop = FALSE]
-        }
-      }
-    }
-    if (compute_probs) out$probs <- probs_arr
-    if (compute_kurtosis) out$kurt <- kurt
-    if (compute_log_lik) out$log_lik <- ll
-    if (compute_y_rep) {
-      storage.mode(y_rep) <- "integer"
-      out$y_rep <- y_rep
-    }
-  }
-
-  out
+  t_idx <- if (tau_info$mode != "shared") ids[[tau_info$threshold_facet]][rows]
+  eval_bmfrm_categories(eta, params$K, tau_info, t_idx, resp_chunk,
+                        compute_mu, compute_linpred, compute_probs, compute_kurtosis,
+                        compute_log_lik, compute_y_rep, tau_new = plan$tau_new, seed_salt = seed_salt)
 }
 
 #' Format quantile column names matching facet_summary() (e.g., q2.5, q97.5)

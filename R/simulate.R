@@ -24,8 +24,8 @@
 #'   `"person"` (classes `"mean"` and `"sd"` with `facet = "person"`), centered
 #'   main facets (e.g., `"rater"`, `"item"` with `class = "sd"`), two-way
 #'   interaction terms (e.g., `"item:rater"` with `class = "sd"`), and `"tau"`
-#'   for uniform hierarchical PCM step sharing. The default `character(0)`
-#'   retains fixed-scale priors.
+#'   for uniform hierarchical PCM step sharing. The default pools abilities.
+#'   Use `character(0)` for fixed-scale priors.
 #' @param family "rsm" for common steps or "pcm" for steps within threshold_facet.
 #' @param threshold_facet Required for PCM. Its step deviations sum to zero within
 #'   each level. For uniform `K`, fixed `tau` must be a levels-by-(K-1) matrix;
@@ -36,6 +36,10 @@
 #'   (default `"person"`).
 #' @return A bmfrm_simulation with y_rep (simulations by ratings), generating
 #'   parameters, facet_labels, specification, and data for nsim = 1.
+#' @examples
+#' plan <- expand.grid(person = 1:12, item = 1:3, rater = 1:2)
+#' sim <- simulate_bmfrm(score ~ person + item + rater, plan, K = 4, seed = 25)
+#' table(factor(sim$data$score, levels = 1:4))
 #' @export
 simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
                            nsim = 1L, seed = NULL, hierarchical = person_facet,
@@ -265,7 +269,17 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
 #' Generate prior predictive ratings on a planned RSM/PCM design
 #' @inheritParams simulate_bmfrm
 #' @param ndraws Number of prior predictive datasets.
-#' @return A bmfrm_simulation. Inspect its y_rep before fitting observed data.
+#' @return A bmfrm_simulation. Each row of `y_rep` is a complete rating study
+#'   simulated under the priors on the supplied design.
+#' @examples
+#' data(bmfrm_example)
+#' pp <- prior_predict_bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
+#'                           K = 4, ndraws = 40, seed = 48)
+#' extreme <- rowMeans(pp$y_rep == 1 | pp$y_rep == 4)
+#' graphics::hist(extreme, xlim = c(0, 1), main = "Prior predictive ratings",
+#'                xlab = "Fraction at the lowest or highest score")
+#' # Each simulated study contributes one fraction. Would these extremes be
+#' # plausible for this rubric and rating design?
 #' @export
 prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL,
                                hierarchical = person_facet, family = c("rsm", "pcm"),

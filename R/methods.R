@@ -89,7 +89,9 @@ print.bmfrm_fit <- function(x, ...) {
   cat("\nNext steps (in priority order):\n")
   cat("  1. Design & convergence : summary(fit)\n")
   cat("  2. Calibrated fit (PPP) : facet_fit(fit, \"", ex_facet, "\"), bayesplot::pp_check(fit, group = \"", ex_facet, "\")\n", sep = "")
-  cat("  3. Substantive outputs  : fair_scores(fit, standardize = TRUE), summarise_bias(fit, delta = 0.25)\n")
+  cat("  3. Substantive outputs  : fair_scores(fit, standardize = TRUE)")
+  if (length(x$spec$facets_bias)) cat(", summarise_bias(fit, delta = 0.25)")
+  cat("\n")
 }
 
 #' Summary method for bmfrm_fit objects
@@ -223,7 +225,7 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   }
 
   if (length(object$spec$facets_bias) > 0) {
-    cat("Bias Effects (BFDR <= 0.05 on observed identified cells):\n")
+    cat("Bias Effects (observed, likelihood-identified cells):\n")
     for (bias_facet in object$spec$facets_bias) {
       cat("  ", bias_facet, ":\n")
       bias_summ <- tryCatch(
@@ -236,14 +238,19 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
             sep = "")
       } else {
         n_flagged <- sum(bias_summ$flag_bias %in% c("positive_bias", "negative_bias"))
-        n_unobs <- sum(bias_summ$flag_bias == "unobserved_cell")
-        n_unid <- sum(bias_summ$flag_bias == "not_likelihood_identified")
-        cat("    ", n_flagged, " bias effects flagged (out of ", nrow(bias_summ), " cells)\n", sep = "")
-        if (n_unobs > 0L) cat("    ", n_unobs, " unobserved cells (0 ratings; excluded from flagging)\n", sep = "")
-        if (n_unid > 0L) cat("    ", n_unid, " cells lack likelihood identification\n", sep = "")
-        cat("    Directional probability stability: ", sum(bias_summ$decision_stable %in% TRUE),
-            " stable, ", sum(bias_summ$decision_stable %in% FALSE), " boundary-sensitive, ",
-            sum(is.na(bias_summ$decision_stable)), " unavailable\n", sep = "")
+        eligible <- !is.na(bias_summ$bfdr)
+        cat("    ", n_flagged, " flagged among ", sum(eligible), " eligible cells",
+            " (BFDR <= ", bias_summ$fdr_thresh[1L], ", delta = ", bias_summ$delta[1L], " logits)\n", sep = "")
+        excluded <- table(bias_summ$flag_bias[!eligible])
+        if (length(excluded)) {
+          cat("    Withheld: ", paste(names(excluded), excluded, sep = " = ", collapse = ", "), "\n", sep = "")
+        }
+        stable <- bias_summ$prob_threshold_stable[eligible]
+        if (length(stable)) {
+          cat("    Single-cell probability threshold (", bias_summ$prob_thresh[1L], "): ", sum(stable %in% TRUE),
+              " resolved, ", sum(stable %in% FALSE), " boundary-sensitive, ",
+              sum(is.na(stable)), " unavailable. BFDR stability is unassessed.\n", sep = "")
+        }
       }
     }
     cat("    Use summarise_bias(fit) for details\n\n")
@@ -419,6 +426,19 @@ standata.bmfrm_fit <- function(object, ...) object$data_info$stan_data
 #' @param facet name of facet to summarize
 #' @param probs quantiles for credible intervals
 #' @param ... unused
+#' @return A table with facet labels, posterior means, SDs and requested quantiles.
+#'   For a rater main effect, positive values indicate greater severity.
+#' @examples
+#' data(bmfrm_example)
+#' # From facet_summary(fit, "rater") in the worked example.
+#' bmfrm_example$rater[, c("level", "mean", "q2.5", "q97.5")]
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   facet_summary(fit, "rater")
+#' }
+#' }
+#' @seealso [bmfrm()] for the complete fit.
 #' @export
 facet_summary <- function(object, facet, probs = c(0.025, 0.5, 0.975), ...) {
   UseMethod("facet_summary")
@@ -499,6 +519,19 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #' @param max_cells Maximum numeric entries allowed when `summary = FALSE`.
 #' @param ... Unused.
 #' @return A tibble (when `summary = TRUE`) or matrix/3D array (`summary = FALSE`).
+#'   An expected rating is on the original rubric scale. A replicated rating
+#'   also includes variation from assigning an observed category.
+#' @examples
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   # One column per supported category for this single design row.
+#'   p <- predict(fit, ratings[1L, ], type = "probs", summary = FALSE)
+#'   graphics::barplot(colMeans(p[, 1L, ]), names.arg = 1:4, ylim = c(0, 1),
+#'                     xlab = "Rubric category", ylab = "Posterior probability")
+#' }
+#' }
+#' @seealso [bmfrm()], [fair_scores()]
 #' @export
 predict.bmfrm_fit <- function(object,
                               newdata = NULL,
@@ -725,6 +758,30 @@ summarise_person_fair_draws <- function(object, pf, labels, fair_draws_by_j, kee
 #' @param max_output_rows Maximum row-level standardized output rows (default `1e6L`).
 #' @param chunk_size Optional observation chunk size for streaming evaluation.
 #' @param ... unused
+#' @return By default, one row per person. `mean_score` is the observed average,
+#'   `mean_fair_score` the posterior mean adjusted score and `lower_95` and
+#'   `upper_95` its credible limits. Check `likelihood_identified` before
+#'   interpreting an adjustment. The limits describe an expected score.
+#' @examples
+#' data(bmfrm_example)
+#' # These rows were computed with fair_scores(fit, standardize = TRUE).
+#' s <- bmfrm_example$fair
+#' head(s[, c("person", "mean_score", "mean_fair_score", "lower_95", "upper_95")])
+#' with(s, {
+#'   plot(mean_score, mean_fair_score, xlim = c(1, 4), ylim = c(1, 4), asp = 1,
+#'        xlab = "Observed average", ylab = "Common-grid expected score")
+#'   segments(mean_score, lower_95, mean_score, upper_95, col = "grey60")
+#'   abline(0, 1, lty = 2)
+#'   points(mean_score, mean_fair_score, pch = 16)
+#' })
+#' # Points above the diagonal have a higher expected score on the common grid.
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   head(fair_scores(fit, standardize = TRUE))
+#' }
+#' }
+#' @seealso [bmfrm()] for fitting and scoring the example data.
 #' @export
 fair_scores <- function(object, summary = TRUE, adjust_facets = NULL,
                         standardize = FALSE, reference_grid = NULL,
@@ -1090,6 +1147,22 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
 #'   Default `FALSE`.
 #' @param chunk_size Optional observation chunk size for streaming evaluation.
 #' @param ... unused
+#' @return One row per facet level. `infit_ppp` and `outfit_ppp` compare
+#'   observed dispersion with replicated dispersion. Values near zero suggest
+#'   unexpectedly variable ratings. Values near one suggest unusually predictable
+#'   ratings. Read these alongside `n_obs` and the replicated reference limits.
+#' @examples
+#' data(bmfrm_example)
+#' # From facet_fit(fit, "rater"). Compare the observed MSQ to its reference limits.
+#' bmfrm_example$rater_fit[, c("label", "n_obs", "infit_msq", "infit_rep_lo",
+#'                             "infit_rep_hi", "infit_ppp")]
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   facet_fit(fit, "rater")[, c("label", "infit_msq", "infit_rep_lo", "infit_rep_hi")]
+#' }
+#' }
+#' @seealso [bmfrm()] for the fit that produces this table.
 #' @export
 facet_fit <- function(object, facet, prob = 0.95, seed = 123L, include_zstd = FALSE, chunk_size = NULL, ...) {
   UseMethod("facet_fit")
@@ -1169,7 +1242,7 @@ facet_fit.bmfrm_fit <- function(object, facet, prob = 0.95, seed = 123L, include
 #'     false discovery rate (`bfdr`, evaluated tie-invariantly over directional
 #'     exceedance beyond `+/-delta`) satisfies `bfdr <= fdr_thresh` (default `0.05`).
 #'     Pass `flag_method = "prob"` to use per-cell unadjusted directional
-#'     probabilities (`prob_gt_delta >= prob_thresh`).
+#'     probabilities in either direction beyond `delta`.
 #' }
 #'
 #' @param object `bmfrm_fit` object
@@ -1189,6 +1262,31 @@ facet_fit.bmfrm_fit <- function(object, facet, prob = 0.95, seed = 123L, include
 #'   and decision stability columns (default `TRUE`).
 #' @param mcse_multiplier Positive multiplier for MCSE error bands (default `2`).
 #' @param ... unused
+#' @return One row per pair of facet levels. `bias_mean`, `ci_lower` and
+#'   `ci_upper` describe the posterior interaction in logits. A positive value
+#'   raises expected ratings relative to the main effects. Both screening rules
+#'   require observations and confirmed likelihood identification. Inspect
+#'   `flag_bias` for the selected rule. Withheld cells have `bfdr = NA` and a
+#'   reason in `flag_bias`: `unobserved_cell`, `not_likelihood_identified`
+#'   or `identification_unchecked`. Their posterior probabilities remain available.
+#'   With diagnostics enabled, `prob_threshold_stable` and `prob_threshold_status`
+#'   describe Monte Carlo precision relative to the single-cell `prob_thresh`.
+#'   `decision_stable` and `decision_status` refer to the selected rule.
+#'   For eligible BFDR cells these are `NA` and `bfdr_stability_not_assessed`.
+#' @examples
+#' data(bmfrm_example)
+#' # From summarise_bias(fit, "item:rater", delta = 0.3).
+#' b <- bmfrm_example$bias
+#' b[, c("level1", "level2", "n_observations", "likelihood_identified",
+#'       "bias_mean", "bfdr", "flag_bias", "prob_threshold_status")]
+#' plot_bias(b)
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   plot_bias(summarise_bias(fit, "item:rater", delta = 0.3))
+#' }
+#' }
+#' @seealso [bmfrm()] for a reproducible fit and [plot_bias()] for the symbols.
 #' @export
 summarise_bias <- function(object, facet = NULL, prob_thresh = 0.95, delta = 0,
                            flag_method = c("bfdr", "prob"), fdr_thresh = 0.05,
@@ -1258,7 +1356,8 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, d
 
   dc <- object$design
   lik_id <- rep(NA, nrow(cells))
-  if (!is.null(dc$interaction_levels[[facet]])) {
+  if (is.matrix(dc$effect_null_space) && length(dc$tolerance) == 1L &&
+      length(dc$interaction_levels[[facet]]$map_row) == nrow(cells)) {
     rows <- dc$interaction_levels[[facet]]$map_row
     lik_id <- rowSums(dc$effect_null_space[rows, , drop = FALSE]^2) < dc$tolerance^2
   }
@@ -1269,7 +1368,8 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, d
   # Tie-invariant Bayesian FDR strictly across observed, likelihood-identified cells
   pep <- 1 - pmax(p_gt, p_lt)
   bfdr_vec <- rep(NA_real_, nrow(cells))
-  elig <- which((is.na(lik_id) | lik_id) & (n_obs_cell > 0L))
+  eligible <- (lik_id %in% TRUE) & n_obs_cell > 0L
+  elig <- which(eligible)
   if (length(elig)) {
     ord <- elig[order(pep[elig])]
     pep_ord <- pep[ord]
@@ -1287,8 +1387,9 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, d
   } else {
     flag_vec <- classify_bias_flags(p_gt, p_lt, prob_thresh = prob_thresh)
   }
+  flag_vec[is.na(lik_id)] <- "identification_unchecked"
+  flag_vec[lik_id %in% FALSE] <- "not_likelihood_identified"
   flag_vec[n_obs_cell == 0L] <- "unobserved_cell"
-  flag_vec[!is.na(lik_id) & !lik_id] <- "not_likelihood_identified"
 
   result <- tibble::tibble(
     facet = facet, facet1 = f[1L], facet2 = f[2L],
@@ -1301,7 +1402,7 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, d
     prob_pos = unname(colMeans(draws > 0)), prob_neg = unname(colMeans(draws < 0)), delta = delta,
     prob_gt_delta = p_gt, prob_lt_neg_delta = p_lt,
     prob_outside_delta = unname(colMeans(abs(draws) > delta)),
-    flag_method = flag_method,
+    flag_method = flag_method, fdr_thresh = fdr_thresh, prob_thresh = prob_thresh,
     flag_bias = flag_vec,
     n_observations = n_obs_cell,
     likelihood_identified = lik_id,
@@ -1320,11 +1421,15 @@ summarise_bias.bmfrm_fit <- function(object, facet = NULL, prob_thresh = 0.95, d
       delta = delta, prob_thresh = prob_thresh, mcse_multiplier = mcse_multiplier,
       convergence = object$convergence
     )
-    unobs <- (n_obs_cell == 0L)
-    if (any(unobs)) {
-      diag_tbl$decision_stable[unobs] <- NA
-      diag_tbl$decision_status[unobs] <- "unobserved_cell"
+    diag_tbl$prob_thresh <- NULL  # Stored with the rule even when diagnostics are disabled.
+    diag_tbl$prob_threshold_stable <- diag_tbl$decision_stable
+    diag_tbl$prob_threshold_status <- sub("^stable_.*", "resolved", diag_tbl$decision_status)
+    if (flag_method == "bfdr") {
+      diag_tbl$decision_stable[] <- NA
+      diag_tbl$decision_status[] <- "bfdr_stability_not_assessed"
     }
+    diag_tbl$decision_stable[!eligible] <- NA
+    diag_tbl$decision_status[!eligible] <- flag_vec[!eligible]
     result <- dplyr::bind_cols(result, diag_tbl)
   }
   result

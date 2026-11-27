@@ -45,6 +45,19 @@ and decision stability columns (default \code{TRUE}).}
 
 \item{...}{unused}
 }
+\value{
+One row per pair of facet levels. \code{bias_mean}, \code{ci_lower} and
+\code{ci_upper} describe the posterior interaction in logits. A positive value
+raises expected ratings relative to the main effects. Both screening rules
+require observations and confirmed likelihood identification. Inspect
+\code{flag_bias} for the selected rule. Withheld cells have \code{bfdr = NA} and a
+reason in \code{flag_bias}: \code{unobserved_cell}, \code{not_likelihood_identified}
+or \code{identification_unchecked}. Their posterior probabilities remain available.
+With diagnostics enabled, \code{prob_threshold_stable} and \code{prob_threshold_status}
+describe Monte Carlo precision relative to the single-cell \code{prob_thresh}.
+\code{decision_stable} and \code{decision_status} refer to the selected rule.
+For eligible BFDR cells these are \code{NA} and \code{bfdr_stability_not_assessed}.
+}
 \description{
 Summarises posterior interaction cells while accounting for structural
 likelihood identification, zero-observation cells, and multiple testing.
@@ -60,6 +73,23 @@ observed, likelihood-identified cells whose set-level Bayesian expected
 false discovery rate (\code{bfdr}, evaluated tie-invariantly over directional
 exceedance beyond \verb{+/-delta}) satisfies \code{bfdr <= fdr_thresh} (default \code{0.05}).
 Pass \code{flag_method = "prob"} to use per-cell unadjusted directional
-probabilities (\code{prob_gt_delta >= prob_thresh}).
+probabilities in either direction beyond \code{delta}.
 }
+}
+\examples{
+data(bmfrm_example)
+# From summarise_bias(fit, "item:rater", delta = 0.3).
+b <- bmfrm_example$bias
+b[, c("level1", "level2", "n_observations", "likelihood_identified",
+      "bias_mean", "bfdr", "flag_bias", "prob_threshold_status")]
+plot_bias(b)
+\donttest{
+if (check_cmdstan()) {
+  source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+  plot_bias(summarise_bias(fit, "item:rater", delta = 0.3))
+}
+}
+}
+\seealso{
+\code{\link[=bmfrm]{bmfrm()}} for a reproducible fit and \code{\link[=plot_bias]{plot_bias()}} for the symbols.
 }

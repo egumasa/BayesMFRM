@@ -47,6 +47,12 @@ grid of unadjusted facets?}
 
 \item{...}{unused}
 }
+\value{
+By default, one row per person. \code{mean_score} is the observed average,
+\code{mean_fair_score} the posterior mean adjusted score and \code{lower_95} and
+\code{upper_95} its credible limits. Check \code{likelihood_identified} before
+interpreting an adjustment. The limits describe an expected score.
+}
 \description{
 Computes expected scores on the rating rubric scale after setting adjusted
 nuisance facets (and interactions involving them) to zero.
@@ -71,3 +77,26 @@ item at difficulty \code{0} (FACETS Fair Average).
 }
 }
 
+\examples{
+data(bmfrm_example)
+# These rows were computed with fair_scores(fit, standardize = TRUE).
+s <- bmfrm_example$fair
+head(s[, c("person", "mean_score", "mean_fair_score", "lower_95", "upper_95")])
+with(s, {
+  plot(mean_score, mean_fair_score, xlim = c(1, 4), ylim = c(1, 4), asp = 1,
+       xlab = "Observed average", ylab = "Common-grid expected score")
+  segments(mean_score, lower_95, mean_score, upper_95, col = "grey60")
+  abline(0, 1, lty = 2)
+  points(mean_score, mean_fair_score, pch = 16)
+})
+# Points above the diagonal have a higher expected score on the common grid.
+\donttest{
+if (check_cmdstan()) {
+  source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+  head(fair_scores(fit, standardize = TRUE))
+}
+}
+}
+\seealso{
+\code{\link[=bmfrm]{bmfrm()}} for fitting and scoring the example data.
+}

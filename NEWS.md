@@ -2,8 +2,13 @@
 
 ## 0.1.0.9008 (Development)
 
+- Interaction flags now require a rating and confirmed likelihood identification with either screening rule. An observed cell with an unchecked design has `flag_bias = "identification_unchecked"` and `bfdr = NA`. Cells without ratings are always labeled `"unobserved_cell"`.
+- In `summarise_bias()`, `decision_stable` and `decision_status` refer to the selected rule. Under BFDR, set-level stability is unassessed. Code using the former fields for single-cell Monte Carlo precision should read `prob_threshold_stable` and `prob_threshold_status`.
+- Added a worked simulated rating study, runnable help examples and `plot_bias()` for interaction means, credible intervals, practical thresholds and screening decisions.
+- Observed ratings, predictions and standardized fair scores now share the chunked posterior category calculations. Standardized fair scores request only the expected score.
+
 ### Breaking Default & API Improvements
-- **Hierarchical ability by default**: `bmfrm()`, `parse_bmfrm_formula()`, `get_default_priors()`, and `simulate_bmfrm()` now default to `hierarchical = person_facet` (empirical/Bayesian partial pooling of examinee abilities, matching MML-EAP). Pass `hierarchical = character(0)` (or supply `prior(..., class = "theta")`) for unpooled fixed-scale priors.
+- **Hierarchical ability by default**: `bmfrm()`, `parse_bmfrm_formula()`, `get_default_priors()`, and `simulate_bmfrm()` now default to `hierarchical = person_facet` (partial pooling of examinee abilities with posterior uncertainty in the population mean and SD). Pass `hierarchical = character(0)` (or supply `prior(..., class = "theta")`) for unpooled fixed-scale priors.
 - **Compact CSV outputs by default**: `save_gq` now defaults to `"minimal"`, omitting observation-level Stan `generated quantities` and streaming residuals, fit statistics, fair scores, PSIS-LOO, and PPC on demand in R.
 - **CRAN-compliant temporary caching & unseeded refits**: `cache_dir` now defaults to `tempdir()` rather than writing `"stan_cache"` into the working directory (use `tools::R_user_dir("BayesMFRM", "cache")` for persistent caching). Unseeded calls (`seed = NULL`) with `refit = "on_change"` now draw fresh Markov chains instead of reusing a cached fit, and cached `.rds` payloads store portable relative CSV paths (`csv_rel`) that relocate cleanly when a cache folder is moved.
 - **Role-agnostic facet semantics**: Added `person_facet` (default `"person"`) and `adjust_facets` across `bmfrm()`, `parse_bmfrm_formula()`, `check_design_bmfrm()`, `simulate_bmfrm()`, `prior_predict_bmfrm()`, `fair_scores()`, `predict()`, `loo()`, and `cv_bmfrm()`, plus `prior(..., class = "facet", facet = "<name>")` so models no longer depend on column names `"person"`, `"item"`, or `"rater"` (legacy aliases `"item"`, `"rater"`, and `"facet_<name>"` remain supported).

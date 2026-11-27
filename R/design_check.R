@@ -31,6 +31,15 @@
 #'   `"schur"` (always use within-person Schur-complement solver).
 #' @return A bmfrm_design_check with component membership, rank, null spaces,
 #'   the constraint map, and observation counts.
+#' @examples
+#' data(bmfrm_example)
+#' d <- bmfrm_example$ratings
+#' model <- score ~ person + item + rater
+#' check_design_bmfrm(model, d, K = 4)$identifiable
+#' # If each rater scores only one criterion, difficulty and severity coincide.
+#' d$rater <- d$item
+#' check <- check_design_bmfrm(model, d, K = 4)
+#' c(connected = check$connected, identifiable = check$identifiable)
 #' @export
 check_design_bmfrm <- function(formula, data, K, family = "rsm",
                                observed_only = FALSE, tol = 1e-10,

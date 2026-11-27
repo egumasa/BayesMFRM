@@ -41,8 +41,8 @@ With \code{diagnostics = TRUE}, also returns \code{mcse_prob_pos}, \code{mcse_pr
 \code{prob_thresh}, \code{mcse_multiplier}, \code{decision_stable}, and \code{decision_status}.
 }
 \description{
-Applies the same single directional posterior probability rule as
-\code{\link[=summarise_bias]{summarise_bias()}} (\code{prob_pos >= prob_thresh} for \code{"positive_bias"},
+Applies the single-cell rule from \code{\link[=summarise_bias]{summarise_bias()}} with
+\code{flag_method = "prob"} and \code{delta = 0} (\code{prob_pos >= prob_thresh} for \code{"positive_bias"},
 \code{prob_neg >= prob_thresh} for \code{"negative_bias"}). Pass \code{prob_thresh = 0.975}
 to match a two-sided 95\% credible interval excluding 0.
 }

@@ -36,8 +36,8 @@ heterogeneous-category PCM.}
 \code{"person"} (classes \code{"mean"} and \code{"sd"} with \code{facet = "person"}), centered
 main facets (e.g., \code{"rater"}, \code{"item"} with \code{class = "sd"}), two-way
 interaction terms (e.g., \code{"item:rater"} with \code{class = "sd"}), and \code{"tau"}
-for uniform hierarchical PCM step sharing. The default \code{character(0)}
-retains fixed-scale priors.}
+for uniform hierarchical PCM step sharing. The default pools abilities.
+Use \code{character(0)} for fixed-scale priors.}
 
 \item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
 
@@ -51,8 +51,19 @@ vectors of length \code{K_j - 1}, each summing to zero (\code{0} for binary \cod
 (default \code{"person"}).}
 }
 \value{
-A bmfrm_simulation. Inspect its y_rep before fitting observed data.
+A bmfrm_simulation. Each row of \code{y_rep} is a complete rating study
+simulated under the priors on the supplied design.
 }
 \description{
 Generate prior predictive ratings on a planned RSM/PCM design
+}
+\examples{
+data(bmfrm_example)
+pp <- prior_predict_bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
+                          K = 4, ndraws = 40, seed = 48)
+extreme <- rowMeans(pp$y_rep == 1 | pp$y_rep == 4)
+graphics::hist(extreme, xlim = c(0, 1), main = "Prior predictive ratings",
+               xlab = "Fraction at the lowest or highest score")
+# Each simulated study contributes one fraction. Would these extremes be
+# plausible for this rubric and rating design?
 }

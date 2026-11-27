@@ -43,8 +43,9 @@
 #' @param cores Number of parallel chains (default `getOption("mc.cores", 1L)`).
 #' @param seed Optional integer RNG seed (`NULL` runs fresh random chains).
 #' @param hierarchical Character vector of hierarchical facets/terms. Defaults to
-#'   `person_facet` (empirical/Bayesian partial pooling of examinee abilities,
-#'   matching MML-EAP); pass `character(0)` for unpooled fixed-scale priors.
+#'   `person_facet`. Ability estimates borrow information across people, and
+#'   posterior draws propagate uncertainty in their population mean and SD.
+#'   Pass `character(0)` for independent fixed-scale priors.
 #' @param obs_id Optional column name or length-`nrow(data)` vector of unique
 #'   observation IDs for model-comparison alignment across missing-score filtering.
 #' @param rhat_max Convergence diagnostic threshold for split R-hat (default `1.01`).
@@ -52,7 +53,29 @@
 #' @param ... Additional named arguments passed to `CmdStanModel$sample()` (e.g.,
 #'   `adapt_delta = 0.95`, `max_treedepth = 12`).
 #'
-#' @return A `bmfrm_fit` object.
+#' @return A `bmfrm_fit`. Inspect `fit$design$identifiable` for separation of
+#'   facet effects by the rating plan and `fit$convergence` for sampler checks.
+#'   [facet_summary()] reports parameter estimates, [fair_scores()] returns
+#'   expected rubric scores, and [summarise_bias()] examines an interaction.
+#' @examples
+#' data(bmfrm_example)
+#' ratings <- bmfrm_example$ratings
+#' model <- score ~ person + item + rater + item:rater
+#' check_design_bmfrm(model, ratings, K = 4)$identifiable
+#' # The stored fit summaries can be explored before installing CmdStan.
+#' plot_bias(bmfrm_example$bias)
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   fit <- bmfrm(model, ratings, K = 4, design_check = "error",
+#'                seed = 2409, chains = 4, cores = 2, iter = 2000, adapt_delta = 0.95,
+#'                cpp_options = list(PRECOMPILED_HEADERS = "false"))
+#'   print(fit)
+#'   facet_summary(fit, "rater")       # Positive severity lowers expected scores.
+#'   head(fair_scores(fit, standardize = TRUE))
+#'   facet_fit(fit, "rater")
+#'   plot_bias(summarise_bias(fit, "item:rater", delta = 0.3))
+#' }
+#' }
 #' @export
 bmfrm <- function(
   formula,

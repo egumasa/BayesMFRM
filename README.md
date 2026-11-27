@@ -29,6 +29,23 @@ remotes::install_github("egumasa/BayesMFRM", build_vignettes = TRUE)
 
 ---
 
+## Read a fitted example
+
+The bundled simulated writing assessment includes 216 ratings and posterior
+summaries from four CmdStan chains. Display the intervals directly in R:
+
+```r
+library(BayesMFRM)
+data(bmfrm_example)
+plot_bias(bmfrm_example$bias)
+```
+
+![Posterior interaction estimates for nine criterion and rater combinations. A rates Content more generously and Evidence more severely than predicted by the main effects. B shows the reverse pattern.](man/figures/writing-bias.png)
+
+The dashed lines mark the practical threshold of 0.3 logits. Filled points
+identify the four cells selected at a Bayesian false discovery rate of 5%.
+Use `?bmfrm` to fit these data and `?fair_scores` to plot adjusted scores.
+
 ## Quick Start (Self-Contained & Runnable)
 
 Always pass `K` explicitly as the **intended rubric maximum** (e.g., `K = 6` for a 1–6 scale), not just the highest score observed in a sample. By default, `bmfrm()` partially pools examinee abilities (`hierarchical = person_facet`), uses compact streaming outputs (`save_gq = "minimal"`), and caches temporary Stan files in `tempdir()` (pass `cache_dir = tools::R_user_dir("BayesMFRM", "cache")` for persistent cross-session caching).
@@ -105,9 +122,9 @@ fair_std  <- fair_scores(fit, standardize = TRUE)  # Common-item standardized fa
 | Option | Choices & Default | When to use & what it assumes |
 | --- | --- | --- |
 | `K` | Scalar integer `>= 2` or named vector (PCM) | **Always specify explicitly.** Omitting `K` infers `max(score)` from the sample (with a message), dropping unobserved upper rubric categories. |
-| `family` | `"rsm"` (default) vs `"pcm"` | `"rsm"` shares one step profile across levels; `"pcm"` (`threshold_facet = "item"`) allows level-specific step widths (including heterogeneous `K`). Add `"tau"` to `hierarchical` for partial pooling toward `tau_common`. |
+| `family` | `"rsm"` (default) vs `"pcm"` | `"rsm"` shares one step profile across levels; `"pcm"` (`threshold_facet = "item"`) allows level-specific step widths (including heterogeneous `K`). With equal category counts, add `"tau"` to `hierarchical` for partial pooling toward `tau_common`. |
 | `person_facet` & `adjust_facets` | `"person"` (default); `NULL` (auto `"rater"`/`"interlocutor"`) | Explicitly declares which column represents examinee ability and which nuisance facets are zeroed in `fair_scores()`. |
-| `hierarchical` | `person_facet` (default) vs `character(0)` or `c("person", "rater", "item:rater", "tau")` | Default `person_facet` partially pools examinees (matching MML-EAP). Add centered facets or interactions when sufficient levels exist to estimate their SD; with very few raters ($R \le 5$), compare against fixed marginal priors (`adapt_delta >= 0.98`). |
+| `hierarchical` | `person_facet` (default) vs `character(0)` or `c("person", "rater", "item:rater", "tau")` | Default `person_facet` partially pools examinees (including uncertainty in the population mean and SD). Add centered facets or interactions when sufficient levels exist to estimate their SD; with very few raters ($R \le 5$), compare against fixed marginal priors (`adapt_delta >= 0.98`). |
 | `scale` in `prior()` | `"raw"` (default) vs `"marginal"` | Under sum-to-zero constraints on $J$ levels, `"raw"` specifies the pre-centering SD (marginal SD is $\sigma\sqrt{1 - 1/J}$). `"marginal"` keeps the post-centering SD equal to $\sigma$ regardless of $J$. Default `tau` prior is `normal(0, 2)` so wide rubrics ($\pm 3$ logits) are not compressed. |
 | `local_shrinkage` | `"none"` (default), `"student_t"`, `"horseshoe"` | For hierarchical 2-way interactions. `"student_t"` (`scale = "marginal"`) provides heavier tails at matched cell SD; `"horseshoe"` (`scale = "raw"`, configurable `slab_df` and `slab_scale`) concentrates mass near zero. Note: latent local shrinkage precedes double centering $B = P_1 U P_2$, redistributing small centering offsets across rows/columns. |
 | `flag_method` & `delta` in `summarise_bias()` | `flag_method = "bfdr"` (default, `fdr_thresh = 0.05`), `delta = 0` | Controls multiplicity via tie-invariant Bayesian FDR over observed, likelihood-identified cells (`n_observations == 0` cells are marked `"unobserved_cell"` and excluded). Combine with a practical threshold `delta > 0` (e.g., `0.25`–`0.30` logits) and configurable `ci_level`. |

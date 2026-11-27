@@ -55,7 +55,7 @@ All benchmark scripts load the local checkout via `pkgload::load_all(".")` and c
 
 3. **Calibrated Fit, Multiplicity-Controlled Bias, & Portable Caching (`R/fit_stats.R`, `R/methods.R`, `R/caching.R`)**
    - `facet_fit()` streams matched realized $\text{MSQ}(y, \psi^{(d)})$ and replicated $\text{MSQ}(y_{\text{rep}}^{(d)}, \psi^{(d)})$ draws (with mid-$p$ tie handling for discrete small-$n$ cells) to report Sinharay (2006) `infit_ppp`, `outfit_ppp`, and predictive reference intervals as primary diagnostics.
-   - `summarise_bias()` marks `n_observations == 0` cells as `"unobserved_cell"`, excludes both unobserved and likelihood-unidentified cells from tie-invariant `bfdr`, defaults to `flag_method = "bfdr"` (`fdr_thresh = 0.05`), and keeps numerical indicator MCSE (`decision_stable`) orthogonal to structural identification.
+   - `summarise_bias()` marks `n_observations == 0` cells as `"unobserved_cell"`, excludes both unobserved and likelihood-unidentified cells from tie-invariant `bfdr`, defaults to `flag_method = "bfdr"` (`fdr_thresh = 0.05`), and withholds flags for unchecked identification and reports single-cell threshold precision in `prob_threshold_stable`. BFDR decision stability is unassessed.
    - `fit_cmdstan_cached()` defaults to `cache_dir = tempdir()`, runs fresh chains when `seed = NULL` under `refit = "on_change"`, and stores relative `csv_rel` paths so moved cache directories remain loadable via `cmdstanr::as_cmdstan_fit()`.
 
 4. **Test Organization (`tests/testthat/`)**

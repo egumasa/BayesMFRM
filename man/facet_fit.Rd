@@ -32,6 +32,12 @@ Default \code{FALSE}.}
 
 \item{...}{unused}
 }
+\value{
+One row per facet level. \code{infit_ppp} and \code{outfit_ppp} compare
+observed dispersion with replicated dispersion. Values near zero suggest
+unexpectedly variable ratings. Values near one suggest unusually predictable
+ratings. Read these alongside \code{n_obs} and the replicated reference limits.
+}
 \description{
 Computes draw-matched realized and replicated mean-square discrepancies
 \code{MSQ(y, psi_d)} and \code{MSQ(y_rep_d, psi_d)} across posterior draws, returning
@@ -47,4 +53,19 @@ systematic false alarms. Comparing \code{MSQ(y, psi_d)} against \code{MSQ(y_rep_
 on the same posterior draws accounts for exact discrete category distributions,
 sample size \code{n_obs}, and parameter uncertainty (\code{PPP} near \code{0} indicates
 underfit/erratic noise; \code{PPP} near \code{1} indicates overfit/muted dispersion).
+}
+\examples{
+data(bmfrm_example)
+# From facet_fit(fit, "rater"). Compare the observed MSQ to its reference limits.
+bmfrm_example$rater_fit[, c("label", "n_obs", "infit_msq", "infit_rep_lo",
+                            "infit_rep_hi", "infit_ppp")]
+\donttest{
+if (check_cmdstan()) {
+  source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+  facet_fit(fit, "rater")[, c("label", "infit_msq", "infit_rep_lo", "infit_rep_hi")]
+}
+}
+}
+\seealso{
+\code{\link[=bmfrm]{bmfrm()}} for the fit that produces this table.
 }

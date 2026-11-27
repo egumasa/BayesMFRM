@@ -13,7 +13,8 @@ eval_softmax_ragged(
   compute_probs = FALSE,
   compute_kurtosis = FALSE,
   compute_log_lik = FALSE,
-  compute_y_rep = FALSE
+  compute_y_rep = FALSE,
+  compute_variance = compute_mu
 )
 }
 \description{

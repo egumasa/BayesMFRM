@@ -40,9 +40,10 @@ test_that("probability MCSE uses original chains and preserves original bias sum
     expect_equal(out$mcse_prob_lt_neg_delta[j], posterior::mcse_mean((x < -.3) * 1))
   }
   expect_true(all(is.na(out$mcse_prob_outside_delta))) # all |bias| > delta
-  expect_true(all(out$decision_stable))
-  expect_identical(out$decision_status,
-                   paste0("stable_", out$flag_bias))
+  expect_true(all(out$prob_threshold_stable))
+  expect_true(all(out$prob_threshold_status == "resolved"))
+  expect_true(all(is.na(out$decision_stable)))
+  expect_true(all(out$decision_status == "bfdr_stability_not_assessed"))
   expect_equal(summarise_bias(obj, "rater:item", delta = .3), out)
 })
 
@@ -51,9 +52,9 @@ test_that("autocorrelation changes MCSE even when posterior probabilities are id
   sticky <- summarise_bias(make_bias_probability_fit(p = .96, ordered = TRUE), "item:rater")
   expect_equal(sticky$prob_gt_delta, independent$prob_gt_delta)
   expect_gt(sticky$mcse_prob_gt_delta[1], 3 * independent$mcse_prob_gt_delta[1])
-  expect_true(independent$decision_stable[1])
-  expect_false(sticky$decision_stable[1])
-  expect_identical(sticky$decision_status[1], "boundary_sensitive")
+  expect_true(independent$prob_threshold_stable[1])
+  expect_false(sticky$prob_threshold_stable[1])
+  expect_identical(sticky$prob_threshold_status[1], "boundary_sensitive")
 })
 
 test_that("posterior draws_array subclasses retain chain layout during MCSE extraction", {
@@ -74,18 +75,23 @@ test_that("posterior draws_array subclasses retain chain layout during MCSE extr
 test_that("boundary equality is unresolved and diagnostic multiplier never changes flags", {
   obj <- make_bias_probability_fit(p = .95)
   out <- summarise_bias(obj, "item:rater")
-  expect_true(all(out$decision_status == "boundary_sensitive"))
-  expect_true(all(!out$decision_stable))
+  expect_true(all(out$prob_threshold_status == "boundary_sensitive"))
+  expect_true(all(!out$prob_threshold_stable))
   expect_equal(out$flag_bias[1], "positive_bias")
   obj <- make_bias_probability_fit()
   ordinary <- summarise_bias(obj, "item:rater")
   conservative <- summarise_bias(obj, "item:rater", mcse_multiplier = 20)
   expect_equal(ordinary$flag_bias, conservative$flag_bias)
   expect_equal(ordinary$bfdr, conservative$bfdr)
-  expect_true(all(ordinary$decision_stable))
-  expect_true(all(!conservative$decision_stable))
+  expect_true(all(ordinary$prob_threshold_stable))
+  expect_true(all(!conservative$prob_threshold_stable))
   no_clear <- summarise_bias(obj, "item:rater", prob_thresh = .999)
-  expect_true(all(no_clear$decision_status == "stable_no_clear_bias"))
+  expect_true(all(no_clear$flag_bias %in% c("positive_bias", "negative_bias")))
+  expect_true(all(no_clear$prob_threshold_status == "resolved"))
+  expect_true(all(no_clear$decision_status == "bfdr_stability_not_assessed"))
+  single_rule <- summarise_bias(obj, "item:rater", flag_method = "prob", prob_thresh = .999)
+  expect_true(all(single_rule$flag_bias == "no_clear_bias"))
+  expect_true(all(single_rule$decision_status == "stable_no_clear_bias"))
 })
 
 test_that("ROPE probabilities use delta and have their own MCSE", {
@@ -104,8 +110,8 @@ test_that("ROPE probabilities use delta and have their own MCSE", {
 test_that("constant indicators and stuck chains never imply zero MC error", {
   constant <- summarise_bias(make_bias_probability_fit(p = 1), "item:rater")
   expect_true(all(is.na(constant$mcse_prob_gt_delta)))
-  expect_true(all(is.na(constant$decision_stable)))
-  expect_true(all(constant$decision_status == "mcse_unavailable"))
+  expect_true(all(is.na(constant$prob_threshold_stable)))
+  expect_true(all(constant$prob_threshold_status == "mcse_unavailable"))
   x <- cbind(rep(1, 100), rep(-1, 100))
   a <- array(x, c(100L, 2L, 1L), dimnames = list(NULL, NULL, "b"))
   ans <- bias_probability_diagnostics(a, "b", .5, .5, 0, .95, 2, list(converged = TRUE))
@@ -127,20 +133,20 @@ test_that("sampler checks and chain availability gate stability, not substantive
                  list(converged = FALSE, status = "incomplete"), NULL)) {
     obj$convergence <- cv
     out <- summarise_bias(obj, "item:rater")
-    expect_true(all(is.na(out$decision_stable)))
+    expect_true(all(is.na(out$prob_threshold_stable)))
     expect_equal(out$flag_bias, expected$flag_bias)
     expect_equal(out$mcse_prob_gt_delta, expected$mcse_prob_gt_delta)
-    expect_true(all(out$decision_status == if (identical(cv$status, "warning"))
+    expect_true(all(out$prob_threshold_status == if (identical(cv$status, "warning"))
       "fit_diagnostics_failed" else "fit_diagnostics_unavailable"))
   }
   single <- summarise_bias(make_bias_probability_fit(chains = 1L), "item:rater")
-  expect_true(all(single$decision_status == "fit_diagnostics_unavailable"))
-  expect_true(all(is.na(single$decision_stable)))
+  expect_true(all(single$prob_threshold_status == "fit_diagnostics_unavailable"))
+  expect_true(all(is.na(single$prob_threshold_stable)))
   mat <- obj$fit$draws("itemrater", "matrix")
   obj$fit$draws <- function(...) mat
   unknown <- summarise_bias(obj, "item:rater")
-  expect_true(all(unknown$decision_status == "chain_structure_unavailable"))
-  expect_true(all(is.na(unknown$decision_stable)))
+  expect_true(all(unknown$prob_threshold_status == "chain_structure_unavailable"))
+  expect_true(all(is.na(unknown$prob_threshold_stable)))
 })
 
 test_that("numerical stability remains distinct from likelihood identification", {
@@ -153,9 +159,18 @@ test_that("numerical stability remains distinct from likelihood identification",
   expect_true(all(!out$likelihood_identified))
   expect_true(all(out$flag_bias == "not_likelihood_identified"))
   expect_true(all(is.na(out$bfdr)))
-  expect_true(all(out$decision_stable))
+  expect_true(all(out$prob_threshold_stable))
   obj$design <- NULL
-  expect_true(all(is.na(summarise_bias(obj, "item:rater")$likelihood_identified)))
+  for (method in c("bfdr", "prob")) {
+    unchecked <- summarise_bias(obj, "item:rater", flag_method = method)
+    expect_true(all(is.na(unchecked$likelihood_identified)))
+    expect_true(all(is.na(unchecked$bfdr)))
+    expect_true(all(unchecked$flag_bias == "identification_unchecked"))
+    expect_true(all(unchecked$decision_status == "identification_unchecked"))
+    expect_true(all(is.na(unchecked$decision_stable)))
+    expect_equal(unchecked$mcse_prob_gt_delta, out$mcse_prob_gt_delta)
+    expect_true(all(unchecked$prob_threshold_stable))
+  }
 })
 
 test_that("legacy and generated summaries share MCSE and maintain cell alignment", {
@@ -170,7 +185,7 @@ test_that("legacy and generated summaries share MCSE and maintain cell alignment
                    num_divergent = rep(0, 4), num_max_treedepth = rep(0, 4)),
                  num_chains = function() 4L)
   out <- summarise_bias_ir(legacy, c("Z", "A"), c("Y", "B"))
-  modern <- summarise_bias(obj, "item:rater")
+  modern <- summarise_bias(obj, "item:rater", flag_method = "prob")
   modern <- modern[order(modern$item, modern$rater), ]
   expect_equal(out$flag_bias, modern$flag_bias)
   expect_equal(out$mcse_prob_pos, modern$mcse_prob_gt_delta)
@@ -199,4 +214,24 @@ test_that("diagnostic arguments fail early and diagnostics can be skipped", {
   }
   out <- summarise_bias(obj, "item:rater", diagnostics = FALSE)
   expect_false("decision_stable" %in% names(out))
+})
+
+test_that("bias interval plots use distinct symbols for screened and withheld estimates", {
+  obj <- make_bias_probability_fit()
+  tab <- summarise_bias(obj, "item:rater", diagnostics = FALSE)
+  tab$flag_bias[2L] <- "no_clear_bias"
+  # Old saved tables can contain a signed flag despite unknown identification.
+  tab$likelihood_identified[3L] <- NA
+  tab$n_observations[4L] <- 0L
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off())
+  symbols <- NULL
+  testthat::with_mocked_bindings(
+    points.default = function(x, y, pch, ...) symbols <<- pch,
+    expect_identical(plot_bias(tab), tab),
+    .package = "graphics"
+  )
+  expect_equal(symbols, c(19L, 1L, 4L, 4L))
+  tab$delta[1L] <- 0.5
+  expect_error(plot_bias(tab), "one set of screening settings")
 })

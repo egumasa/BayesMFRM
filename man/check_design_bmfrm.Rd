@@ -63,3 +63,13 @@ matrix) solver that scales in \code{O(n * p_other + p_other^3)} without ever
 forming an \verb{n x P} dense matrix, while still computing the exact structural
 rank and null space.
 }
+\examples{
+data(bmfrm_example)
+d <- bmfrm_example$ratings
+model <- score ~ person + item + rater
+check_design_bmfrm(model, d, K = 4)$identifiable
+# If each rater scores only one criterion, difficulty and severity coincide.
+d$rater <- d$item
+check <- check_design_bmfrm(model, d, K = 4)
+c(connected = check$connected, identifiable = check$identifiable)
+}
