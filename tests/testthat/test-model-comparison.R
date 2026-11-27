@@ -258,6 +258,25 @@ test_that("loo.bmfrm_fit matches Stan log_lik vs low-memory R streaming, chunk i
   expect_error(loo::loo(obj_cust), "Unverified custom Stan model")
 })
 
+test_that("standard model generics expose the fitted data and paired rating-level LOO", {
+  main <- make_mock_cmp_fit()
+  other <- make_mock_cmp_fit(d = main$data_info$data_clean, include_bias = TRUE)
+  expect_identical(stats::formula(main), main$spec$formula)
+  expect_equal(stats::nobs(main), nrow(main$data_info$data_clean))
+  ref <- compare_bmfrm(main = loo::loo(main), Interaction = loo::loo(other))
+  tab <- stats::anova(main, Interaction = other)
+  expect_s3_class(tab, "anova")
+  ref <- as.data.frame(ref)
+  expect_equal(rownames(tab), ref$model %||% rownames(ref))
+  for (col in c("elpd_loo", "se_elpd_loo", "elpd_diff", "se_diff")) expect_equal(tab[[col]], ref[[col]])
+  expect_identical(attr(tab, "comparison_meta")$uncertainty_unit, "rating")
+  expect_true(any(grepl("rating-level PSIS-LOO", capture.output(print(tab)), fixed = TRUE)))
+  expect_error(stats::anova(main), "at least two")
+  expect_error(stats::anova(main, other, test = "Chisq"), "only bmfrm_fit")
+  other$data_info$data_clean$score[1L] <- 5L - other$data_info$data_clean$score[1L]
+  expect_error(stats::anova(main, other), "different response values")
+})
+
 test_that("loo.bmfrm_fit flags singleton observations and cv_bmfrm enforces strict target, hierarchy, degeneracy, and droplevels", {
   # 1. Singleton examinee in PSIS-LOO triggers warning and explicit actual_target
   d_sing <- rbind(
@@ -491,6 +510,7 @@ test_that("compare_bmfrm verifies pre-preprocessing obs_id and catches same-scor
 
   obj_id_1 <- suppressMessages(make_mock_cmp_fit(d = d_with_na, obs_id = "rating_uid", seed = 20261124L))
   obj_id_2 <- make_mock_cmp_fit(d = d_with_id_perm, obs_id = "rating_uid", seed = 20261124L)
+  expect_equal(stats::nobs(obj_id_1), nrow(d_with_na) - 1L)
   expect_equal(obj_id_1$data_info$obs_id_source, "explicit_column")
   expect_equal(obj_id_1$data_info$orig_row_index, seq_len(nrow(d_with_id)) + 1L)
 

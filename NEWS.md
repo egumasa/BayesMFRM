@@ -2,6 +2,12 @@
 
 ## 0.1.0.9008 (Development)
 
+- `anova(fit1, fit2)` compares leave-one-rating-out predictive accuracy and
+  reports paired ELPD differences and Pareto-k diagnostics. `print(fit)`
+  shows a short overview, with the full diagnostic report available through
+  `print(fit, details = TRUE)`. `formula(fit)` and `nobs(fit)` extract the
+  fitted formula and number of retained ratings.
+
 - Added `tab_bmfrm()` for compact console, knitted and standalone HTML tables.
   Named fits appear side by side with posterior means, credible intervals,
   rating counts and diagnostic status.

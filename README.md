@@ -59,6 +59,15 @@ the average of the three raters. The table footer gives the number of ratings,
 the model formula and diagnostic status. Supply two named fits to align their
 estimates by level, or use `file = "results.html"` to save a standalone table.
 
+### Standard R methods
+
+| Call | What to read |
+| --- | --- |
+| `print(fit)` | Model formula, rating scale, rating count, facet sizes, design identification and MCMC status. Use `print(fit, details = TRUE)` for the sampling settings and diagnostic guidance. |
+| `summary(fit, facets = "rater")` | Thresholds, rater estimates and detailed diagnostics. |
+| `formula(fit)`, `nobs(fit)` | The fitted formula and the number of ratings retained after preprocessing. |
+| `anova(fit_main, fit_interaction)` | Predictive accuracy when holding out one rating. The first row has the highest ELPD. Read each model's difference alongside its paired standard error and check the count of high Pareto-k observations. |
+
 ### How do ratings change with ability and rater?
 
 In the same simulated assessment, a writer at ability zero has a **60.2%**
@@ -157,7 +166,7 @@ numbers of ratings per examinee.
 | How sensitive are the conclusions to interaction shrinkage? | The optional **priorsense** example scales the interaction prior and rating likelihood separately. It reports changes in bias, rater severity and information, with Pareto diagnostics. [View the sensitivity curves](man/figures/writing-power-sensitivity.png). |
 | Where is this particular rating plan informative? | `as_mirt(fit, plan, draw = 1L)` gives an optional **mirt** item bank. Use `mirt::testinfo()` for the plan or `mirt::probtrace()` on an individual rating. |
 | Does the model reproduce the observed ratings? | `bayesplot::pp_check(fit)` compares replicated ratings with the observed scores. |
-| Does an interaction improve prediction? | Use `compare_bmfrm()` on `loo::loo()` results for another rating at known facet levels, or on matched person-fold `cv_bmfrm()` results for a new examinee. [Worked model comparison with 1,370 ratings](docs/model-comparison-ratings1.md). |
+| Does an interaction improve prediction? | Use `anova(fit_main, fit_interaction)` to hold out one rating, or `compare_bmfrm()` on matched person-fold `cv_bmfrm()` results for a new examinee. [Worked model comparison with 1,370 ratings](docs/model-comparison-ratings1.md). |
 | How can I customize the maps? | The native figures return **ggplot2** objects. The vignette shows how to supply person measures and adjacent thresholds to **WrightMap**. |
 
 The mirt bank preserves the selected draw's logit scale, including the rater,

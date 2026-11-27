@@ -2,15 +2,33 @@
 % Please edit documentation in R/methods.R
 \name{print.bmfrm_fit}
 \alias{print.bmfrm_fit}
-\title{Print method for bmfrm_fit objects}
+\title{Inspect a fitted Bayesian many-facet Rasch model}
 \usage{
-\method{print}{bmfrm_fit}(x, ...)
+\method{print}{bmfrm_fit}(x, ..., details = FALSE)
 }
 \arguments{
-\item{x}{bmfrm_fit object}
+\item{x}{A \code{bmfrm_fit} object.}
 
-\item{...}{unused}
+\item{...}{Reserved for other methods.}
+
+\item{details}{If \code{TRUE}, also print sampling settings, the design rank
+and guidance for following up on diagnostics.}
+}
+\value{
+The fit, invisibly.
 }
 \description{
-Print method for bmfrm_fit objects
+Typing a fit in the console shows its formula, rating scale, number of
+retained ratings, facet sizes, and separate design and MCMC checks.
+This overview uses stored metadata. Use \code{\link[=tab_bmfrm]{tab_bmfrm()}} for estimates and
+credible intervals or \code{\link[=summary.bmfrm_fit]{summary.bmfrm_fit()}} for parameter diagnostics.
+}
+\examples{
+\donttest{
+if (check_cmdstan()) {
+  source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+  print(fit)
+  print(fit, details = TRUE)
+}
+}
 }

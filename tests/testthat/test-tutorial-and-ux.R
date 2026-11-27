@@ -59,8 +59,18 @@ test_that("print() and summary() separate design identification from MCMC conver
     class = "bmfrm_fit"
   )
 
-  # Even when MCMC converged, print() MUST flag design rank deficiency and cite bayesplot::pp_check()
-  txt_print <- paste(capture.output(print(obj_bad)), collapse = "\n")
+  # Both views flag rank deficiency even with stable chains. The overview uses no draws.
+  stored <- obj_bad
+  stored$fit <- NULL
+  compact <- paste(capture.output(returned <- withVisible(print(stored))), collapse = "\n")
+  expect_identical(returned, list(value = stored, visible = FALSE))
+  expect_match(compact, "Design: Rank deficient", fixed = TRUE)
+  expect_match(compact, "MCMC: Passed", fixed = TRUE)
+  stored$convergence <- NULL
+  expect_true(any(grepl("MCMC: Unchecked", capture.output(print(stored)), fixed = TRUE)))
+  stored$convergence <- list(status = "incomplete", converged = FALSE)
+  expect_true(any(grepl("MCMC: Incomplete", capture.output(print(stored)), fixed = TRUE)))
+  txt_print <- paste(capture.output(print(obj_bad, details = TRUE)), collapse = "\n")
   expect_match(txt_print, "Design Identification:", fixed = TRUE)
   expect_match(txt_print, "WARNING: Rank-deficient design", fixed = TRUE)
   expect_match(txt_print, "does NOT resolve the design rank deficiency", fixed = TRUE)
@@ -76,7 +86,7 @@ test_that("print() and summary() separate design identification from MCMC conver
   dc_ok <- check_design_bmfrm(score ~ person + item + rater, d_ok, K = 4)
   obj_ok <- obj_bad
   obj_ok$design <- dc_ok
-  txt_ok <- paste(capture.output(print(obj_ok)), collapse = "\n")
+  txt_ok <- paste(capture.output(print(obj_ok, details = TRUE)), collapse = "\n")
   expect_match(txt_ok, "OK: Conditional likelihood is structurally identifiable", fixed = TRUE)
   expect_match(txt_ok, "sampling stability only, not model fit to data", fixed = TRUE)
 })

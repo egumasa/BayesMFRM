@@ -2137,6 +2137,71 @@ compare_bmfrm <- function(...,
   comp_mat
 }
 
+#' Compare fitted models by leave-one-rating-out predictive accuracy
+#'
+#' `anova(fit1, fit2)` applies [loo::loo()] to each fit and [compare_bmfrm()]
+#' to the results. Supply at least two fits to the same ratings. Models may
+#' have different formulas or priors. The comparison estimates how well
+#' each model predicts a held-out rating. For a difference between two
+#' levels within one fitted model, use [facet_contrasts()].
+#'
+#' @param object A fitted `bmfrm_fit` model.
+#' @param ... Additional `bmfrm_fit` objects. Variable names label the models
+#'   by default. An additional fit can be named explicitly.
+#' @param cores Number of cores for PSIS-LOO within each model.
+#' @details The unit held out is one rating. If that rating is the only one
+#'   for a facet level, the reported prediction target reflects this.
+#'   To assess new examinees, compare [cv_bmfrm()] results from the same
+#'   examinee folds with [compare_bmfrm()]. Use that function directly when
+#'   you already have LOO or CV results.
+#' @return An `anova` data frame ordered by decreasing expected log predictive
+#'   density (`elpd_loo`), with its standard error (`se_elpd_loo`).
+#'   `elpd_diff` is each model's ELPD minus the highest ELPD.
+#'   `se_diff` is the paired standard error of that difference.
+#'   `high_k` counts ratings exceeding the Pareto-k diagnostic threshold.
+#'   Inspect flagged ratings before interpreting a ranking. The
+#'   `comparison_meta` attribute records the target, uncertainty unit, and
+#'   limitations from [compare_bmfrm()].
+#' @examples
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   additive <- bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
+#'                     K = 4, seed = 24)
+#'   anova(additive, interaction = fit)
+#' }
+#' }
+#' @importFrom stats anova
+#' @export
+anova.bmfrm_fit <- function(object, ..., cores = getOption("mc.cores", 1L)) {
+  fits <- list(object, ...)
+  if (length(fits) < 2L) stop("Supply at least two fitted models to compare predictive accuracy.")
+  if (!all(vapply(fits, inherits, logical(1), "bmfrm_fit"))) {
+    stop("Supply only bmfrm_fit models in '...'. This method compares rating-level PSIS-LOO.")
+  }
+  exprs <- as.list(substitute(list(object, ...)))[-1L]
+  labels <- names(fits) %||% rep("", length(fits))
+  for (i in which(!nzchar(labels))) {
+    labels[i] <- if (is.symbol(exprs[[i]])) as.character(exprs[[i]]) else paste("Model", i)
+  }
+  names(fits) <- make.unique(labels)
+  loos <- lapply(fits, loo::loo, cores = cores)
+  comparison <- compare_bmfrm(loos)
+  meta <- attr(comparison, "comparison_meta")
+  cmp <- as.data.frame(comparison)
+  models <- cmp$model %||% rownames(cmp)
+  tab <- cmp[c("elpd_loo", "se_elpd_loo", "elpd_diff", "se_diff")]
+  rownames(tab) <- models
+  tab$high_k <- vapply(loos[models], function(x) length(x$bmfrm_meta$bad_k_ids), integer(1))
+  notes <- unique(c(meta$limitations, as.character(cmp$diag_diff)))
+  notes <- notes[!is.na(notes) & nzchar(notes)]
+  structure(tab, class = c("anova", "data.frame"), comparison_meta = meta,
+            heading = c("Predictive model comparison (rating-level PSIS-LOO)",
+                        paste0("Target: ", meta$actual_target, " (", meta$n_units, " ratings)"),
+                        "elpd_diff is relative to the highest ELPD. se_diff is its paired standard error.",
+                        if (length(notes)) paste("Diagnostic:", notes)))
+}
+
 #' Print method for bmfrm_model_comparison objects
 #' @param x A `bmfrm_model_comparison` object.
 #' @param ... Passed to next `print` method.

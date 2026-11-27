@@ -1,9 +1,43 @@
-#' Print method for bmfrm_fit objects
-#' @param x bmfrm_fit object
-#' @param ... unused
+#' Inspect a fitted Bayesian many-facet Rasch model
+#'
+#' Typing a fit in the console shows its formula, rating scale, number of
+#' retained ratings, facet sizes, and separate design and MCMC checks.
+#' This overview uses stored metadata. Use [tab_bmfrm()] for estimates and
+#' credible intervals or [summary.bmfrm_fit()] for parameter diagnostics.
+#' @param x A `bmfrm_fit` object.
+#' @param ... Reserved for other methods.
+#' @param details If `TRUE`, also print sampling settings, the design rank
+#'   and guidance for following up on diagnostics.
+#' @return The fit, invisibly.
+#' @examples
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   print(fit)
+#'   print(fit, details = TRUE)
+#' }
+#' }
 #' @export
-print.bmfrm_fit <- function(x, ...) {
+print.bmfrm_fit <- function(x, ..., details = FALSE) {
   pf <- spec_person_facet(x$spec)
+  if (!details) {
+    m <- bmfrm_model_overview(x, "Model")
+    cat("Bayesian Many-Facet Rasch Model\n", m$formula, "\nFamily: ", m$family,
+        " | Categories: ", m$categories, " | Ratings: ", m$n_obs,
+        "\nFacet levels: ", m$facet_levels, "\n", sep = "")
+    if (!identical(pf, "person")) cat("Ability facet: ", pf, "\n", sep = "")
+    pooled <- x$hierarchical %||% x$spec$hierarchical
+    if (length(pooled)) cat("Hierarchical facets: ", paste(pooled, collapse = ", "), "\n", sep = "")
+    cat("Design: ", m$design, "\n", sep = "")
+    cv <- x$convergence
+    cat("MCMC:", m$mcmc)
+    chains <- cv$n_chains %||% x$fit_args$chains
+    if (length(chains)) cat(" | chains:", chains)
+    if (length(cv$max_rhat) && is.finite(cv$max_rhat)) cat(" | max R-hat:", format(round(cv$max_rhat, 3)))
+    if (length(cv$n_divergent)) cat(" | divergences:", cv$n_divergent)
+    cat("\n")
+    return(invisible(x))
+  }
   cat("Bayesian Many-Facet Rasch Model\n")
   cat("================================\n\n")
 
@@ -38,7 +72,7 @@ print.bmfrm_fit <- function(x, ...) {
   cat("  Warmup per chain:", x$fit$metadata()$iter_warmup, "\n")
 
   cat("\nDesign Identification:\n")
-  if (is.null(x$design)) {
+  if (is.null(x$design$identifiable) || is.na(x$design$identifiable)) {
     cat("  NOT CHECKED: design_check = 'none' or custom Stan model (run check_design_bmfrm() to inspect)\n")
   } else if (isTRUE(x$design$identifiable)) {
     cat("  OK: Conditional likelihood is structurally identifiable (rank ",
@@ -55,13 +89,17 @@ print.bmfrm_fit <- function(x, ...) {
   }
 
   cat("\nMCMC Convergence:\n")
-  if (isTRUE(x$convergence$converged)) {
+  if (identical(x$convergence$status, "incomplete")) {
+    cat("  Incomplete: too few chains or missing diagnostic values. See summary(fit).\n")
+  } else if (is.null(x$convergence$converged) || is.na(x$convergence$converged)) {
+    cat("  Unchecked: no convergence status recorded.\n")
+  } else if (isTRUE(x$convergence$converged)) {
     cat("  OK: MCMC diagnostics passed (0 divergences, R-hat & ESS within thresholds)\n")
     if (isTRUE(x$convergence$efficiency_warning) || isTRUE(x$convergence$n_max_treedepth > 0)) {
       cat("    Efficiency note:", x$convergence$n_max_treedepth,
           "transition(s) hit max_treedepth (consider increasing max_treedepth).\n")
     }
-    if (!is.null(x$design) && !isTRUE(x$design$identifiable)) {
+    if (identical(x$design$identifiable, FALSE)) {
       cat("    Note: Sampling stability does NOT resolve the design rank deficiency above.\n")
     } else {
       cat("    Note: Convergence checks sampling stability only, not model fit to data.\n")
@@ -92,7 +130,27 @@ print.bmfrm_fit <- function(x, ...) {
   cat("  3. Substantive outputs  : fair_scores(fit, standardize = TRUE)")
   if (length(x$spec$facets_bias)) cat(", summarise_bias(fit, delta = 0.25)")
   cat("\n")
+  invisible(x)
 }
+
+#' Extract a fitted model's formula or observation count
+#'
+#' @param x,object A `bmfrm_fit` object.
+#' @param ... Reserved for other methods.
+#' @return `formula()` returns the fitted formula with its environment.
+#'   `nobs()` returns the number of individual ratings retained for fitting.
+#' @name bmfrm_fit_accessors
+NULL
+
+#' @rdname bmfrm_fit_accessors
+#' @importFrom stats formula
+#' @export
+formula.bmfrm_fit <- function(x, ...) x$spec$formula
+
+#' @rdname bmfrm_fit_accessors
+#' @importFrom stats nobs
+#' @export
+nobs.bmfrm_fit <- function(object, ...) object$data_info$stan_data$N
 
 #' Summary method for bmfrm_fit objects
 #' @param object bmfrm_fit object

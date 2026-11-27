@@ -82,7 +82,7 @@ tab_bmfrm <- function(..., facets = NULL, ci_level = 0.95, digits = 2L, file = N
       bmfrm_table_term(fit, labels[i], fitted[j], selected[j], probs, ci_level)
     }))
   })
-  models <- dplyr::bind_rows(Map(bmfrm_table_model, fits, labels))
+  models <- dplyr::bind_rows(Map(bmfrm_model_overview, fits, labels))
   x <- structure(list(estimates = dplyr::bind_rows(estimates), models = models,
                       ci_level = ci_level, digits = digits), class = "bmfrm_table")
   if (!is.null(file)) {
@@ -127,7 +127,7 @@ bmfrm_table_term <- function(fit, label, term, requested, probs, ci_level) {
   }
 }
 
-bmfrm_table_model <- function(fit, label) {
+bmfrm_model_overview <- function(fit, label) {
   spec <- fit$spec
   dc <- fit$design$identifiable
   cv <- fit$convergence
@@ -138,8 +138,8 @@ bmfrm_table_model <- function(fit, label) {
     paste(paste(sort(unique(spec$K_by_level)), collapse = "/"), "by", spec$threshold_facet)
   } else as.character(get_spec_K_max(spec))
   counts <- lengths(fit$data_info$facet_labels[spec$facets_main])
-  tibble::tibble(model = label, formula = paste(deparse(spec$formula), collapse = " "),
-                 family = toupper(spec$family %||% "rsm"), categories = rubric, n_obs = fit$data_info$stan_data$N,
+  tibble::tibble(model = label, formula = paste(deparse(stats::formula(fit)), collapse = " "),
+                 family = toupper(spec$family %||% "rsm"), categories = rubric, n_obs = stats::nobs(fit),
                  facet_levels = paste(names(counts), counts, collapse = ", "),
                  design = if (isTRUE(dc)) "Identified" else if (identical(dc, FALSE)) "Rank deficient" else "Unchecked",
                  mcmc = mcmc)

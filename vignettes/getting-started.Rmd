@@ -499,16 +499,20 @@ prediction can matter for rater feedback even when fair scores barely move.
 
 ```{r evidence-predictive-comparison, eval=FALSE}
 # Given two converged fits on identical ratings in the same row order
-compare_bmfrm(main = loo::loo(fit_main), interaction = loo::loo(fit_interaction))
+anova(fit_main, fit_interaction)
 cv_main <- cv_bmfrm(fit_main, target = "person", K_folds = 5, M = 300, seed = 42)
 cv_int <- cv_bmfrm(fit_interaction, target = "person", folds = cv_main$folds,
                    M = 300, seed = 42)
 compare_bmfrm(main = cv_main, interaction = cv_int, score = "group")
 ```
 
-Compare ELPD differences and their paired uncertainty within each prediction
-target. A Bayes factor instead uses the probability of the observed data under
-each model's priors. [Predictive comparison with loo](https://mc-stan.org/loo/reference/loo_compare.html).
+Read the first row of `anova()` as the reference model with the highest ELPD.
+For example, the uncorrected main-effects model was 30.9 nats below the Gaussian
+interaction model (`elpd_diff` = −30.9, `se_diff` = 8.7). Its `high_k` count
+of 1 prompted the exact check reported above. If LOO results are already
+saved, pass them to `compare_bmfrm()` to reuse them. A Bayes factor uses the
+probability of the observed data under each model's priors.
+[Predictive comparison with loo](https://mc-stan.org/loo/reference/loo_compare.html).
 
 The six-category assessment below shows the full workflow, starting with the
 rating plan.
@@ -685,43 +689,23 @@ print(fit_rsm)
 summary(fit_rsm, facets = c("item", "rater"))
 ```
 
-Verbatim `print(fit_rsm)` output (separating **Design Identification** from **MCMC Convergence**):
+The short overview shows how many ratings were analyzed and whether the
+design and MCMC checks passed. For the fitted assessment above:
 
 ```text
 Bayesian Many-Facet Rasch Model
-================================
-
-Formula: score ~ person + item + rater 
-Family:  rsm 
-Hierarchical facets: person 
-Observations: 192 
-Rating categories: 1 to 6 
-
-Facets:
-  Main facets: person, item, rater 
-
-Facet levels:
-  person: 24 levels
-  item: 4 levels
-  rater: 4 levels
-
-MCMC sampling:
-  Chains: 4 
-  Iterations per chain: 1000 
-  Warmup per chain: 1000 
-
-Design Identification:
-  OK: Conditional likelihood is structurally identifiable (rank 34/34)
-
-MCMC Convergence:
-  OK: MCMC diagnostics passed (0 divergences, R-hat & ESS within thresholds)
-    Note: Convergence checks sampling stability only, not model fit to data.
-
-Next steps (in priority order):
-  1. Design & convergence : summary(fit)
-  2. Calibrated fit (PPP) : facet_fit(fit, "item"), bayesplot::pp_check(fit, group = "item")
-  3. Substantive outputs  : fair_scores(fit, standardize = TRUE)
+score ~ person + item + rater
+Family: RSM | Categories: 6 | Ratings: 192
+Facet levels: person 24, item 4, rater 4
+Hierarchical facets: person
+Design: Identified
+MCMC: Passed | chains: 4 | max R-hat: 1.003 | divergences: 0
 ```
+
+Use `formula(fit_rsm)` and `nobs(fit_rsm)` to extract the formula and rating
+count in code. `print(fit_rsm, details = TRUE)` gives the design rank and
+sampling settings. Posterior predictive checks address how well the model
+reproduces the ratings.
 
 Verbatim `summary(fit_rsm, facets = c("item", "rater"))` output:
 
