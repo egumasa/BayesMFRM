@@ -158,6 +158,40 @@ replicated range for fit. For a draw-matched comparison use `ppp`, the posterior
 predictive probability that replicated fit exceeds realized fit, with half
 weight for ties.
 
+### Use the same fit in posterior, tidybayes and mirt
+
+To retain chain and iteration identifiers for convergence summaries, select
+the rater parameters. A positive severity means the rater tends to award lower
+scores at a given ability, holding the other main effects fixed. Where the fit
+includes an interaction, a particular criterion can depart from that tendency.
+
+```{r writing-draws-interop, eval=FALSE}
+severity <- posterior::as_draws(fit, variables = "rater")
+posterior::summarise_draws(severity)
+by_rater <- tidybayes::spread_draws(severity, rater[r])
+by_rater$label <- get_facet_labels(fit$data_info, "rater")[by_rater$r]
+```
+
+To examine where adding rater B increases precision, build a four-rating
+bank. Each writer receives two criterion ratings from A and two from B.
+In the code below the gap between the curves gives B's contribution at each
+ability, conditional on the same joint posterior draw and local independence.
+
+```{r writing-mirt-interop, eval=FALSE}
+plan <- expand.grid(item = c("Content", "Evidence"), rater = c("A", "B"))
+bank <- as_mirt(fit, plan, draw = 1L)
+grid <- matrix(seq(-3, 3, by = 0.1), ncol = 1)
+a <- mirt::testinfo(bank, grid, which.items = which(plan$rater == "A"))
+both <- mirt::testinfo(bank, grid)
+matplot(grid, cbind(a, both), type = "l", lty = 1:2, col = 1:2,
+        xlab = "Ability (logits)", ylab = "Conditional test information")
+legend("topright", c("Rater A", "Raters A and B"), lty = 1:2, col = 1:2, bty = "n")
+```
+
+For uncertainty across calibrations, use `test_information(fit, plan, grid[, 1])`.
+The mirt bank contains a synthetic response template for the declared rubric
+categories. Observed-data diagnostics such as infit use the original fit.
+
 The six-category assessment below shows the full workflow, starting with the
 rating plan.
 

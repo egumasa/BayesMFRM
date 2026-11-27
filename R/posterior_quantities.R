@@ -452,7 +452,10 @@ extract_bmfrm_param_draws <- function(object, adjust_facets = character(), draw_
   is_hetero <- isTRUE(spec$K_heterogeneous)
 
   theta <- extract_ordered_draws(object$fit, "theta", length(labels[[pf]]))
-  if (!is.null(draw_idx)) theta <- theta[draw_idx, , drop = FALSE]
+  if (!is.null(draw_idx)) {
+    draw_idx <- resolve_draw_idx(nrow(theta), draw_ids = draw_idx)
+    theta <- theta[draw_idx, , drop = FALSE]
+  }
   D <- nrow(theta)
 
   other_facets <- setdiff(spec$facets_main, c(pf, adjust_facets))

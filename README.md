@@ -100,6 +100,20 @@ The credible limits summarize uncertainty in the fitted calibrations. To
 compare staffing choices at fixed scoring effort, supply plans with equal
 numbers of ratings per examinee.
 
+### Use the fitted model with other R packages
+
+| Question | R interface |
+| --- | --- |
+| How does rater severity vary across posterior draws? | `posterior::as_draws(fit, variables = "rater")` retains the chains and iterations. Use `tidybayes::spread_draws(fit, rater[r])` for one row per draw and rater. |
+| Where is this particular rating plan informative? | `as_mirt(fit, plan, draw = 1L)` gives an optional **mirt** item bank. Use `mirt::testinfo()` for the plan or `mirt::probtrace()` on an individual rating. |
+| Does the model reproduce the ratings or predict held-out ratings? | `bayesplot::pp_check(fit)` draws replicated ratings. `loo::loo(fit)` estimates leave-one-rating-out predictive accuracy. |
+| How can I customize the maps? | The native figures return **ggplot2** objects. The vignette shows how to supply person measures and adjacent thresholds to **WrightMap**. |
+
+The mirt bank preserves the selected draw's logit scale, including the rater,
+criterion and their fitted interaction. Each row of `plan` becomes one item.
+For a posterior mean and credible interval over calibrations, use
+`test_information(fit, plan)`. See `?as_mirt` for a runnable example.
+
 ## Quick Start (Self-Contained & Runnable)
 
 Always pass `K` explicitly as the **intended rubric maximum** (e.g., `K = 6` for a 1–6 scale), not just the highest score observed in a sample. By default, `bmfrm()` partially pools examinee abilities (`hierarchical = person_facet`), uses compact streaming outputs (`save_gq = "minimal"`), and caches temporary Stan files in `tempdir()` (pass `cache_dir = tools::R_user_dir("BayesMFRM", "cache")` for persistent cross-session caching).

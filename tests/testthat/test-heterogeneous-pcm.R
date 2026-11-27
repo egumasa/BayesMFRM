@@ -876,3 +876,30 @@ test_that("test information sums conditional score variances within draws across
   testthat::local_mocked_bindings(default_bmfrm_chunk_size = function(...) 1L, .package = "BayesMFRM")
   expect_equal(test_information(obj, plan[2:1, ], grid, ci_level = 0.8), result)
 })
+
+test_that("mirt uses the selected draw, profile order and each rating's rubric", {
+  skip_if_not_installed("mirt")
+  obj <- make_mock_hetero_pcm_fit(include_bias = TRUE)
+  plan <- data.frame(item = c("I3", "I1", "I3", "I2"), rater = c("R2", "R1", "R2", "R3"))
+  grid <- c(-3, -0.5, 0, 1, 3)
+  for (draw in c(1L, 65L)) {
+    bank <- as_mirt(obj, plan, draw)
+    # The public posterior summaries reduce to this calibration for a one-draw fit.
+    one <- obj
+    one$fit$draws <- function(...) obj$fit$draws(...)[draw, , drop = FALSE]
+    expected <- category_curves(one, plan, grid)
+    for (i in seq_len(nrow(plan))) {
+      p <- mirt::probtrace(mirt::extract.item(bank, i), matrix(grid))
+      expect_equal(as.numeric(p), expected$probability[expected$profile == i], tolerance = 1e-12)
+    }
+    expect_equal(as.numeric(mirt::testinfo(bank, matrix(grid))),
+                 test_information(one, plan, grid)$information, tolerance = 1e-12)
+  }
+  binary <- plan[2L, , drop = FALSE]
+  bank <- as_mirt(obj, binary, draw)
+  expect_equal(as.numeric(mirt::testinfo(bank, matrix(grid))),
+               test_information(one, binary, grid)$information, tolerance = 1e-12)
+  expect_error(as_mirt(obj, plan), "one posterior draw")
+  expect_error(as_mirt(obj, plan, c(1L, 2L)), "one posterior draw")
+  for (bad in list(0, 1.5, NA, 121L)) expect_error(as_mirt(obj, plan, bad), "between 1 and 120")
+})

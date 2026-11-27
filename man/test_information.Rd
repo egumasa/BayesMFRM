@@ -60,5 +60,5 @@ if (check_cmdstan()) {
 }
 }
 \seealso{
-\code{\link[=category_curves]{category_curves()}}
+\code{\link[=category_curves]{category_curves()}}, \code{\link[=as_mirt]{as_mirt()}}
 }

@@ -106,7 +106,7 @@ category_thresholds <- function(object, newdata, ci_level = 0.95) {
   add_curve_profile_levels(dplyr::bind_rows(cuts), newdata)
 }
 
-bmfrm_curve_profiles <- function(object, newdata, ci_level) {
+bmfrm_curve_profiles <- function(object, newdata, ci_level = 0.95, draw_idx = NULL) {
   probs <- bmfrm_interval_probs(ci_level)
   if (!inherits(object, "bmfrm_fit") || !can_evaluate_in_r(object)) {
     stop("Category diagnostics require a fitted model with a verified R evaluation contract")
@@ -123,7 +123,7 @@ bmfrm_curve_profiles <- function(object, newdata, ci_level) {
          paste(required, collapse = ", "))
   }
   ids <- map_eval_indices(newdata, spec, object$data_info$facet_labels, adjust_facets = omit)
-  list(params = extract_bmfrm_param_draws(object), ids = ids, probs = probs)
+  list(params = extract_bmfrm_param_draws(object, draw_idx = draw_idx), ids = ids, probs = probs)
 }
 
 # Adding the fitted profile offset to each adjacent logit is equivalent to

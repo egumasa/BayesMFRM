@@ -20,7 +20,7 @@
 #'   facets can reduce the precision gained from additional ratings.
 #' @return A tibble with `theta`, the posterior mean `information`, equal-tailed
 #'   credible limits `lower` and `upper`, `ci_level`, and `n_ratings` per examinee.
-#' @seealso [category_curves()]
+#' @seealso [category_curves()], [as_mirt()]
 #' @examples
 #' \donttest{
 #' if (check_cmdstan()) {
