@@ -23,7 +23,8 @@ bmfrm_example <- list(ratings = ratings,
                       fair = fair_scores(fit, standardize = TRUE),
                       rater_fit = facet_fit(fit, "rater"),
                       rater = facet_summary(fit, "rater"),
-                      agreement = rater_agreement(fit))
+                      agreement = rater_agreement(fit),
+                      model_table = tab_bmfrm(Writing = fit))
 save(bmfrm_example, file = "data/bmfrm_example.rda", version = 2, compress = "gzip")
 
 # Regenerate the figures used in the README and installed vignette from this fit.

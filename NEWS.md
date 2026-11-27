@@ -2,6 +2,10 @@
 
 ## 0.1.0.9008 (Development)
 
+- Added `tab_bmfrm()` for compact console, knitted and standalone HTML tables.
+  Named fits appear side by side with posterior means, credible intervals,
+  rating counts and diagnostic status.
+
 - `simulate_bmfrm()` reuses category probabilities across replications with
   fixed parameters. It and `pp_bmfrm()` compute cumulative probabilities by
   rubric in matrix operations. Posterior category predictions for RSM and

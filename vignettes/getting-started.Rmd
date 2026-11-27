@@ -45,6 +45,31 @@ the practical threshold. The filled symbol reports the BFDR selection across
 eligible cells. To focus on one rater while retaining the original comparison
 across nine cells, use `plot_bias(b[b$level2 == "A", ])`.
 
+### Read a compact table of estimates
+
+The six rows below give the three criterion difficulties and three rater
+severities. Each cell shows a posterior mean and its 95% equal-tailed credible
+interval in logits. The saved table can be displayed without running Stan.
+
+```{r writing-model-table}
+bmfrm_example$model_table
+```
+
+Rater C's severity is 0.31 logits above the mean of the three raters
+(95% credible interval 0.07 to 0.57). This is the rater's main effect.
+For a particular criterion, the fitted interaction can also affect the score.
+To estimate the difference between C and A directly, use
+`facet_contrasts(fit, "rater", levels = c("A", "C"))` for C minus A.
+
+```{r select-writing-table, eval=FALSE}
+tab_bmfrm(Writing = fit, facets = c("rater", "item:rater"), ci_level = 0.90,
+          file = "writing-estimates.html")
+```
+
+The footer records the model specification, rating count and diagnostic
+status. Read `no ratings` as a warning that the data contain no observation
+for that row. The `estimates` component retains the unrounded numeric values.
+
 ### Read the rating scale, targeting, and rater fit
 
 For the same writing assessment, hold the criterion fixed at Content and vary
@@ -839,6 +864,8 @@ fit_st  <- bmfrm(score ~ person + item + rater + item:rater, ratings, K = 6,
                  hierarchical = c("person", "rater", "item:rater"),
                  priors = priors_st, chains = 4, cores = 4,
                  iter = 2000, adapt_delta = 0.99, seed = 302)
+
+tab_bmfrm(Gaussian = fit_iso, `Student-t` = fit_st, facets = "rater")
 
 bias_iso <- summarise_bias(fit_iso, "item:rater", delta = 0.3)
 bias_st  <- summarise_bias(fit_st,  "item:rater", delta = 0.3)

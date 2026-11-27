@@ -5,13 +5,14 @@
 \alias{bmfrm_example}
 \title{Worked four-category writing assessment}
 \format{
-A list with six tables.
+A list of ratings and fitted results.
 \itemize{
 \item \code{ratings} contains one observed score (1 to 4) per person, item and rater.
 \item \code{rater} gives posterior rater severity in logits.
 \item \code{rater_fit} gives matched observed and replicated fit statistics by rater.
 \item \code{agreement} compares exact agreement on shared ratings with its model
 expectation and 95\% posterior predictive interval for each pair and overall.
+\item \code{model_table} is the compact \code{\link[=tab_bmfrm]{tab_bmfrm()}} result for the writing fit.
 \item \code{fair} gives expected scores on the common three-criterion grid.
 \item \code{bias} gives interaction summaries at delta = 0.3 and BFDR = 0.05.
 }

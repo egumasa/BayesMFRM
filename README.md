@@ -46,6 +46,19 @@ The dashed lines mark the practical threshold of 0.3 logits. Filled points
 identify the four cells selected at a Bayesian false discovery rate of 5%.
 Use `?bmfrm` to fit these data and `?fair_scores` to plot adjusted scores.
 
+### A compact table of model estimates
+
+```r
+bmfrm_example$model_table                     # display the saved writing results
+tab_bmfrm(Writing = fit, facets = "rater")    # after fitting your model
+```
+
+Each cell gives a posterior mean and its 95% equal-tailed credible interval in
+logits. Rater C's entry, **0.31 [0.07, 0.57]**, indicates greater severity than
+the average of the three raters. The table footer gives the number of ratings,
+the model formula and diagnostic status. Supply two named fits to align their
+estimates by level, or use `file = "results.html"` to save a standalone table.
+
 ### How do ratings change with ability and rater?
 
 In the same simulated assessment, a writer at ability zero has a **60.2%**
