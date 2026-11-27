@@ -38,3 +38,7 @@ for (name in names(figures)) {
                                                           "category-contrast" = 5.4, 4.6),
                   dpi = 140, bg = "white")
 }
+
+source("inst/examples/rater-contrasts.R", local = TRUE)
+ggplot2::ggsave("man/figures/writing-rater-contrasts.png", contrast_plot,
+                width = 7.5, height = 3.2, dpi = 150, bg = "white")

@@ -67,5 +67,6 @@ if (check_cmdstan()) {
 }
 }
 \seealso{
-\code{\link[=bmfrm]{bmfrm()}} for the fit that produces this table.
+\code{\link[=plot_pathway_map]{plot_pathway_map()}} for a display of fit and severity,
+\code{\link[=facet_separation]{facet_separation()}} and \code{\link[=facet_contrasts]{facet_contrasts()}} for differences among levels.
 }

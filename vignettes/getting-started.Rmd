@@ -158,6 +158,56 @@ replicated range for fit. For a draw-matched comparison use `ppp`, the posterior
 predictive probability that replicated fit exceeds realized fit, with half
 weight for ties.
 
+### Which facet differences can this design resolve?
+
+For writers, separation asks how large the spread in estimated ability is
+relative to uncertainty about an individual writer. The same calculation for
+raters concerns the spread in severity. Two raters could each fit the model
+well and still differ systematically in the scores they award.
+
+```{r writing-separation}
+facet_separation(bmfrm_example$rater, "rater")
+```
+
+The SD across three rater posterior means is 0.278 logits and the root mean
+square of their posterior SDs is 0.127. The first divided by the second gives
+separation 2.19. The corresponding EAP reliability is 0.827 and the strata
+index is 3.25. These are sample summaries of main effects. The fractional
+strata index does not imply that the three raters fall into distinct groups.
+The same EAP calculation gives reliability 0.681 for the 36 writers and
+0.861 for the three criteria. Pooling, the range of levels, and how ratings
+are assigned all affect these values.
+
+```{r writing-severity-differences, eval=FALSE}
+facet_separation(fit, "person")
+facet_separation(fit, "item")
+source(system.file("examples", "rater-contrasts.R", package = "BayesMFRM"))
+pairs[, c("reference", "comparison", "difference", "lower", "upper", "prob_positive")]
+print(contrast_plot)
+```
+
+```{r writing-rater-contrasts-figure, echo=FALSE, out.width="95%", fig.alt="Three paired rater severity differences with 95 percent credible intervals. C minus A is above zero; B minus A and C minus B cross zero."}
+knitr::include_graphics(system.file("help", "figures", "writing-rater-contrasts.png",
+                                    package = "BayesMFRM"))
+```
+
+Each point is the mean of the signed difference computed within each joint
+draw. C minus A is 0.538 logits (95% credible interval 0.103 to 0.989);
+C scores more severely on average. B minus A is 0.146 (−0.285 to 0.585),
+and C minus B is 0.392 (−0.009 to 0.816). The latter two intervals allow
+differences in either direction. Overlap with zero alone is insufficient to
+claim practical equivalence. Each interval describes one pair. The three
+comparisons share raters and draws.
+
+The default EAP reliability uses the same variance calculation as
+[`mirt::empirical_rxx(T_as_X = FALSE)`](https://philchalmers.github.io/mirt/reference/empirical_rxx.html).
+With conventional Rasch measures and their SEs from a separate calibration,
+use `facet_separation(table, "rater", method = "rasch")`. This method subtracts
+mean squared SE from the sample variance before computing separation.
+Comparisons with FACETS require matching the eligible levels, SEs and
+sample-variance convention. [FACETS Table 7](https://www.winsteps.com/facetman64/table7summarystatistics.htm)
+also reports inter-rater agreement separately.
+
 ### Use the same fit in posterior, tidybayes, bayestestR and mirt
 
 To retain chain and iteration identifiers for convergence summaries, select

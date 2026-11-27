@@ -83,6 +83,23 @@ Each plot is a ggplot2 object. Use `category_thresholds()` for a table of
 crossings, including item-specific rubrics. The getting-started vignette shows
 how to pass these thresholds to WrightMap.
 
+### Can we distinguish the three raters' severities?
+
+```r
+facet_separation(bmfrm_example$rater, "rater")          # runs without CmdStan
+facet_contrasts(fit, "rater", levels = c("A", "B", "C"))
+```
+
+In the writing example, the spread of the three posterior means is 0.278 logits
+and their root-mean-square posterior SD is 0.127. Their ratio (separation) is
+2.19, corresponding to EAP reliability 0.827 and a strata index of 3.25.
+To see which raters differ, compare them within posterior draws. C is more
+severe than A by 0.54 logits on average (95% credible interval 0.10 to 0.99).
+The other two intervals cross zero. These comparisons describe overall
+severity. Criterion-specific differences can also reflect interactions.
+
+![Paired differences in rater severity. Only the interval for C minus A lies entirely above zero.](man/figures/writing-rater-contrasts.png)
+
 ### How much does an additional rating contribute?
 
 Each row of a plan represents one rating of the same examinee. Compare two

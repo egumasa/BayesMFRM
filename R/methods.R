@@ -452,21 +452,7 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
   }
   probs <- unique(as.numeric(probs))
 
-  if (!facet %in% object$spec$facets_main) {
-    stop("Facet '", facet, "' not found in model. Available facets: ",
-         paste(object$spec$facets_main, collapse = ", "))
-  }
-
-  pf <- spec_person_facet(object$spec)
-  contract <- get_eval_contract(object)
-  if (!is.null(contract$param_map) && facet %in% names(contract$param_map)) {
-    param_name <- unname(contract$param_map[[facet]])
-  } else if (identical(facet, pf)) {
-    param_name <- "theta"
-  } else {
-    param_name <- facet
-  }
-
+  param_name <- facet_parameter_name(object, facet)
   param_summary <- if (length(probs) > 0L) {
     object$fit$summary(param_name, "mean", "sd", ~stats::quantile(.x, probs = probs))
   } else {
@@ -1172,7 +1158,8 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
 #'   facet_fit(fit, "rater")[, c("label", "infit_msq", "infit_rep_lo", "infit_rep_hi")]
 #' }
 #' }
-#' @seealso [bmfrm()] for the fit that produces this table.
+#' @seealso [plot_pathway_map()] for a display of fit and severity,
+#'   [facet_separation()] and [facet_contrasts()] for differences among levels.
 #' @export
 facet_fit <- function(object, facet, prob = 0.95, seed = 123L, include_zstd = FALSE, chunk_size = NULL, ...) {
   UseMethod("facet_fit")
