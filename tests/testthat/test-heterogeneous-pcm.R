@@ -847,3 +847,32 @@ test_that("category contrasts respect mixed rubrics and count retained profile r
   expect_identical(category_contrast(obj, transform(ab, item = "I1"), theta = 0)$category, 1:2)
   expect_error(category_contrast(obj, transform(ab, item = c("I1", "I3"))), "rubric categories")
 })
+
+test_that("test information sums conditional score variances within draws across rubrics", {
+  obj <- make_mock_hetero_pcm_fit(include_bias = TRUE)
+  plan <- data.frame(item = c("I1", "I3"), rater = c("R2", "R1"))
+  grid <- c(-2, 0, 2)
+  result <- test_information(obj, plan, rev(grid), ci_level = 0.8)
+  expect_identical(result$theta, grid)
+  expect_true(all(result$n_ratings == 2L))
+  raw <- obj$fit$draws()
+  for (g in seq_along(grid)) {
+    eta <- grid[g] - raw[, "item[1]"] - raw[, "rater[2]"] + raw[, "itemrater[1,2]"]
+    p <- plogis(eta - raw[, "tau[1]"])
+    binary <- p * (1 - p)
+    eta <- grid[g] - raw[, "item[3]"] - raw[, "rater[1]"] + raw[, "itemrater[3,1]"]
+    w <- matrix(1, nrow(raw), 6)
+    for (k in 1:5) w[, k + 1L] <- w[, k] * exp(eta - raw[, sprintf("tau[%d]", 4L + k)])
+    p <- w / rowSums(w)
+    v <- drop(p %*% ((1:6)^2)) - drop(p %*% (1:6))^2
+    expected <- binary + v
+    expect_equal(result$information[g], mean(expected), tolerance = 1e-12)
+    expect_equal(c(result$lower[g], result$upper[g]), unname(quantile(expected, c(.1, .9))),
+                 tolerance = 1e-12)
+  }
+  doubled <- test_information(obj, rbind(plan, plan), grid, ci_level = 0.8)
+  for (field in c("information", "lower", "upper")) expect_equal(doubled[[field]], 2 * result[[field]])
+  expect_true(all(doubled$n_ratings == 4L))
+  testthat::local_mocked_bindings(default_bmfrm_chunk_size = function(...) 1L, .package = "BayesMFRM")
+  expect_equal(test_information(obj, plan[2:1, ], grid, ci_level = 0.8), result)
+})

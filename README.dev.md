@@ -44,6 +44,13 @@ All benchmark scripts load the local checkout via `pkgload::load_all(".")` and c
   `Rscript --vanilla simulations/conquest_comparison.R [B=10]`
   Verifies parameter, EAP, standardized fair-score, and PV-averaged MNSQ parity across RSM, uniform PCM, heterogeneous PCM, and interaction models, plus sparse unbalanced replication benchmarks (`simulations/results/conquest/`).
 
+The companion design study in `mfrm-replication-bayes` runs with
+`Rscript --vanilla scripts/run-test-information.R` from that repository.
+It reuses the archived four-rater, four-criterion interaction experiment
+to compare rating counts, equal-budget rosters, and the allocation of 80
+ratings across 20 examinees. Its figures, CSVs, and interpretation are in
+`results/test-information/` and `reports/test-information.md`.
+
 ## Core Architecture & Design Contracts
 
 1. **Role-Agnostic Formula & Prior Semantics (`R/formula_parsing.R`, `R/prior.R`, `R/model_spec.R`)**

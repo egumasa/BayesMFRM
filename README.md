@@ -83,6 +83,23 @@ Each plot is a ggplot2 object. Use `category_thresholds()` for a table of
 crossings, including item-specific rubrics. The getting-started vignette shows
 how to pass these thresholds to WrightMap.
 
+### How much does an additional rating contribute?
+
+Each row of a plan represents one rating of the same examinee. Compare two
+raters scoring two criteria with one rater scoring those same criteria:
+
+```r
+plan <- expand.grid(item = c("Content", "Evidence"), rater = c("A", "B"))
+one  <- test_information(fit, subset(plan, rater == "A"), theta = -2:2)
+both <- test_information(fit, plan, theta = -2:2)
+data.frame(theta = both$theta, two_ratings = one$information, four_ratings = both$information)
+```
+
+The curves describe conditional Fisher information under local independence.
+The credible limits summarize uncertainty in the fitted calibrations. To
+compare staffing choices at fixed scoring effort, supply plans with equal
+numbers of ratings per examinee.
+
 ## Quick Start (Self-Contained & Runnable)
 
 Always pass `K` explicitly as the **intended rubric maximum** (e.g., `K = 6` for a 1–6 scale), not just the highest score observed in a sample. By default, `bmfrm()` partially pools examinee abilities (`hierarchical = person_facet`), uses compact streaming outputs (`save_gq = "minimal"`), and caches temporary Stan files in `tempdir()` (pass `cache_dir = tools::R_user_dir("BayesMFRM", "cache")` for persistent cross-session caching).
