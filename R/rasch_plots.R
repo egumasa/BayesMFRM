@@ -1,3 +1,70 @@
+#' Plot a fitted many-facet Rasch model
+#'
+#' The default interval plot shows the same main effects as [tab_bmfrm()].
+#' Points are posterior means and bars are equal-tailed credible intervals.
+#' The zero line is the logit reference. A level with no ratings or a known
+#' identification problem has a distinct symbol. For interaction screening
+#' with a practical threshold, use [plot_bias()].
+#' @param x A fitted `bmfrm_fit` model.
+#' @param type `"intervals"` (default), `"wright"` for the ridgeline Wright
+#'   map, `"category"` for category characteristic curves, or `"pathway"`
+#'   for measures against infit or outfit.
+#' @param ... For `"intervals"`, supply `facet` (one or more main facets or
+#'   interactions) and optionally `ci_level`. For `"wright"` and `"category"`,
+#'   supply `newdata` with the facet profiles to display. For `"pathway"`,
+#'   specify one main `facet`. Further arguments are passed to
+#'   [plot_wright_map()], [plot_category_curves()] or [plot_pathway_map()].
+#' @return Draws the plot and invisibly returns its ggplot object for reuse.
+#' @examples
+#' \donttest{
+#' if (check_cmdstan()) {
+#'   source(system.file("examples", "fit-writing.R", package = "BayesMFRM"), local = TRUE)
+#'   plot(fit, facet = "rater")
+#'   profiles <- data.frame(item = "Content", rater = c("A", "B"))
+#'   plot(fit, type = "wright", newdata = profiles)
+#'   plot(fit, type = "category", newdata = profiles)
+#'   plot(fit, type = "pathway", facet = "rater")
+#' }
+#' }
+#' @export
+plot.bmfrm_fit <- function(x, type = c("intervals", "wright", "category", "pathway"), ...) {
+  p <- switch(match.arg(type),
+              intervals = bmfrm_interval_plot(x, ...),
+              wright = plot_wright_map(x, ...),
+              category = plot_category_curves(x, ...),
+              pathway = plot_pathway_map(x, ...))
+  print(p)
+  invisible(p)
+}
+
+bmfrm_interval_plot <- function(object, facet = NULL, ci_level = 0.95) {
+  dat <- tab_bmfrm(object, facets = facet, ci_level = ci_level)$estimates
+  label <- ifelse(is.na(dat$level2), dat$level, paste(dat$level, dat$level2, sep = " / "))
+  dat$facet <- factor(dat$facet, levels = unique(dat$facet))
+  ids <- seq_len(nrow(dat))
+  dat$row <- factor(ids, levels = rev(ids))
+  dat$status <- ifelse(dat$n_obs == 0L, "No ratings",
+                       ifelse(is.na(dat$likelihood_identified), "Unchecked",
+                              ifelse(dat$likelihood_identified, "Identified", "Unidentified")))
+  ggplot2::ggplot(dat, ggplot2::aes(.data$mean, .data$row)) +
+    ggplot2::geom_vline(xintercept = 0, colour = "grey60", linetype = "dashed") +
+    ggplot2::geom_segment(ggplot2::aes(x = .data$lower, xend = .data$upper, yend = .data$row),
+                          linewidth = 0.8, colour = "#246780") +
+    ggplot2::geom_point(ggplot2::aes(shape = .data$status), size = 2.7, colour = "#164755") +
+    ggplot2::scale_shape_manual(values = c("Identified" = 16, "Unidentified" = 1,
+                                            "No ratings" = 4, "Unchecked" = 2),
+                                guide = if (all(dat$status == "Identified")) "none" else "legend") +
+    ggplot2::scale_y_discrete(labels = stats::setNames(label, ids)) +
+    ggplot2::facet_grid(rows = ggplot2::vars(facet), scales = "free_y", space = "free_y") +
+    ggplot2::labs(title = "Facet estimates", x = "Measure (logits)", y = NULL,
+                  shape = "Design status",
+                  caption = sprintf("Posterior means and %g%% equal-tailed credible intervals.", 100 * ci_level)) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(panel.grid.minor = ggplot2::element_blank(),
+                   strip.text.y = ggplot2::element_text(angle = 0, face = "bold"),
+                   legend.position = "bottom")
+}
+
 #' Plot conditional category characteristic curves
 #'
 #' @inheritParams category_curves

@@ -28,6 +28,9 @@ bmfrm_example <- list(ratings = ratings,
 save(bmfrm_example, file = "data/bmfrm_example.rda", version = 2, compress = "gzip")
 
 # Regenerate the figures used in the README and installed vignette from this fit.
+grDevices::png("man/figures/writing-facet-estimates.png", width = 1080, height = 590, res = 145)
+plot(fit)
+grDevices::dev.off()
 on_content <- data.frame(item = "Content", rater = c("A", "B"))
 at_A <- data.frame(item = items, rater = "A")
 figures <- list("category-curves" = plot_category_curves(fit, on_content),

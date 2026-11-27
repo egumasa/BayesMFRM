@@ -2,6 +2,12 @@
 
 ## 0.1.0.9008 (Development)
 
+- `plot(fit)` draws facet intervals. Wright maps, category curves and
+  Pathway maps are available through its `type` argument. `coef()` and
+  `confint()` report posterior means and equal-tailed credible intervals.
+  `fitted()` extracts expected ratings; `predict()` accepts `"response"`
+  and `"link"` as aliases and reports unused arguments.
+
 - `anova(fit1, fit2)` compares leave-one-rating-out predictive accuracy and
   reports paired ELPD differences and Pareto-k diagnostics. `print(fit)`
   shows a short overview, with the full diagnostic report available through

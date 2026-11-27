@@ -70,6 +70,35 @@ The footer records the model specification, rating count and diagnostic
 status. Read `no ratings` as a warning that the data contain no observation
 for that row. The `estimates` component retains the unrounded numeric values.
 
+### Predict a rating or inspect a parameter interval
+
+For writer P03 on Structure, what score should we expect if rater A assesses
+the work? With the saved writing fit, the expected score is **1.60** on the
+1–4 rubric (95% credible interval **1.18 to 2.24**). Predicting a single future
+rating includes the additional uncertainty about which integer score will be
+assigned.
+
+```{r writing-generic-predictions, eval=FALSE}
+row <- data.frame(person = "P03", item = "Structure", rater = "A")
+predict(fit, row)                                # mean expected score and interval
+predict(fit, row, type = "probs")                # probability of each score
+predict(fit, row, type = "predict", seed = 42)   # distribution of a new rating
+head(fitted(fit))                                # expected score for each fitted row
+get_facet_labels(fit$data_info, "rater")          # A, B, C
+coef(fit, parm = "rater[3]")                     # C's severity in logits
+confint(fit, parm = "rater[3]", level = 0.95)
+plot(fit)
+```
+
+```{r writing-generic-intervals, echo=FALSE, out.width="100%", fig.alt="Posterior intervals for three criteria and three raters. Structure and rater C lie above the zero reference."}
+knitr::include_graphics(system.file("help", "figures", "writing-facet-estimates.png",
+                                    package = "BayesMFRM"))
+```
+
+The lower panel reproduces the rater main effects from the table. C's mean
+and interval describe severity on the logit scale. The upper panel uses the
+same axis for criterion difficulty.
+
 ### Read the rating scale, targeting, and rater fit
 
 For the same writing assessment, hold the criterion fixed at Content and vary
@@ -79,7 +108,7 @@ ability, how likely is each score?
 ```{r writing-curves-code, eval=FALSE}
 source(system.file("examples", "fit-writing.R", package = "BayesMFRM"))
 on_content <- data.frame(item = "Content", rater = c("A", "B"))
-plot_category_curves(fit, on_content)
+plot(fit, type = "category", newdata = on_content)
 p <- category_curves(fit, on_content, theta = 0)
 p[p$category == 4, c("facet_rater", "probability", "lower", "upper")]
 ```

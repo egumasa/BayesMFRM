@@ -939,3 +939,52 @@ test_that("compact tables preserve PCM rubrics and reverse interaction labels", 
   expect_true(all(bmfrm_display_table(x)$Additive[seq_len(nrow(ref))] == "-"))
   expect_error(tab_bmfrm(fit, facets = c("item:rater", "rater:item")), "distinct")
 })
+
+test_that("fitted, predict, coef and confint preserve the fitted scales and parameter order", {
+  fit <- make_mock_hetero_pcm_fit(include_bias = TRUE)
+  fit$fit$summary <- function(variables, ...) {
+    posterior::summarise_draws(posterior::as_draws_matrix(fit$fit$draws(variables)), ...)
+  }
+  expect_equal(stats::fitted(fit), stats::predict(fit, type = "epred")$estimate)
+  expect_identical(stats::predict(fit, type = "response"), stats::predict(fit))
+  expect_identical(stats::predict(fit, type = "link"), stats::predict(fit, type = "linpred"))
+  expect_error(stats::predict(fit, interval = "prediction"), "must be empty")
+
+  co <- stats::coef(fit)
+  ci <- stats::confint(fit, level = 0.8)
+  expect_identical(rownames(ci), names(co))
+  draws <- fit$fit$draws(c("theta", "item", "rater", "tau", "itemrater"))
+  expect_equal(co, colMeans(draws))
+  expect_equal(unname(ci), unname(t(apply(draws, 2, quantile, probs = c(0.1, 0.9)))))
+  expect_identical(colnames(ci), c("10%", "90%"))
+  expect_equal(stats::coef(fit, "person"), colMeans(fit$fit$draws("theta")))
+  expect_equal(stats::coef(fit, "item:rater"), colMeans(fit$fit$draws("itemrater")))
+  expect_identical(stats::confint(fit, "rater:item"), stats::confint(fit, "item:rater"))
+  i <- c(length(co), 1L, 2L, 1L)
+  expect_equal(stats::confint(fit, i, level = 0.8), ci[i, , drop = FALSE])
+  fit$fit$metadata <- function() list(model_params = colnames(draws))
+  expect_equal(stats::coef(fit, i), co[i])
+  expect_equal(stats::confint(fit, "tau[2]", level = 0.8), ci["tau[2]", , drop = FALSE])
+  expect_error(stats::confint(fit, length(co) + 1), "exceeds")
+  expect_error(stats::confint(fit, 1.5), "positive integers")
+  expect_error(stats::confint(fit, level = 1), "probability")
+})
+
+test_that("plot dispatch draws the requested diagnostic and preserves the plotted rows", {
+  fit <- make_mock_hetero_pcm_fit(include_bias = TRUE)
+  profiles <- data.frame(item = c("I1", "I2"), rater = "R1")
+  grDevices::pdf(NULL)
+  on.exit(grDevices::dev.off())
+  displayed <- withVisible(plot(fit))
+  expect_false(displayed$visible)
+  expect_s3_class(displayed$value, "ggplot")
+  dat <- displayed$value$data
+  expect_equal(as.character(unique(dat$facet)), c("item", "rater"))
+  expect_equal(dat$lower, tab_bmfrm(fit)$estimates$lower)
+  expect_equal(plot(fit, type = "wright", newdata = profiles)$data, category_thresholds(fit, profiles))
+  expect_equal(plot(fit, type = "category", newdata = profiles, theta = 0)$data,
+               category_curves(fit, profiles, theta = 0))
+  expect_equal(plot(fit, type = "pathway", facet = "rater", seed = 19)$data,
+               plot_pathway_map(fit, "rater", seed = 19)$data)
+  expect_error(plot(fit, type = "unavailable"), "one of")
+})

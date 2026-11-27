@@ -551,7 +551,9 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #'
 #' @param object A `bmfrm_fit` object.
 #' @param newdata Optional data.frame of facet combinations to predict for.
-#' @param type `"epred"` (default), `"predict"`, `"probs"`, or `"linpred"`.
+#' @param type `"epred"` (default) or `"response"` for expected rubric scores,
+#'   `"predict"` for replicated ratings, `"probs"` for category probabilities,
+#'   or `"linpred"` / `"link"` for the adjacent-logit predictor before steps.
 #' @param adjust_facets Character vector of non-ability main facets to set to 0.
 #' @param allow_new_levels Logical; allow unseen facet levels in `newdata`?
 #' @param sample_new_levels `"hierarchical"` (default) or `"zero"`.
@@ -562,10 +564,14 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #' @param seed Optional integer RNG seed.
 #' @param chunk_size Optional observation chunk size.
 #' @param max_cells Maximum numeric entries allowed when `summary = FALSE`.
-#' @param ... Unused.
+#' @param ... Reserved. Select uncertainty bounds with `probs` and select the
+#'   prediction target with `type`.
 #' @return A tibble (when `summary = TRUE`) or matrix/3D array (`summary = FALSE`).
 #'   An expected rating is on the original rubric scale. A replicated rating
 #'   also includes variation from assigning an observed category.
+#'   Scalar summaries contain `estimate`, `sd` and the requested quantiles in
+#'   input row order. Category probability summaries give one posterior mean
+#'   per supported category, with `NA` padding for heterogeneous rubrics.
 #'   For `type = "probs", summary = FALSE`, the dimensions are posterior draw,
 #'   prediction row and score category. To compare pass probabilities, sum the
 #'   passing categories within each draw, then subtract the two rows in that draw.
@@ -585,7 +591,7 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #'   mean(abs(gap) <= 5)  # Probability the difference is within five percentage points.
 #' }
 #' }
-#' @seealso [bmfrm()], [fair_scores()]
+#' @seealso [bmfrm()], [fitted.bmfrm_fit()], [fair_scores()]
 #' @export
 predict.bmfrm_fit <- function(object,
                               newdata = NULL,
@@ -601,6 +607,9 @@ predict.bmfrm_fit <- function(object,
                               chunk_size = NULL,
                               max_cells = 5e7,
                               ...) {
+  rlang::check_dots_empty()
+  if (identical(type, "response")) type <- "epred"
+  if (identical(type, "link")) type <- "linpred"
   type <- match.arg(type)
   sample_new_levels <- match.arg(sample_new_levels)
   if (is.null(adjust_facets)) adjust_facets <- character(0)
@@ -611,6 +620,20 @@ predict.bmfrm_fit <- function(object,
     summary = summary, probs = probs, ndraws = ndraws, draw_ids = draw_ids,
     seed = seed, chunk_size = chunk_size, max_cells = max_cells
   )
+}
+
+#' Fitted expected ratings on the original rubric
+#'
+#' @param object A fitted `bmfrm_fit` model that supports [predict.bmfrm_fit()].
+#' @param ... Reserved for other methods.
+#' @return A numeric vector of posterior mean expected scores, one per
+#'   retained rating in fitted data order. Observed facet levels are used.
+#'   `predict(object)` also reports uncertainty around each expected score.
+#' @importFrom stats fitted
+#' @export
+fitted.bmfrm_fit <- function(object, ...) {
+  rlang::check_dots_empty()
+  stats::predict(object, type = "epred", probs = numeric())$estimate
 }
 
 # Shared internal metadata builder for fair_scores()

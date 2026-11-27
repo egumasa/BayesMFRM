@@ -26,7 +26,9 @@
 
 \item{newdata}{Optional data.frame of facet combinations to predict for.}
 
-\item{type}{\code{"epred"} (default), \code{"predict"}, \code{"probs"}, or \code{"linpred"}.}
+\item{type}{\code{"epred"} (default) or \code{"response"} for expected rubric scores,
+\code{"predict"} for replicated ratings, \code{"probs"} for category probabilities,
+or \code{"linpred"} / \code{"link"} for the adjacent-logit predictor before steps.}
 
 \item{adjust_facets}{Character vector of non-ability main facets to set to 0.}
 
@@ -48,12 +50,16 @@
 
 \item{max_cells}{Maximum numeric entries allowed when \code{summary = FALSE}.}
 
-\item{...}{Unused.}
+\item{...}{Reserved. Select uncertainty bounds with \code{probs} and select the
+prediction target with \code{type}.}
 }
 \value{
 A tibble (when \code{summary = TRUE}) or matrix/3D array (\code{summary = FALSE}).
 An expected rating is on the original rubric scale. A replicated rating
 also includes variation from assigning an observed category.
+Scalar summaries contain \code{estimate}, \code{sd} and the requested quantiles in
+input row order. Category probability summaries give one posterior mean
+per supported category, with \code{NA} padding for heterogeneous rubrics.
 For \verb{type = "probs", summary = FALSE}, the dimensions are posterior draw,
 prediction row and score category. To compare pass probabilities, sum the
 passing categories within each draw, then subtract the two rows in that draw.
@@ -82,5 +88,5 @@ if (check_cmdstan()) {
 }
 }
 \seealso{
-\code{\link[=bmfrm]{bmfrm()}}, \code{\link[=fair_scores]{fair_scores()}}
+\code{\link[=bmfrm]{bmfrm()}}, \code{\link[=fitted.bmfrm_fit]{fitted.bmfrm_fit()}}, \code{\link[=fair_scores]{fair_scores()}}
 }

@@ -3,13 +3,17 @@
 S3method(anova,bmfrm_fit)
 S3method(bayesplot::pp_check,bmfrm_fit)
 S3method(c,bmfrm_prior)
+S3method(coef,bmfrm_fit)
+S3method(confint,bmfrm_fit)
 S3method(facet_fit,bmfrm_fit)
 S3method(facet_summary,bmfrm_fit)
 S3method(fair_scores,bmfrm_fit)
+S3method(fitted,bmfrm_fit)
 S3method(formula,bmfrm_fit)
 S3method(knitr::knit_print,bmfrm_table)
 S3method(loo::loo,bmfrm_fit)
 S3method(nobs,bmfrm_fit)
+S3method(plot,bmfrm_fit)
 S3method(plot,residual_cor)
 S3method(posterior::as_draws,bmfrm_fit)
 S3method(predict,bmfrm_fit)
@@ -93,6 +97,9 @@ importFrom(magrittr,"%>%")
 importFrom(rlang,.data)
 importFrom(stats,
   anova,
+  coef,
+  confint,
+  fitted,
   formula,
   nobs
 )

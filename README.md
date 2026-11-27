@@ -66,7 +66,12 @@ estimates by level, or use `file = "results.html"` to save a standalone table.
 | `print(fit)` | Model formula, rating scale, rating count, facet sizes, design identification and MCMC status. Use `print(fit, details = TRUE)` for the sampling settings and diagnostic guidance. |
 | `summary(fit, facets = "rater")` | Thresholds, rater estimates and detailed diagnostics. |
 | `formula(fit)`, `nobs(fit)` | The fitted formula and the number of ratings retained after preprocessing. |
+| `predict(fit, newdata)`, `fitted(fit)` | Predict an expected score with a credible interval for each supplied row, or extract a vector of expected scores for the fitted ratings. Use `type = "predict"` for a future rating and `type = "probs"` for category probabilities. |
+| `coef(fit, parm = "rater")`, `confint(fit, parm = "rater")` | Posterior mean severity for each rater and its equal-tailed credible interval, in logits. Select one rater by Stan index, e.g. `"rater[3]"`, or change the probability mass with `level = 0.90`. |
+| `plot(fit)` | Posterior intervals for the same facets as the compact model table. Use `plot(fit, type = "wright", newdata = profiles)` for a Wright map, `type = "category"` for category curves, or `plot(fit, type = "pathway", facet = "rater")` for rater fit. |
 | `anova(fit_main, fit_interaction)` | Predictive accuracy when holding out one rating. The first row has the highest ELPD. Read each model's difference alongside its paired standard error and check the count of high Pareto-k observations. |
+
+![Criterion difficulties and rater severities in the writing example. The intervals for Structure and rater C lie above zero.](man/figures/writing-facet-estimates.png)
 
 ### How do ratings change with ability and rater?
 
