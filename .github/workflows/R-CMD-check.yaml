@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # pak uses setup-r's repositories and runner library for these release checks.
+  RENV_CONFIG_AUTOLOADER_ENABLED: "false"
+
 jobs:
   R-CMD-check:
     runs-on: ${{ matrix.config.os }}
