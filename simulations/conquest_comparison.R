@@ -101,7 +101,8 @@ manifest <- list(
     mcmc = list(
       chains = 4L, cores = 4L, warmup = 1000L, iter = 2000L,
       total_post_draws = 4000L, adapt_delta_main = 0.95,
-      adapt_delta_shrinkage = 0.98, max_treedepth = 12L,
+      adapt_delta_default_hier = 0.99, adapt_delta_shrinkage = 0.99,
+      adapt_delta_student_t = 0.995, max_treedepth = 12L,
       save_gq = "minimal"
     ),
     conquest = list(
@@ -1036,7 +1037,7 @@ base_priors_exp2 <- c(
 bayes_methods_exp2 <- list(
   Bayes_Gaussian = list(
     priors = c(base_priors_exp2, list(prior("normal(0, 0.5)", "sd", facet = "item:rater", scale = "marginal", local_shrinkage = "none"))),
-    adapt_delta = 0.96, seed_offset = 1000L
+    adapt_delta = 0.98, seed_offset = 1000L
   ),
   Bayes_StudentT = list(
     priors = c(base_priors_exp2, list(prior("normal(0, 0.5)", "sd", facet = "item:rater", scale = "marginal", local_shrinkage = "student_t"))),
@@ -1044,7 +1045,7 @@ bayes_methods_exp2 <- list(
   ),
   Bayes_Horseshoe = list(
     priors = c(base_priors_exp2, list(prior(sprintf("normal(0, %.4f)", hs_s_cal), "sd", facet = "item:rater", scale = "raw", local_shrinkage = "horseshoe"))),
-    adapt_delta = 0.98, seed_offset = 3000L
+    adapt_delta = 0.99, seed_offset = 3000L
   )
 )
 

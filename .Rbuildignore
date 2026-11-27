@@ -18,3 +18,4 @@
 ^simulations$
 ^\.playwright-mcp$
 ^\.DS_Store$
+^\.github$

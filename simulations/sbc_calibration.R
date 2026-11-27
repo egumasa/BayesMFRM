@@ -7,14 +7,15 @@
 #   4. Bias_Horseshoe : Hierarchical RSM + two-way interaction (regularized horseshoe)
 #
 # Usage (from package root):
-#   Rscript --vanilla simulations/sbc_calibration.R [S=40] [out_dir=simulations/results/sbc]
+#   Rscript --vanilla simulations/sbc_calibration.R [S=200] [out_dir=simulations/results/sbc] [cores=4]
 
 args <- commandArgs(trailingOnly = TRUE)
-S <- if (length(args) >= 1L) as.integer(args[1L]) else 40L
+S <- if (length(args) >= 1L) as.integer(args[1L]) else 200L
 out_dir <- if (length(args) >= 2L) args[2L] else file.path("simulations", "results", "sbc")
-stopifnot(!is.na(S), S >= 10L)
+n_cores <- if (length(args) >= 3L) as.integer(args[3L]) else min(4L, parallel::detectCores(logical = FALSE) %||% 2L)
+stopifnot(!is.na(S), S >= 10L, !is.na(n_cores), n_cores >= 1L)
 
-req <- c("pkgload", "cmdstanr", "posterior", "digest")
+req <- c("pkgload", "cmdstanr", "posterior", "digest", "parallel")
 stopifnot(all(vapply(req, requireNamespace, logical(1), quietly = TRUE)))
 suppressPackageStartupMessages(
   pkgload::load_all(".", quiet = TRUE, export_all = FALSE, export_imports = FALSE)
@@ -27,16 +28,8 @@ dir.create(cache_tmp, recursive = TRUE, showWarnings = FALSE)
 on.exit(unlink(cache_tmp, recursive = TRUE), add = TRUE)
 
 # Connected bridged design: P = 24 examinees, I = 4 items, R = 6 raters, K = 4 categories
-# Each examinee receives 8 ratings (N = 192), ensuring full rank for main + interaction models.
-set.seed(20261127)
+# Coprime stride 5 (gcd(5, 24) = 1) bridges all persons while keeping exact 8 obs/cell (N = 192).
 P <- 24L; I <- 4L; R <- 6L; K <- 4L
-full_grid <- expand.grid(
-  person = sprintf("P%02d", seq_len(P)),
-  item   = sprintf("I%02d", seq_len(I)),
-  rater  = sprintf("R%02d", seq_len(R)),
-  stringsAsFactors = FALSE
-)
-# Balanced incomplete block: every item x rater cell appears 8 times (24 * 8 / 24 = 8)
 cell_grid <- expand.grid(item = sprintf("I%02d", seq_len(I)), rater = sprintf("R%02d", seq_len(R)), stringsAsFactors = FALSE)
 plan <- data.frame(
   person = rep(sprintf("P%02d", seq_len(P)), each = 8L),
@@ -45,7 +38,6 @@ plan <- data.frame(
   stringsAsFactors = FALSE
 )
 for (p in seq_len(P)) {
-  # Coprime stride 5 (gcd(5, 24) = 1) bridges all persons while keeping exact 8 obs/cell
   idx <- (((p - 1L) * 5L + seq_len(8L) - 1L) %% nrow(cell_grid)) + 1L
   rows <- ((p - 1L) * 8L + 1L):(p * 8L)
   plan$item[rows] <- cell_grid$item[idx]
@@ -57,7 +49,7 @@ stopifnot(
   check_design_bmfrm(score ~ person + item + rater + item:rater, plan, K = K)$identifiable
 )
 
-L_ranks <- 39L # Thin posterior to L = 39 draws -> discrete ranks in 0..39 (40 equal-prob bins, 5 bins merged = 8 bins)
+L_ranks <- 39L # Thin posterior to L = 39 draws -> discrete ranks in 0..39 (40 equal-prob states)
 
 sbc_configs <- list(
   list(
@@ -82,7 +74,7 @@ sbc_configs <- list(
       `rater[1]`  = function(p) p$rater[1L],
       `tau[1]`    = function(p) p$tau[1L]
     ),
-    adapt_delta = 0.95
+    adapt_delta = 0.96
   ),
   list(
     id = "Hier_PCM",
@@ -133,7 +125,7 @@ sbc_configs <- list(
       `theta[1]`        = function(p) p$theta[1L],
       `tau[1]`          = function(p) p$tau[1L]
     ),
-    adapt_delta = 0.98
+    adapt_delta = 0.99
   ),
   list(
     id = "Bias_Horseshoe",
@@ -159,17 +151,20 @@ sbc_configs <- list(
       `theta[1]`        = function(p) p$theta[1L],
       `tau[1]`          = function(p) p$tau[1L]
     ),
-    adapt_delta = 0.98
+    adapt_delta = 0.985
   )
 )
 
-cat(sprintf("=== BayesMFRM Simulation-Based Calibration (S = %d replications/model, L = %d ranks) ===\n", S, L_ranks))
+cat(sprintf("=== BayesMFRM Simulation-Based Calibration (S = %d replications/model, L = %d ranks, cores = %d) ===\n",
+            S, L_ranks, n_cores))
 
 all_rank_rows <- list()
 all_diag_rows <- list()
+cfg_ids <- vapply(sbc_configs, `[[`, "", "id")
 
 for (cfg in sbc_configs) {
-  cat(sprintf("\n[%s] Compiling Stan model...\n", cfg$id))
+  cat(sprintf("\n[%s] Compiling Stan model & running %d replications across %d workers...\n", cfg$id, S, n_cores))
+  t0 <- proc.time()[["elapsed"]]
   init_sim <- simulate_bmfrm(
     cfg$formula, plan, K = K, priors = cfg$priors,
     hierarchical = cfg$hierarchical, family = cfg$family,
@@ -181,19 +176,25 @@ for (cfg in sbc_configs) {
     cache_dir = cache_tmp, cpp_options = list(PRECOMPILED_HEADERS = "false")
   )
   stan_vars <- unique(sub("\\[.*$", "", names(cfg$targets)))
+  m_idx <- match(cfg$id, cfg_ids)
 
-  for (s in seq_len(S)) {
+  run_one_rep <- function(s) {
+    rep_dir <- file.path(cache_tmp, sprintf("%s_rep_%04d", cfg$id, s))
+    dir.create(rep_dir, recursive = TRUE, showWarnings = FALSE)
+    on.exit(unlink(rep_dir, recursive = TRUE), add = TRUE)
+
     sim_s <- simulate_bmfrm(
       cfg$formula, plan, K = K, priors = cfg$priors,
       hierarchical = cfg$hierarchical, family = cfg$family,
-      threshold_facet = cfg$threshold_facet, seed = 100000L + match(cfg$id, vapply(sbc_configs, `[[`, "", "id")) * 1000L + s
+      threshold_facet = cfg$threshold_facet, seed = 100000L + m_idx * 10000L + s
     )
     di_s <- prepare_data_bmfrm(sim_s$spec, sim_s$data, cfg$priors)
     fit_s <- comp$model$sample(
       data = di_s$stan_data,
-      seed = 200000L + s,
-      chains = 2L, parallel_chains = 2L,
-      iter_warmup = 500L, iter_sampling = 500L,
+      output_dir = rep_dir,
+      seed = 200000L + m_idx * 10000L + s,
+      chains = 2L, parallel_chains = 1L,
+      iter_warmup = 600L, iter_sampling = 600L,
       adapt_delta = cfg$adapt_delta, max_treedepth = 12L,
       refresh = 0L, show_messages = FALSE, show_exceptions = FALSE
     )
@@ -203,56 +204,58 @@ for (cfg in sbc_configs) {
     thin_idx <- round(seq(1, nrow(draws_mat), length.out = L_ranks))
 
     p_true <- sim_s$parameters[[1L]]
-    for (p_nm in names(cfg$targets)) {
+    set.seed(300000L + m_idx * 10000L + s)
+    r_rows <- lapply(names(cfg$targets), function(p_nm) {
       truth_val <- cfg$targets[[p_nm]](p_true)
       post_full <- draws_mat[, p_nm]
       post_thin <- post_full[thin_idx]
-      # Tie-broken rank in 0..L_ranks
       less <- sum(post_thin < truth_val)
       ties <- sum(post_thin == truth_val)
       rk <- less + if (ties > 0L) sample.int(ties + 1L, 1L) - 1L else 0L
       q_ci <- stats::quantile(post_full, probs = c(0.05, 0.25, 0.75, 0.95))
-
-      all_rank_rows[[length(all_rank_rows) + 1L]] <- data.frame(
-        model = cfg$id,
-        replication = s,
-        parameter = p_nm,
-        truth = truth_val,
-        post_mean = mean(post_full),
-        post_sd = stats::sd(post_full),
-        rank = rk,
-        u = (rk + 0.5) / (L_ranks + 1L),
+      data.frame(
+        model = cfg$id, replication = s, parameter = p_nm,
+        truth = truth_val, post_mean = mean(post_full), post_sd = stats::sd(post_full),
+        rank = rk, u = (rk + 0.5) / (L_ranks + 1L),
         in_50 = (truth_val >= q_ci[2L] && truth_val <= q_ci[3L]),
         in_90 = (truth_val >= q_ci[1L] && truth_val <= q_ci[4L]),
         stringsAsFactors = FALSE
       )
-    }
-
-    all_diag_rows[[length(all_diag_rows) + 1L]] <- data.frame(
-      model = cfg$id,
-      replication = s,
+    })
+    d_row <- data.frame(
+      model = cfg$id, replication = s,
       max_rhat = max(sum_s$rhat, na.rm = TRUE),
       min_ess_bulk = min(sum_s$ess_bulk, na.rm = TRUE),
       n_divergent = sum(diag_s$num_divergent),
       n_max_treedepth = sum(diag_s$num_max_treedepth),
       stringsAsFactors = FALSE
     )
-    unlink(fit_s$output_files())
-    if (s %% 10L == 0L || s == S) {
-      cat(sprintf("  [%s] Completed %d / %d replications\n", cfg$id, s, S))
-    }
+    list(ranks = do.call(rbind, r_rows), diag = d_row)
   }
+
+  res_list <- if (.Platform$OS.type == "unix" && n_cores > 1L) {
+    parallel::mclapply(seq_len(S), run_one_rep, mc.cores = n_cores)
+  } else {
+    lapply(seq_len(S), run_one_rep)
+  }
+
+  bad_workers <- vapply(res_list, function(x) !is.list(x) || inherits(x, "try-error"), logical(1))
+  if (any(bad_workers)) {
+    stop("One or more SBC worker replications failed in ", cfg$id)
+  }
+  all_rank_rows[[length(all_rank_rows) + 1L]] <- do.call(rbind, lapply(res_list, `[[`, "ranks"))
+  all_diag_rows[[length(all_diag_rows) + 1L]] <- do.call(rbind, lapply(res_list, `[[`, "diag"))
+  cat(sprintf("  [%s] Completed %d / %d replications in %.1fs\n",
+              cfg$id, S, S, proc.time()[["elapsed"]] - t0))
 }
 
 ranks_df <- do.call(rbind, all_rank_rows)
 diag_df <- do.call(rbind, all_diag_rows)
 
-# Summarize calibration per (model, parameter):
-# 8 coarse bins (5 adjacent ranks per bin out of 40) -> exact Pearson chi-square uniformity p-value
+# Summarize calibration per (model, parameter) using 8 equal-probability rank bins
 summary_list <- lapply(split(ranks_df, paste(ranks_df$model, ranks_df$parameter, sep = "||")), function(sub) {
   bins8 <- tabulate(floor(sub$rank / 5L) + 1L, nbins = 8L)
   chisq_p <- stats::chisq.test(bins8, p = rep(1 / 8, 8L))$p.value
-  # Empirical ECDF max deviation vs Uniform(0, 1)
   grid_z <- (1:L_ranks) / (L_ranks + 1L)
   ecdf_diff <- vapply(grid_z, function(z) mean(sub$rank < z * (L_ranks + 1L)) - z, numeric(1))
   prior_var <- stats::var(sub$truth)
@@ -281,20 +284,18 @@ write.csv(ranks_df, file.path(out_dir, "sbc_ranks.csv"), row.names = FALSE)
 write.csv(diag_df, file.path(out_dir, "sbc_diagnostics.csv"), row.names = FALSE)
 write.csv(sbc_summary, file.path(out_dir, "sbc_summary.csv"), row.names = FALSE)
 
-# Plot ECDF difference envelopes across all 4 models
 png(file.path(out_dir, "sbc_ecdf_ranks.png"), width = 1600, height = 1000, res = 150)
 par(mfrow = c(2, 2), mar = c(4.2, 4.2, 3.0, 1.0))
 grid_z <- (1:L_ranks) / (L_ranks + 1L)
-# Pointwise 99% simultaneous-approximating binomial envelope (+/- 2.6 * sqrt(z*(1-z)/S))
 band <- 2.6 * sqrt(grid_z * (1 - grid_z) / S)
 cols <- c("#1b6ca8", "#d95f02", "#1b9e77", "#7570b3", "#e7298a", "#66a61e", "#a6761d")
 
 for (cfg in sbc_configs) {
   sub_m <- ranks_df[ranks_df$model == cfg$id, ]
   d_m <- diag_df[diag_df$model == cfg$id, ]
-  plot(grid_z, rep(0, length(grid_z)), type = "n", ylim = c(-max(band) * 1.4, max(band) * 1.4),
+  plot(grid_z, rep(0, length(grid_z)), type = "n", ylim = c(-max(band) * 1.45, max(band) * 1.45),
        xlab = "Fractional prior rank z", ylab = "ECDF(z) - z",
-       main = sprintf("%s (S=%d, div-free=%.0f%%)", cfg$id, S, 100 * mean(d_m$n_divergent == 0L)))
+       main = sprintf("%s (S=%d, div-free=%.1f%%)", cfg$id, S, 100 * mean(d_m$n_divergent == 0L)))
   polygon(c(grid_z, rev(grid_z)), c(band, rev(-band)), col = "#eaeff5", border = NA)
   abline(h = 0, lty = 2, col = "gray40")
   p_names <- unique(sub_m$parameter)

@@ -23,7 +23,7 @@
 #   `cv_bmfrm(..., refit_seed = ...)` and `compare_bmfrm()`.
 
 args <- commandArgs(trailingOnly = TRUE)
-cache_dir <- if (length(args) >= 1L) args[1L] else file.path("stan_cache_ratings1")
+cache_dir <- if (length(args) >= 1L) args[1L] else file.path(tempdir(), "stan_cache_ratings1")
 out_rds   <- if (length(args) >= 2L) args[2L] else file.path(cache_dir, "ratings1_cv_results.rds")
 folds_csv <- if (length(args) >= 3L) args[3L] else file.path("docs", "ratings1_person_folds.csv")
 
