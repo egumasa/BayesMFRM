@@ -49,6 +49,8 @@ test_that("Stan keywords and generated identifiers are rejected before compilati
 
 test_that("ignored fitting options fail before compilation and custom priors remain unknown", {
   calls <- 0L
+  testthat::local_mocked_bindings(cmdstan_version = function() numeric_version("2.39.0"),
+                                 .package = "cmdstanr")
   testthat::local_mocked_bindings(
     check_cmdstan = function() TRUE,
     compile_bmfrm = function(stan_code, ...) {

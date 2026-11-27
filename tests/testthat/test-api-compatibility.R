@@ -75,7 +75,8 @@ test_that("API migration preserves frozen legacy and explicit marginal targets",
   for (name in names(generated)) {
     s <- generated[[name]]; dat <- d; dat$score <- s$y_rep[1L, ]
     expect_identical(s$y_rep, old[[name]]$y)
-    expect_identical(s$parameters, old[[name]]$parameters)
+    # Continuous draws can differ by machine roundoff across math libraries.
+    expect_equal(s$parameters, old[[name]]$parameters, tolerance = 1e-14)
     expect_identical(prepare_data_bmfrm(s$spec, dat)$stan_data, old[[name]]$prepared$data)
   }
   # New defaults use hierarchical = person_facet and weakly-informative tau ~ normal(0, 2)
