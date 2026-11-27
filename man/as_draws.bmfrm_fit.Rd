@@ -26,8 +26,10 @@ the selected draws to bayestestR for parameter-wise summaries.
 \details{
 For HDIs, ROPE decisions, support intervals and Bayes factors, see
 \code{system.file("examples", "evidence-writing.R", package = "BayesMFRM")}.
-The example matches the prior to the constrained interaction cell. For
-held-out predictive comparisons of whole models, see \code{\link[=compare_bmfrm]{compare_bmfrm()}}.
+The example matches the prior to the constrained interaction cell. Converting
+the cell effect and ROPE bounds from logits to adjacent-category odds ratios
+preserves the fraction inside. HDI endpoints depend on the scale of estimation.
+For held-out predictive comparisons of whole models, see \code{\link[=compare_bmfrm]{compare_bmfrm()}}.
 }
 \examples{
 \donttest{

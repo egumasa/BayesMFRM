@@ -54,6 +54,9 @@
 A tibble (when \code{summary = TRUE}) or matrix/3D array (\code{summary = FALSE}).
 An expected rating is on the original rubric scale. A replicated rating
 also includes variation from assigning an observed category.
+For \verb{type = "probs", summary = FALSE}, the dimensions are posterior draw,
+prediction row and score category. To compare pass probabilities, sum the
+passing categories within each draw, then subtract the two rows in that draw.
 }
 \description{
 Computes posterior expectations (\code{type = "epred"}), replicated discrete
@@ -69,6 +72,12 @@ if (check_cmdstan()) {
   p <- predict(fit, ratings[1L, ], type = "probs", summary = FALSE)
   graphics::barplot(colMeans(p[, 1L, ]), names.arg = 1:4, ylim = c(0, 1),
                     xlab = "Rubric category", ylab = "Posterior probability")
+  profiles <- data.frame(person = "P03", item = "Structure", rater = c("A", "B"))
+  p <- predict(fit, profiles, type = "probs", summary = FALSE)
+  pass <- p[, , 3] + p[, , 4]  # Suppose 3 or 4 on Structure counts as a pass.
+  gap <- 100 * (pass[, 2] - pass[, 1])
+  stats::quantile(gap, c(0.025, 0.975))  # Either rater could yield the higher probability.
+  mean(abs(gap) <= 5)  # Probability the difference is within five percentage points.
 }
 }
 }

@@ -2,7 +2,7 @@
 
 ## 0.1.0.9008 (Development)
 
-- Added a writing-assessment example for HDIs, support intervals, ROPE decisions and Bayes factors. The vignette compares the evidence for one interaction with evidence for a prior scale and with held-out predictive accuracy.
+- Added a writing-assessment example for HDIs, support intervals, ROPE decisions and Bayes factors. The vignette compares the evidence for one interaction with evidence for a prior scale and with held-out predictive accuracy. It also shows how the HDI changes on the odds scale and how to compare two raters' pass probabilities at three illustrative cut scores.
 
 - Added `pp_bmfrm()` as a short name for `prior_predict_bmfrm()`. The writing vignette shows how to visualize criterion-by-rater draws with tidybayes and quantify their direction and practical equivalence with bayestestR.
 

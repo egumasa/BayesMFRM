@@ -243,10 +243,15 @@ categories. Observed-data diagnostics such as infit use the original fit.
 
 ### Is B's effect on Structure negligible? Did the ratings change our evidence?
 
+In a Japanese L2 writing study, three trained raters' scores were highly
+correlated, yet they differed in which criteria they scored more severely.
+This motivates examining a particular rater and criterion together.
+[Kondo-Brown (2002)](https://doi.org/10.1191/0265532202lt218oa).
+
 Suppose an assessment team considers a criterion-by-rater interaction within
 ±0.3 logits small enough to tolerate. Choose that margin from the consequences
-for scoring before inspecting the ratings. If the team uses a tolerance in
-score-probability points, evaluate that quantity with `category_contrast()`.
+for scoring before inspecting the ratings. Below we also consider a tolerance
+in percentage points for the probability of receiving a passing score.
 Here the target is B's extra leniency or severity on Structure, in logits.
 The example fits the same 216 ratings with 40,000 post-warmup draws across
 four chains to estimate densities. The earlier sign summaries use 4,000 draws.
@@ -274,7 +279,26 @@ Zero lies inside the 95% HDI even though its density fell after observing the
 ratings. The interval BF answers a different question again. Dividing the
 posterior outside/inside odds (0.317/0.683) by the prior odds (0.368/0.632)
 gives about 0.80. Thus a small positive effect can gain support while the
-practical-equivalence decision remains open.
+practical-equivalence decision remains open. In simulations of two-group
+equivalence tests, conventional thresholds yielded different false-equivalence
+rates for HDI–ROPE and interval BF decisions. Calibrating the methods to the
+same maximum false-equivalence rate gave very similar detection rates in the
+settings studied. For the writing example, report the ROPE probability, the
+interval rule and the BF with its direction so the reader can interpret each.
+[Kruschke (2018)](https://doi.org/10.1177/2515245918771304),
+[Linde et al. (2023)](https://doi.org/10.1037/met0000402) and
+[Campbell and Gustafson (2024)](https://doi.org/10.1037/met0000507).
+
+**What changes on the odds scale?** Exponentiating the interaction gives its
+multiplier on the odds of score $k+1$ versus $k$, relative to the main effects.
+Transforming the ±0.3 logit bounds gives 0.74 to 1.35 (rounded). Using their
+unrounded values selects exactly the same 68.3% of draws. But exponentiating
+the endpoints of the logit HDI gives [0.93, 1.72], whereas computing a 95% HDI
+directly on the odds scale gives [0.89, 1.67]. Both yield an undecided result
+here. Report the scale on which the HDI was computed. The support interval
+uses a posterior-to-prior density ratio, for which the Jacobian cancels under
+this one-to-one transformation. [Etz et al.](https://doi.org/10.1037/met0000660)
+and [Wagenmakers et al. (2022)](https://doi.org/10.1007/s10670-019-00209-z).
 
 The zero-sum constraints matter for the Bayes factors. The fitted Gaussian SD
 of 0.5 belongs to the four independent contrasts in the three-by-three
@@ -289,6 +313,50 @@ zero. Density estimation also affects the last digits, especially in tails.
 [Single-parameter Bayes factors](https://easystats.github.io/bayestestR/reference/bayesfactor_parameters.html)
 and [support intervals](https://easystats.github.io/bayestestR/reference/si.html).
 
+### Would changing the rater change the chance of passing?
+
+Suppose a score of **3 or 4 on Structure** counts as a pass on that criterion.
+In a published essay study, Jin and Eckes found that local severity had its
+greatest impact at the boundary used for pass/fail decisions. Their model
+allowed severity to vary by boundary. Our writing RSM uses shared steps and
+one interaction shift across all adjacent logits. We can still ask how the
+fitted probabilities translate into a passing score.
+[Jin and Eckes (2026)](https://doi.org/10.1111/jedm.70054).
+
+A and B both scored Structure for 14 of the 36 writers. Take P03, the first
+such writer by ID. Predict one further Structure rating by each rater,
+conditioning on the ratings already observed for P03. For each joint
+posterior draw, add the probabilities of scores 3 and 4 for each rater,
+then take B minus A. This keeps uncertainty in the writer's ability shared
+across the two predictions. The difference includes both raters' overall
+severity and their interactions with Structure. In sparse designs the way
+raters are linked through common performances affects sensitivity to rater
+bias. [Wind and Ge (2021)](https://doi.org/10.1177/0013164420988108).
+
+```{r writing-pass-code, eval=FALSE}
+# fit_evidence comes from evidence-writing.R above
+profiles <- data.frame(person = "P03", item = "Structure", rater = c("A", "B"))
+p <- predict(fit_evidence, profiles, type = "probs", summary = FALSE)
+pass <- p[, , 3] + p[, , 4]
+colMeans(pass)                         # A, then B
+gap <- 100 * (pass[, 2] - pass[, 1])   # percentage points
+quantile(gap, c(0.025, 0.975))
+mean(abs(gap) <= 5)
+```
+
+For a minimum score of 3, the posterior mean pass probability is **13.8%
+with A and 16.4% with B**. The paired mean difference is **+2.6 percentage
+points** (95% equal-tailed interval −11.7 to +19.9). Only **57.9%** of
+draws fall within an illustrative ±5-point tolerance. At a minimum of 4,
+the pass probabilities are low for both raters (1.9% and 2.5%) and 95.4%
+of differences are within the same tolerance. These results concern a
+single criterion rating for P03. The cut score and tolerance are illustrative.
+
+```{r writing-cut-figure, echo=FALSE, out.width="100%", fig.alt="B minus A differences in P03's probability of passing Structure at three cut scores. At a cut score of 3 the interval spans differences in both directions well beyond five percentage points."}
+knitr::include_graphics(system.file("help", "figures", "writing-cut-scores.png",
+                                    package = "BayesMFRM"))
+```
+
 ### Does the evidence favor one model, and which model predicts better?
 
 In the writing example, consider two **whole models** with the same interaction.
@@ -302,7 +370,12 @@ ratio is bounded in the forward direction for this tighter Gaussian prior.
 This calculation applies to this prior change and common likelihood. A general
 marginal-likelihood interface for arbitrary `bmfrm_fit` pairs is unavailable.
 
-For prediction, first specify who or what will be new. In `sirt::data.ratings1`
+For prediction, first specify who or what will be new. Holding out an entire
+examinee requires integrating over an unknown ability. When holding out one
+rating, that examinee's remaining ratings can inform their ability.
+[Merkle, Furr and Rabe-Hesketh (2019)](https://doi.org/10.1007/s11336-019-09679-0).
+
+In `sirt::data.ratings1`
 (135 examinees, 1,370 ratings), adding a Gaussian criterion-by-rater interaction
 to the main-effects model increased expected log predictive density (ELPD).
 Leaving out one rating at known facet levels gave a gain of **30.8 nats**

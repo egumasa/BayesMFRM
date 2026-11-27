@@ -35,6 +35,15 @@ print(data.frame(prior_in_rope = diff(stats::pnorm(margin, sd = cell_sd)),
                  BF_unrestricted_vs_zero = exp(point_bf$log_BF),
                  BF_outside_vs_inside = exp(region_bf$log_BF)), row.names = FALSE)
 
+# The same ROPE on the adjacent-category odds scale contains the same draws.
+odds <- exp(b)
+odds_margin <- exp(margin)
+in_odds_rope <- mean(odds >= odds_margin[1] & odds <= odds_margin[2])
+stopifnot(isTRUE(all.equal(in_odds_rope, in_rope)))
+odds_hdi <- bayestestR::hdi(odds, ci = 0.95)
+print(rbind(transformed_logit_HDI = exp(c(lower = hdi$CI_low, upper = hdi$CI_high)),
+            HDI_on_odds_scale = c(lower = odds_hdi$CI_low, upper = odds_hdi$CI_high)))
+
 # Both models keep the same likelihood. Only the prior on the four contrasts changes.
 z <- posterior::as_draws_matrix(posterior::subset_draws(draws, variable = "itemrater_raw"))
 interaction_contrasts <- raw_sd * z
@@ -67,3 +76,32 @@ evidence_plot <- ggplot2::ggplot(curves, ggplot2::aes(logit, density)) +
   ggplot2::theme_minimal(base_size = 12) +
   ggplot2::theme(legend.position = "top", plot.caption = ggplot2::element_text(hjust = 0))
 print(evidence_plot)
+
+# P03 is the first writer by ID whom A and B both scored on Structure.
+profiles <- data.frame(person = "P03", item = "Structure", rater = c("A", "B"))
+score_probs <- predict(fit_evidence, profiles, type = "probs", summary = FALSE)
+cut_scores <- do.call(rbind, lapply(2:4, function(cut) {
+  # Sum the passing categories within each draw and for each rater.
+  pass <- rowSums(score_probs[, , cut:4, drop = FALSE], dims = 2L)
+  difference <- 100 * (pass[, 2] - pass[, 1])
+  bounds <- stats::quantile(difference, c(0.025, 0.975), names = FALSE)
+  data.frame(cut = cut, p_A = mean(pass[, 1]), p_B = mean(pass[, 2]),
+             difference_pp = mean(difference), lower_pp = bounds[1], upper_pp = bounds[2],
+             prob_within_5pp = mean(abs(difference) <= 5))
+}))
+print(cut_scores, row.names = FALSE)
+cut_plot <- ggplot2::ggplot(cut_scores, ggplot2::aes(x = difference_pp, y = cut)) +
+  ggplot2::annotate("rect", xmin = -5, xmax = 5, ymin = -Inf, ymax = Inf, fill = "#E6F0EB") +
+  ggplot2::geom_vline(xintercept = 0, linetype = "dotted", colour = "grey45") +
+  ggplot2::geom_segment(ggplot2::aes(x = lower_pp, xend = upper_pp, yend = cut),
+                        colour = "#1B5C79", linewidth = 1) +
+  ggplot2::geom_point(colour = "#1B5C79", size = 3) +
+  ggplot2::scale_y_reverse(breaks = 2:4, labels = c("2 or higher", "3 or higher", "4")) +
+  ggplot2::labs(title = "How much does rater choice change the chance of passing?",
+                subtitle = "One more Structure rating for writer P03",
+                x = "Pass probability with B minus pass probability with A (percentage points)",
+                y = "Passing score", caption = paste("Dots show posterior means. Lines span 95% equal-tailed intervals.",
+                                                    "Shading marks ±5 percentage points.")) +
+  ggplot2::theme_minimal(base_size = 12) +
+  ggplot2::theme(plot.caption = ggplot2::element_text(hjust = 0))
+print(cut_plot)
