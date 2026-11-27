@@ -51,8 +51,8 @@ lp_half_cauchy <- function(h, s) {
 d <- expand.grid(person = 1:5, item = 1:3, rater = 1:3)
 d$score <- (seq_len(nrow(d)) - 1L) %% 4L + 1L
 
-run_case <- function(name, spec, priors, ref_lp_fn, np) {
-  data <- prepare_data_bmfrm(spec, d, priors)$stan_data
+run_case <- function(name, spec, priors, ref_lp_fn, np, dat_in = d) {
+  data <- prepare_data_bmfrm(spec, dat_in, priors)$stan_data
   code <- build_stan_code(spec, priors)
   compiled <- compile_bmfrm(code, paste0("ext_", name), out,
                             cpp_options = list(PRECOMPILED_HEADERS = "false"))
@@ -226,6 +226,76 @@ rows[[5]] <- run_case("mixed_student_t_hier", s5, ps5, function(q, dat) {
   lp <- -0.5 * sum(c(th_z, mu_z, ls_z, it_z, ta_z)^2) + sum(stats::dt(ra_raw, 3, log = TRUE))
   ll_ordinal(eta, tau, rep(1L, dat$N), dat$X, dat$K) + lp
 }, 14L)
+
+# Cases 6 & 7: Heterogeneous-category PCM (bmfrm_pcm_hetero.stan) with K = c(I1=2, I2=4, I3=6)
+d_het <- expand.grid(person = 1:5, item = c("I1", "I2", "I3"), rater = 1:3, stringsAsFactors = FALSE)
+K_het <- c(I1 = 2L, I2 = 4L, I3 = 6L)
+d_het$score <- vapply(seq_len(nrow(d_het)), function(i) {
+  ((i - 1L) %% K_het[[d_het$item[i]]]) + 1L
+}, integer(1))
+
+ll_hetero_pcm <- function(eta, tau_list, item_id, X, K_lvl) {
+  sum(vapply(seq_along(X), function(n) {
+    j <- item_id[n]
+    Kj <- K_lvl[j]
+    logits <- (0:(Kj - 1L)) * eta[n] - c(0, cumsum(tau_list[[j]]))
+    m <- max(logits)
+    logits[X[n]] - (m + log(sum(exp(logits - m))))
+  }, numeric(1)))
+}
+
+# Case 6: Heterogeneous PCM with marginal Gaussian basis (B_tau_rows) + hierarchical rater
+ps6 <- c(
+  prior("normal(0, 2)", "mean", facet = "person"),
+  prior("lognormal(0, 0.4)", "sd", facet = "person"),
+  prior("normal(0, 0.9)", "item", scale = "marginal"),
+  prior("normal(0, 0.7)", "sd", facet = "rater", scale = "marginal"),
+  prior("normal(0, 0.8)", "tau", scale = "marginal")
+)
+s6 <- parse_bmfrm_formula(score ~ person + item + rater, d_het, K = K_het,
+                          family = "pcm", threshold_facet = "item",
+                          hierarchical = c("person", "rater"), save_gq = "minimal")
+rows[[6]] <- run_case("hetero_pcm_marginal", s6, ps6, function(q, dat) {
+  # Order: theta_raw(5), mu_z(1), ls_z(1), item_raw(2), rater_raw(2), sig_rater(1), tau_raw(0+2+4=6)
+  th_z <- q[1:5]; mu_z <- q[6]; ls_z <- q[7]
+  it_z <- q[8:9]; ra_z <- q[10:11]; hr_s <- q[12]; ta_z <- q[13:18]
+  theta <- 2 * mu_z + exp(0.4 * ls_z) * th_z
+  item <- as.vector(0.9 * H(3, "marginal") %*% it_z)
+  rater <- as.vector(exp(hr_s) * H(3, "marginal") %*% ra_z)
+  tau_list <- list(
+    0,
+    as.vector(0.8 * H(3, "marginal") %*% ta_z[1:2]),
+    as.vector(0.8 * H(5, "marginal") %*% ta_z[3:6])
+  )
+  eta <- theta[dat$person_id] - item[dat$item_id] - rater[dat$rater_id]
+  lp <- -0.5 * sum(c(th_z, mu_z, ls_z, it_z, ra_z, ta_z)^2) + lp_half_normal(hr_s, 0.7)
+  ll_hetero_pcm(eta, tau_list, dat$item_id, dat$X, dat$K_level) + lp
+}, 18L, dat_in = d_het)
+
+# Case 7: Heterogeneous PCM with non-Gaussian raw Student-t steps (ragged centered tau_raw)
+ps7 <- c(
+  prior("normal(0, 2)", "mean", facet = "person"),
+  prior("lognormal(0, 0.4)", "sd", facet = "person"),
+  prior("normal(0, 1)", "item", scale = "marginal"),
+  prior("normal(0, 1)", "rater", scale = "marginal"),
+  prior("student_t(4, 0, 0.6)", "tau")
+)
+s7 <- parse_bmfrm_formula(score ~ person + item + rater, d_het, K = K_het,
+                          family = "pcm", threshold_facet = "item",
+                          hierarchical = "person", save_gq = "full")
+rows[[7]] <- run_case("hetero_pcm_student_t", s7, ps7, function(q, dat) {
+  # Order: theta_raw(5), mu_z(1), ls_z(1), item_raw(2), rater_raw(2), tau_raw(0+3+5=8)
+  th_z <- q[1:5]; mu_z <- q[6]; ls_z <- q[7]
+  it_z <- q[8:9]; ra_z <- q[10:11]; tr <- q[12:19]
+  theta <- 2 * mu_z + exp(0.4 * ls_z) * th_z
+  item <- as.vector(H(3, "marginal") %*% it_z)
+  rater <- as.vector(H(3, "marginal") %*% ra_z)
+  tau_list <- list(0, tr[1:3] - mean(tr[1:3]), tr[4:8] - mean(tr[4:8]))
+  eta <- theta[dat$person_id] - item[dat$item_id] - rater[dat$rater_id]
+  lp <- -0.5 * sum(c(th_z, mu_z, ls_z, it_z, ra_z)^2) +
+    sum(stats::dt(tr / 0.6, df = 4, log = TRUE) - log(0.6))
+  ll_hetero_pcm(eta, tau_list, dat$item_id, dat$X, dat$K_level) + lp
+}, 19L, dat_in = d_het)
 
 res_df <- do.call(rbind, rows)
 utils::write.csv(res_df, file.path(out, "extensions-parity.csv"), row.names = FALSE)

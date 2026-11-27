@@ -30,7 +30,10 @@ Imports:
     purrr,
     magrittr,
     bayesplot,
-    loo
+    loo,
+    stats,
+    utils,
+    tools
 Suggests:
     testthat (>= 3.0.0),
     pkgload,

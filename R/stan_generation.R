@@ -11,6 +11,12 @@
 #' @return character string with complete Stan code
 #' @export
 build_stan_code <- function(spec, priors = NULL, save_gq = NULL) {
+  if (isTRUE(spec$custom_stan)) {
+    stop(
+      "Cannot generate Stan code from a custom_stan specification because its priors and model structure ",
+      "are defined by the external Stan file. Use stancode(fit) or fit$stan_code instead."
+    )
+  }
   if (!is.null(save_gq)) {
     spec$save_gq <- match.arg(save_gq, c("full", "minimal"))
   }

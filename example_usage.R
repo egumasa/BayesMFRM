@@ -20,7 +20,7 @@ data_check <- check_data_suitability(ratings, "score", c("person", "item", "rate
 print(data_check)
 
 # Example 1: Basic 3-facet model
-cat("\\n=== Example 1: Basic Model ===\\n")
+cat("\n=== Example 1: Basic Model ===\n")
 fit1 <- bmfrm(
   score ~ person + item + rater,
   data = ratings,
@@ -34,10 +34,11 @@ print(fit1)
 summary(fit1)
 
 # Example 2: Model with bias term
-cat("\\n=== Example 2: Model with Bias ===\\n") 
+cat("\n=== Example 2: Model with Bias ===\n") 
 fit2 <- bmfrm(
   score ~ person + item + rater + rater:item,
   data = ratings,
+  K = 6,
   chains = 2,
   iter = 1000
 )
@@ -67,4 +68,4 @@ print(head(fair_scores_result))
 crit_cor <- residual_cor_criteria(resid_tbl, unit_facets = c("person", "rater"))
 print(crit_cor)
 
-cat("\\nWorkflow complete! Check results above.\\n")
+cat("\nWorkflow complete! Check results above.\n")

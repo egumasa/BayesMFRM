@@ -61,7 +61,12 @@ Mutually exclusive with \code{ndraws}.}
 \code{ndraws} subsampling, and \code{type = "predict"} replicated draws.}
 
 \item{chunk_size}{Optional observation chunk size for memory-bounded
-streaming evaluation.}
+streaming evaluation. Multi-chunk unseen constrained interaction centering
+offsets (\code{D * 8} bytes each) are cached up to \code{n_concurrent_offsets * D * 8}
+bounded by a 64 MiB cap and freed immediately after their final chunk
+(single-chunk levels retain 0 bytes; workloads exceeding the cap
+deterministically recompute uncached offsets per chunk to preserve the
+memory bound).}
 
 \item{max_cells}{Maximum total numeric entries allowed when \code{summary = FALSE}
 (default \code{5e7}, ~400 MB) to prevent accidental memory exhaustion on large

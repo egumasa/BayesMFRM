@@ -38,7 +38,7 @@ parse_bmfrm_formula <- function(formula,
   
   # Parse formula terms
   response_name <- bmfrm_response_name(formula)
-  terms_obj <- stats::terms(formula)
+  terms_obj <- bmfrm_terms(formula, data = data)
   
   # Check response exists in data
   if (!response_name %in% names(data)) {
@@ -88,13 +88,18 @@ parse_bmfrm_formula <- function(formula,
   # Infer K if not provided
   if (is.null(K)) {
     resp <- data[[response_name]]
-    if (!all(resp == floor(resp), na.rm = TRUE)) {
-      stop("Response must be integer for rating-scale MFRM.")
+    non_na <- !is.na(resp)
+    if (!is.numeric(resp) || any(!is.finite(resp[non_na])) ||
+        any(resp[non_na] != floor(resp[non_na]))) {
+      stop("Response must contain finite integer scores")
     }
-    K <- as.integer(max(resp, na.rm = TRUE))
-    if (min(resp, na.rm = TRUE) < 1) {
+    if (!any(non_na)) {
+      stop("No valid observations remaining after removing missing scores")
+    }
+    if (min(resp[non_na]) < 1) {
       stop("Response values must start from 1, not 0. Add 1 to your scores if needed.")
     }
+    K <- as.integer(max(resp[non_na]))
     message(
       "K was not specified; inferred K = ", K, " from max(", response_name, "). ",
       "If your rating rubric defines higher categories that did not occur in this sample ",
@@ -282,6 +287,19 @@ bmfrm_response_name <- function(formula) {
     stop("The formula response must be a single column name; transform scores in data before fitting")
   }
   as.character(formula[[2L]])
+}
+
+bmfrm_terms <- function(formula, data = NULL) {
+  has_dot <- "." %in% all.vars(formula[[3L]])
+  terms_obj <- if (has_dot && is.data.frame(data)) {
+    stats::terms(formula, data = data)
+  } else {
+    stats::terms(formula)
+  }
+  if (!is.null(attr(terms_obj, "offset"))) {
+    stop("Formula offsets are not supported in BayesMFRM")
+  }
+  terms_obj
 }
 
 #' Get maximum category count from a bmfrm_spec

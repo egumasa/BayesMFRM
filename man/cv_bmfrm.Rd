@@ -44,9 +44,10 @@ never treated as \code{D * M} independent posterior draws.}
 (unless \code{refit_seed} is specified), and Monte Carlo marginalization.}
 
 \item{refit_seed}{Optional integer RNG seed used exclusively for fold MCMC
-refits (\code{refit_seed + fold * 1000L}). Fix \code{refit_seed} while varying \code{seed}
-and \code{M} to assess Monte Carlo integration sensitivity on identical cached
-fold posterior draws.}
+refits. Fix both \code{folds = cv_init$folds} and \code{refit_seed} while varying
+\code{seed} and \code{M} to assess Monte Carlo integration sensitivity on identical
+cached fold posterior draws (varying \code{seed} with \code{folds = NULL} also
+changes the fold split).}
 
 \item{strict_target}{Logical; if \code{TRUE} (default), stops whenever any fold
 causes an unintended facet to become unseen (e.g., holding out a rater
@@ -57,7 +58,15 @@ all ratings of some level).}
 any training fold reduces a facet or interaction axis to \verb{<= 1} observed
 level (collapsing the interaction to 0 df).}
 
-\item{chunk_size}{Optional observation chunk size for streaming evaluation.}
+\item{chunk_size}{Optional observation chunk size for streaming evaluation.
+When an unseen level's observations span multiple chunks, constrained
+two-way interaction centering offsets (\code{D * 8} bytes each) are cached
+across chunks using a byte budget estimated from
+\code{M * n_concurrent_offsets * D * 8} up to a 64 MiB cap (releasing each
+offset immediately after its final chunk and retaining 0 bytes for
+single-chunk levels). If \code{M * n_concurrent_offsets * D * 8} exceeds the
+64 MiB cap, uncached offsets are deterministically recomputed per chunk as
+an intentional memory-vs-compute trade-off with identical numerical results.}
 
 \item{refit_fn}{Optional custom refit function \verb{function(train_df, fold, spec, fit_args)}
 returning a \code{bmfrm_fit} object (useful for custom clusters or fast unit
@@ -104,5 +113,6 @@ For heterogeneous-category PCM, training folds preserve \code{K_by_level} even
 when upper categories are unobserved. Holding out \code{threshold_facet} itself is
 unsupported in v1. Passing \code{mc_ess_m_median >= 5} alone does not guarantee
 integration accuracy: check larger \code{M} and independent \code{seed} values while
-keeping \code{refit_seed} fixed to reuse the same fold posterior draws.
+keeping both \code{folds} (e.g., \code{folds = cv_init$folds}) and \code{refit_seed} fixed
+so the train/test split and cached fold posterior draws remain identical.
 }

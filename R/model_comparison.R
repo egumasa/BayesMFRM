@@ -541,10 +541,7 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
       target_biases[[term]] <- list(
         partner = partner,
         n_known = n_partner,
-        info = list(mode = b_mode, scale = b_scale, sd = sd_b, c2 = c2_b),
-        basis = if (identical(b_mode, "gaussian_basis") && n_partner > 1L) {
-          rsm_prior_basis(n_partner, b_scale)
-        } else NULL
+        info = list(mode = b_mode, scale = b_scale, sd = sd_b, c2 = c2_b)
       )
     } else {
       known_biases[[term]] <- b
@@ -589,76 +586,74 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
       n_obs_group[gi] <<- n_g
       y_g <- resp_all[g_rows]
 
-      # Precompute known-facet base linear predictor eta_known (D x n_g) in chunks or directly
       cs_g <- default_bmfrm_chunk_size(D, n_g, chunk_size)
-      eta_known <- matrix(0, nrow = D, ncol = n_g)
-      if (!identical(target_facet, "person")) {
-        eta_known <- eta_known + params$theta[, known_ids$person[g_rows], drop = FALSE]
-      }
-      for (f in intersect(names(params$facet_draws), known_facets)) {
-        eta_known <- eta_known - params$facet_draws[[f]][, known_ids[[f]][g_rows], drop = FALSE]
-      }
-      for (b in known_biases) {
-        cidx <- known_ids[[b$f1]][g_rows] + (known_ids[[b$f2]][g_rows] - 1L) * b$n1
-        eta_known <- eta_known + b$draws[, cidx, drop = FALSE]
-      }
 
-      # Fixed cum_tau when tau does not depend on target_facet
+      # Fixed cum_tau indices when tau does not depend on target_facet
       fixed_t_idx <- if (!is_target_pcm && (params$tau_info$mode %in% c("pcm", "pcm_ragged"))) {
         known_ids[[params$tau_info$threshold_facet]][g_rows]
       } else NULL
 
-      # Accumulate exact group joint log-lik (D x M) and online logsumexp across m for each rating i in g
+      # Accumulate exact group joint log-lik (D x M) while streaming rating chunks in O(D * cs_g)
       ll_joint_dm <- matrix(0, nrow = D, ncol = M)
-      # Online logsumexp across m for each rating: max_r (D x n_g) and sum_exp_r (D x n_g)
-      max_r <- matrix(-Inf, nrow = D, ncol = n_g)
-      sum_exp_r <- matrix(0, nrow = D, ncol = n_g)
-
       m_seeds <- with_bmfrm_seed(group_seeds[gi], sample.int(.Machine$integer.max, M, replace = TRUE))
+      g_starts <- seq.int(1L, n_g, by = cs_g)
 
-      for (m in seq_len(M)) {
-        # Draw complete joint latent u_{gdm} ONCE for this (g, m) across all D posterior draws
-        u_draw <- with_bmfrm_seed(m_seeds[m], {
-          u_main <- mu_main + sd_main * stats::rnorm(D)
-          b_slices <- list()
-          for (term in names(target_biases)) {
-            tb <- target_biases[[term]]
-            if (tb$n_known <= 1L) {
-              b_slices[[term]] <- matrix(0, nrow = D, ncol = tb$n_known)
-            } else {
-              # Use a child seed derived deterministically inside this m_seed stream
-              sub_s <- sample.int(.Machine$integer.max, 1L)
-              b_slices[[term]] <- draw_constrained_interaction_slice(
-                D, tb$n_known, tb$info, tb$basis, sub_s
-              )
-            }
-          }
-          cum_tau_m <- NULL
-          if (is_target_pcm) {
-            if (K > 2L) {
-              z_dev <- matrix(stats::rnorm(D * (K - 2L)), nrow = D, ncol = K - 2L)
-              tau_m <- pcm_hyper$tau_common + (z_dev %*% t(pcm_hyper$B_dev)) * pcm_hyper$sd
-            } else {
-              tau_m <- pcm_hyper$tau_common
-            }
-            cum_tau_m <- matrix(0, nrow = D, ncol = K)
-            if (K > 1L) {
-              for (k in 2:K) cum_tau_m[, k] <- cum_tau_m[, k - 1L] + tau_m[, k - 1L]
-            }
-          }
-          list(u_main = u_main, b_slices = b_slices, cum_tau = cum_tau_m)
-        })
+      p_idx_by_term <- lapply(target_biases, function(tb) known_ids[[tb$partner]][g_rows])
+      scope_cols_by_term <- lapply(p_idx_by_term, function(v) sort(unique(v)))
+      n_active_terms <- sum(vapply(target_biases, function(tb) tb$n_known > 1L, logical(1)))
+      g_cache <- if (length(g_starts) > 1L && n_active_terms > 0L) {
+        new_interaction_offset_cache(D, cs_g, n_concurrent_offsets = as.numeric(M) * n_active_terms)
+      } else NULL
 
-        # Evaluate all observations i in g in chunks keeping u_{gdm} strictly fixed!
-        joint_d <- numeric(D)
-        g_starts <- seq.int(1L, n_g, by = cs_g)
-        for (gs in g_starts) {
-          ge <- min(n_g, gs + cs_g - 1L)
-          loc <- gs:ge
-          nc <- length(loc)
+      for (gs in g_starts) {
+        ge <- min(n_g, gs + cs_g - 1L)
+        loc <- gs:ge
+        rows_c <- g_rows[loc]
+        nc <- length(loc)
+        need_after <- (ge < n_g)
 
-          # Linear predictor: eta_known +/- u_main + constrained interactions
-          eta_c <- eta_known[, loc, drop = FALSE]
+        # Known-facet base linear predictor strictly for this observation chunk (D x nc)
+        eta_known_c <- matrix(0, nrow = D, ncol = nc)
+        if (!identical(target_facet, "person")) {
+          eta_known_c <- eta_known_c + params$theta[, known_ids$person[rows_c], drop = FALSE]
+        }
+        for (f in intersect(names(params$facet_draws), known_facets)) {
+          eta_known_c <- eta_known_c - params$facet_draws[[f]][, known_ids[[f]][rows_c], drop = FALSE]
+        }
+        for (b in known_biases) {
+          cidx <- known_ids[[b$f1]][rows_c] + (known_ids[[b$f2]][rows_c] - 1L) * b$n1
+          eta_known_c <- eta_known_c + b$draws[, cidx, drop = FALSE]
+        }
+
+        max_c <- matrix(-Inf, nrow = D, ncol = nc)
+        sum_exp_c <- matrix(0, nrow = D, ncol = nc)
+
+        for (m in seq_len(M)) {
+          u_draw <- with_bmfrm_seed(m_seeds[m], {
+            u_main <- mu_main + sd_main * stats::rnorm(D)
+            sub_seeds <- stats::setNames(integer(length(target_biases)), names(target_biases))
+            for (term in names(target_biases)) {
+              if (target_biases[[term]]$n_known > 1L) {
+                sub_seeds[[term]] <- sample.int(.Machine$integer.max, 1L)
+              }
+            }
+            cum_tau_m <- NULL
+            if (is_target_pcm) {
+              if (K > 2L) {
+                z_dev <- matrix(stats::rnorm(D * (K - 2L)), nrow = D, ncol = K - 2L)
+                tau_m <- pcm_hyper$tau_common + (z_dev %*% t(pcm_hyper$B_dev)) * pcm_hyper$sd
+              } else {
+                tau_m <- pcm_hyper$tau_common
+              }
+              cum_tau_m <- matrix(0, nrow = D, ncol = K)
+              if (K > 1L) {
+                for (k in 2:K) cum_tau_m[, k] <- cum_tau_m[, k - 1L] + tau_m[, k - 1L]
+              }
+            }
+            list(u_main = u_main, sub_seeds = sub_seeds, cum_tau = cum_tau_m)
+          })
+
+          eta_c <- eta_known_c
           if (identical(target_facet, "person")) {
             eta_c <- eta_c + u_draw$u_main
           } else {
@@ -666,8 +661,19 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
           }
           for (term in names(target_biases)) {
             tb <- target_biases[[term]]
-            p_idx <- known_ids[[tb$partner]][g_rows[loc]]
-            eta_c <- eta_c + u_draw$b_slices[[term]][, p_idx, drop = FALSE]
+            if (tb$n_known > 1L) {
+              eta_c <- eta_c + eval_constrained_interaction_chunk(
+                D = D,
+                n_known = tb$n_known,
+                b_info = tb$info,
+                slice_seed = u_draw$sub_seeds[[term]],
+                chunk_k_idx = p_idx_by_term[[term]][loc],
+                scope_cols = scope_cols_by_term[[term]],
+                need_after_chunk = need_after,
+                cache_key = paste0(term, ":", m),
+                offset_cache = g_cache
+              )
+            }
           }
 
           if (!is_target_pcm && identical(params$tau_info$mode, "pcm_ragged")) {
@@ -687,7 +693,6 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
               }
             }
 
-            # Two-pass log-likelihood for chunk
             max_l <- matrix(0, nrow = D, ncol = nc)
             if (K >= 2L) {
               for (k in 2:K) max_l <- pmax(max_l, (k - 1) * eta_c - get_ct(k))
@@ -717,24 +722,35 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
             }
           }
 
-          # Accumulate exact group joint sum_{i in g} l_i(phi_d, u_{gdm})
-          joint_d <- joint_d + rowSums(ll_c)
-
-          # Online logsumexp across m for each rating i in g
-          prev_max <- max_r[, loc, drop = FALSE]
+          ll_joint_dm[, m] <- ll_joint_dm[, m] + rowSums(ll_c)
+          prev_max <- max_c
           new_max <- pmax(prev_max, ll_c)
           prev_scale <- ifelse(is.finite(prev_max), exp(prev_max - new_max), 0)
-          sum_exp_r[, loc] <- sum_exp_r[, loc, drop = FALSE] * prev_scale + exp(ll_c - new_max)
-          max_r[, loc] <- new_max
+          sum_exp_c <- sum_exp_c * prev_scale + exp(ll_c - new_max)
+          max_c <- new_max
         }
-        ll_joint_dm[, m] <- joint_d
+
+        # Exact rating-level marginal lpd summarized immediately for this chunk (D x nc)
+        lpd_c_mat <- max_c + log(sum_exp_c / M)
+        for (loc_i in seq_len(nc)) {
+          v_d <- lpd_c_mat[, loc_i]
+          lpd_pointwise[rows_c[loc_i]] <<- logmeanexp_vec(v_d)
+          if (cl$valid && cl$n_chains >= 2L && cl$n_iter >= 4L) {
+            mi <- max(v_d)
+            p_mat <- matrix(exp(v_d - mi), nrow = cl$n_iter, ncol = cl$n_chains)
+            p_bar <- mean(p_mat)
+            if (is.finite(p_bar) && p_bar > 0) {
+              se_p <- tryCatch(posterior::mcse_mean(p_mat), error = function(e) NA_real_)
+              if (is.finite(se_p) && se_p >= 0) mcse_pointwise[rows_c[loc_i]] <<- se_p / p_bar
+            }
+          }
+        }
       }
 
-      # 1. Exact group joint lpd: logmeanexp_d( logmeanexp_m( sum_{i in g} l_i ) )
+      # Exact group joint lpd: logmeanexp_d( logmeanexp_m( sum_{i in g} l_i ) )
       lpd_g_d <- logmeanexp_rows(ll_joint_dm)
       lpd_group[gi] <<- logmeanexp_vec(lpd_g_d)
 
-      # Monte Carlo integration ESS across m (1..M) for each posterior draw d
       if (M > 1L) {
         m_row <- apply(ll_joint_dm, 1L, max)
         w_dm <- exp(ll_joint_dm - m_row)
@@ -747,7 +763,6 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
         mc_ess_m_min[gi] <<- 1
       }
 
-      # Chain-aware MCSE on group joint lpd (using D posterior draws, never D*M!)
       if (cl$valid && cl$n_chains >= 2L && cl$n_iter >= 4L) {
         mg <- max(lpd_g_d)
         p_mat <- matrix(exp(lpd_g_d - mg), nrow = cl$n_iter, ncol = cl$n_chains)
@@ -755,22 +770,6 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
         if (is.finite(p_bar) && p_bar > 0) {
           se_p <- tryCatch(posterior::mcse_mean(p_mat), error = function(e) NA_real_)
           if (is.finite(se_p) && se_p >= 0) mcse_group[gi] <<- se_p / p_bar
-        }
-      }
-
-      # 2. Exact rating-level marginal lpd: logmeanexp_d( logmeanexp_m( l_i ) )
-      lpd_i_mat <- max_r + log(sum_exp_r / M) # D x n_g
-      for (loc_i in seq_len(n_g)) {
-        v_d <- lpd_i_mat[, loc_i]
-        lpd_pointwise[g_rows[loc_i]] <<- logmeanexp_vec(v_d)
-        if (cl$valid && cl$n_chains >= 2L && cl$n_iter >= 4L) {
-          mi <- max(v_d)
-          p_mat <- matrix(exp(v_d - mi), nrow = cl$n_iter, ncol = cl$n_chains)
-          p_bar <- mean(p_mat)
-          if (is.finite(p_bar) && p_bar > 0) {
-            se_p <- tryCatch(posterior::mcse_mean(p_mat), error = function(e) NA_real_)
-            if (is.finite(se_p) && se_p >= 0) mcse_pointwise[g_rows[loc_i]] <<- se_p / p_bar
-          }
         }
       }
     }
@@ -792,6 +791,253 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
   )
 }
 
+#' Offset a non-negative 32-bit RNG seed without integer overflow
+#' @keywords internal
+offset_bmfrm_seed <- function(base_seed, step = 0L) {
+  if (is.null(base_seed)) return(NULL)
+  s <- as.numeric(base_seed)
+  modulus <- as.numeric(.Machine$integer.max) + 1
+  if (length(s) != 1L || !is.finite(s) || s != floor(s) || s < 0 || s > .Machine$integer.max) {
+    stop("seed must be a non-negative 32-bit integer (0..", .Machine$integer.max, ")")
+  }
+  st <- as.numeric(step)
+  if (length(st) != 1L || !is.finite(st) || st != floor(st)) {
+    stop("step must be a finite integer")
+  }
+  as.integer((s + st) %% modulus)
+}
+
+#' Build per-group known-partner scope and last-row liveness metadata
+#' @keywords internal
+build_group_bias_scope <- function(plan, g_rows) {
+  if (length(plan$bias_new) == 0L) return(NULL)
+  out <- list()
+  for (term in names(plan$bias_new)) {
+    bn <- plan$bias_new[[term]]
+    if (identical(bn$mode, "zero")) next
+    i1_g <- plan$ids[[bn$f1]][g_rows]
+    i2_g <- plan$ids[[bn$f2]][g_rows]
+    n2_new <- length(bn$col_seeds)
+    c_scope <- vector("list", n2_new)
+    c_last <- integer(n2_new)
+    if (n2_new > 0L && bn$n1_known > 1L) {
+      kn <- which(i1_g <= bn$n1_known & i2_g > bn$n2_known)
+      if (length(kn)) {
+        u2 <- i2_g[kn] - bn$n2_known
+        sp1 <- split.default(i1_g[kn], u2)
+        for (nm in names(sp1)) c_scope[[as.integer(nm)]] <- sort(unique(sp1[[nm]]))
+        rk <- g_rows[kn]
+        for (k_i in seq_along(kn)) {
+          u_i <- u2[k_i]
+          if (rk[k_i] > c_last[u_i]) c_last[u_i] <- rk[k_i]
+        }
+      }
+    }
+    n1_new <- length(bn$row_seeds)
+    r_scope <- vector("list", n1_new)
+    r_last <- integer(n1_new)
+    if (n1_new > 0L && bn$n2_known > 1L) {
+      nk <- which(i1_g > bn$n1_known & i2_g <= bn$n2_known)
+      if (length(nk)) {
+        u1 <- i1_g[nk] - bn$n1_known
+        sp2 <- split.default(i2_g[nk], u1)
+        for (nm in names(sp2)) r_scope[[as.integer(nm)]] <- sort(unique(sp2[[nm]]))
+        rk <- g_rows[nk]
+        for (k_i in seq_along(nk)) {
+          u_i <- u1[k_i]
+          if (rk[k_i] > r_last[u_i]) r_last[u_i] <- rk[k_i]
+        }
+      }
+    }
+    out[[term]] <- list(
+      col_scope = c_scope, col_last_row = c_last,
+      row_scope = r_scope, row_last_row = r_last
+    )
+  }
+  out
+}
+
+#' Score a CV fold with arbitrary hierarchical unseen facets (strict_target = FALSE)
+#' @keywords internal
+score_general_unseen_fold <- function(fold_fit, test_df, target_facet = NULL,
+                                      M = 100L, seed = NULL, chunk_size = NULL) {
+  run_all <- function() {
+    spec <- fold_fit$spec
+    base_plan <- prepare_eval_plan(
+      fold_fit, test_df,
+      allow_new_levels = TRUE,
+      sample_new_levels = "hierarchical"
+    )
+    base_plan$offset_cache <- NULL
+    params <- base_plan$params
+    D <- params$D
+    cl <- extract_verified_chain_layout(fold_fit$fit, D)
+    resp_all <- as.integer(test_df[[spec$response]])
+    N_test <- nrow(test_df)
+
+    lpd_pointwise <- numeric(N_test)
+    mcse_pointwise <- rep(NA_real_, N_test)
+
+    summarize_chunk_lpd <- function(lpd_c_mat, rows_c) {
+      for (loc_i in seq_along(rows_c)) {
+        v_d <- lpd_c_mat[, loc_i]
+        lpd_pointwise[rows_c[loc_i]] <<- logmeanexp_vec(v_d)
+        if (cl$valid && cl$n_chains >= 2L && cl$n_iter >= 4L) {
+          mi <- max(v_d)
+          p_mat <- matrix(exp(v_d - mi), nrow = cl$n_iter, ncol = cl$n_chains)
+          p_bar <- mean(p_mat)
+          if (is.finite(p_bar) && p_bar > 0) {
+            se_p <- tryCatch(posterior::mcse_mean(p_mat), error = function(e) NA_real_)
+            if (is.finite(se_p) && se_p >= 0) mcse_pointwise[rows_c[loc_i]] <<- se_p / p_bar
+          }
+        }
+      }
+    }
+
+    if (is.null(target_facet)) {
+      is_unseen_row <- rep(FALSE, N_test)
+      for (f in names(base_plan$main_new)) {
+        is_unseen_row <- is_unseen_row | (base_plan$ids[[f]] > base_plan$main_new[[f]]$n_known)
+      }
+      known_rows <- which(!is_unseen_row)
+      unseen_rows <- which(is_unseen_row)
+
+      if (length(known_rows) > 0L) {
+        sc_k <- score_rating_fold(fold_fit, test_df[known_rows, , drop = FALSE], chunk_size = chunk_size)
+        lpd_pointwise[known_rows] <- sc_k$lpd_pointwise
+        mcse_pointwise[known_rows] <- sc_k$mcse_pointwise
+      }
+
+      if (length(unseen_rows) > 0L) {
+        n_u <- length(unseen_rows)
+        cs_u <- default_bmfrm_chunk_size(D, n_u, chunk_size)
+        m_seeds <- sample.int(.Machine$integer.max, M, replace = M > .Machine$integer.max)
+        u_starts <- seq.int(1L, n_u, by = cs_u)
+        n_conc_u <- if (length(u_starts) > 1L && length(base_plan$bias_new) > 0L) {
+          count_concurrent_interaction_slices(base_plan$ids, base_plan$bias_new, unseen_rows, cs_u)
+        } else 0L
+        r_cache <- if (n_conc_u > 0L) {
+          new_interaction_offset_cache(D, cs_u, n_concurrent_offsets = as.numeric(M) * n_conc_u)
+        } else NULL
+        for (us in u_starts) {
+          ue <- min(n_u, us + cs_u - 1L)
+          rows_c <- unseen_rows[us:ue]
+          nc <- length(rows_c)
+          max_c <- matrix(-Inf, nrow = D, ncol = nc)
+          sum_exp_c <- matrix(0, nrow = D, ncol = nc)
+          for (m in seq_len(M)) {
+            ll_c <- eval_bmfrm_chunk_from_plan(
+              base_plan, rows_c, resp_chunk = resp_all[rows_c],
+              compute_mu = FALSE, compute_log_lik = TRUE,
+              seed_salt = m_seeds[m], offset_cache = r_cache
+            )$log_lik
+            prev_max <- max_c
+            new_max <- pmax(prev_max, ll_c)
+            prev_scale <- ifelse(is.finite(prev_max), exp(prev_max - new_max), 0)
+            sum_exp_c <- sum_exp_c * prev_scale + exp(ll_c - new_max)
+            max_c <- new_max
+          }
+          summarize_chunk_lpd(max_c + log(sum_exp_c / M), rows_c)
+        }
+      }
+
+      return(list(lpd_pointwise = lpd_pointwise, mcse_pointwise = mcse_pointwise))
+    }
+
+    g_vals <- as.character(test_df[[target_facet]])
+    u_groups <- unique(g_vals)
+    G <- length(u_groups)
+
+    lpd_group <- numeric(G)
+    mcse_group <- rep(NA_real_, G)
+    mc_ess_m_med <- numeric(G)
+    mc_ess_m_min <- numeric(G)
+    n_obs_group <- integer(G)
+
+    group_seeds <- sample.int(.Machine$integer.max, G, replace = TRUE)
+    for (gi in seq_len(G)) {
+      g_rows <- which(g_vals == u_groups[gi])
+      n_g <- length(g_rows)
+      n_obs_group[gi] <- n_g
+      cs_g <- default_bmfrm_chunk_size(D, n_g, chunk_size)
+      ll_joint_dm <- matrix(0, nrow = D, ncol = M)
+
+      m_seeds <- with_bmfrm_seed(group_seeds[gi], sample.int(.Machine$integer.max, M, replace = M > .Machine$integer.max))
+      g_starts <- seq.int(1L, n_g, by = cs_g)
+      g_scope <- build_group_bias_scope(base_plan, g_rows)
+      n_conc_g <- if (length(g_starts) > 1L && length(base_plan$bias_new) > 0L) {
+        count_concurrent_interaction_slices(base_plan$ids, base_plan$bias_new, g_rows, cs_g)
+      } else 0L
+      g_cache <- if (n_conc_g > 0L) {
+        new_interaction_offset_cache(D, cs_g, n_concurrent_offsets = as.numeric(M) * n_conc_g)
+      } else NULL
+
+      for (gs in g_starts) {
+        ge <- min(n_g, gs + cs_g - 1L)
+        rows_c <- g_rows[gs:ge]
+        nc <- length(rows_c)
+        max_c <- matrix(-Inf, nrow = D, ncol = nc)
+        sum_exp_c <- matrix(0, nrow = D, ncol = nc)
+        for (m in seq_len(M)) {
+          ll_c <- eval_bmfrm_chunk_from_plan(
+            base_plan, rows_c, resp_chunk = resp_all[rows_c],
+            compute_mu = FALSE, compute_log_lik = TRUE,
+            seed_salt = m_seeds[m], offset_cache = g_cache,
+            bias_scope_override = g_scope
+          )$log_lik
+          ll_joint_dm[, m] <- ll_joint_dm[, m] + rowSums(ll_c)
+          prev_max <- max_c
+          new_max <- pmax(prev_max, ll_c)
+          prev_scale <- ifelse(is.finite(prev_max), exp(prev_max - new_max), 0)
+          sum_exp_c <- sum_exp_c * prev_scale + exp(ll_c - new_max)
+          max_c <- new_max
+        }
+        summarize_chunk_lpd(max_c + log(sum_exp_c / M), rows_c)
+      }
+
+      lpd_g_d <- logmeanexp_rows(ll_joint_dm)
+      lpd_group[gi] <- logmeanexp_vec(lpd_g_d)
+
+      if (M > 1L) {
+        m_row <- apply(ll_joint_dm, 1L, max)
+        w_dm <- exp(ll_joint_dm - m_row)
+        w_dm <- w_dm / rowSums(w_dm)
+        ess_d <- 1 / rowSums(w_dm * w_dm)
+        mc_ess_m_med[gi] <- stats::median(ess_d)
+        mc_ess_m_min[gi] <- min(ess_d)
+      } else {
+        mc_ess_m_med[gi] <- 1
+        mc_ess_m_min[gi] <- 1
+      }
+
+      if (cl$valid && cl$n_chains >= 2L && cl$n_iter >= 4L) {
+        mg <- max(lpd_g_d)
+        p_mat <- matrix(exp(lpd_g_d - mg), nrow = cl$n_iter, ncol = cl$n_chains)
+        p_bar <- mean(p_mat)
+        if (is.finite(p_bar) && p_bar > 0) {
+          se_p <- tryCatch(posterior::mcse_mean(p_mat), error = function(e) NA_real_)
+          if (is.finite(se_p) && se_p >= 0) mcse_group[gi] <- se_p / p_bar
+        }
+      }
+    }
+
+    list(
+      lpd_pointwise = lpd_pointwise,
+      mcse_pointwise = mcse_pointwise,
+      group_scores = tibble::tibble(
+        group = u_groups,
+        n_obs = n_obs_group,
+        elpd = lpd_group,
+        mcse = mcse_group,
+        mc_ess_m_median = mc_ess_m_med,
+        mc_ess_m_min = mc_ess_m_min
+      )
+    )
+  }
+
+  if (!is.null(seed)) with_bmfrm_seed(seed, run_all()) else run_all()
+}
+
 #' Target-aware K-fold cross-validation for BayesMFRM models
 #'
 #' Performs K-fold cross-validation with explicit prediction-target
@@ -810,7 +1056,8 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
 #' when upper categories are unobserved. Holding out `threshold_facet` itself is
 #' unsupported in v1. Passing `mc_ess_m_median >= 5` alone does not guarantee
 #' integration accuracy: check larger `M` and independent `seed` values while
-#' keeping `refit_seed` fixed to reuse the same fold posterior draws.
+#' keeping both `folds` (e.g., `folds = cv_init$folds`) and `refit_seed` fixed
+#' so the train/test split and cached fold posterior draws remain identical.
 #'
 #' @param object A `bmfrm_fit` object.
 #' @param target Prediction target: `"rating"` (leave ratings out, known facet
@@ -828,9 +1075,10 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
 #' @param seed Optional integer RNG seed for fold construction, fold refits
 #'   (unless `refit_seed` is specified), and Monte Carlo marginalization.
 #' @param refit_seed Optional integer RNG seed used exclusively for fold MCMC
-#'   refits (`refit_seed + fold * 1000L`). Fix `refit_seed` while varying `seed`
-#'   and `M` to assess Monte Carlo integration sensitivity on identical cached
-#'   fold posterior draws.
+#'   refits. Fix both `folds = cv_init$folds` and `refit_seed` while varying
+#'   `seed` and `M` to assess Monte Carlo integration sensitivity on identical
+#'   cached fold posterior draws (varying `seed` with `folds = NULL` also
+#'   changes the fold split).
 #' @param strict_target Logical; if `TRUE` (default), stops whenever any fold
 #'   causes an unintended facet to become unseen (e.g., holding out a rater
 #'   also drops an examinee rated only by that rater, or a rating fold drops
@@ -839,6 +1087,14 @@ score_grouped_fold <- function(fold_fit, test_df, target_facet, M = 100L,
 #'   any training fold reduces a facet or interaction axis to `<= 1` observed
 #'   level (collapsing the interaction to 0 df).
 #' @param chunk_size Optional observation chunk size for streaming evaluation.
+#'   When an unseen level's observations span multiple chunks, constrained
+#'   two-way interaction centering offsets (`D * 8` bytes each) are cached
+#'   across chunks using a byte budget estimated from
+#'   `M * n_concurrent_offsets * D * 8` up to a 64 MiB cap (releasing each
+#'   offset immediately after its final chunk and retaining 0 bytes for
+#'   single-chunk levels). If `M * n_concurrent_offsets * D * 8` exceeds the
+#'   64 MiB cap, uncached offsets are deterministically recomputed per chunk as
+#'   an intentional memory-vs-compute trade-off with identical numerical results.
 #' @param refit_fn Optional custom refit function `function(train_df, fold, spec, fit_args)`
 #'   returning a `bmfrm_fit` object (useful for custom clusters or fast unit
 #'   tests). When `NULL`, refits via [bmfrm()] using the locked model
@@ -889,6 +1145,85 @@ cv_bmfrm <- function(object,
     stop("M must be a positive integer")
   }
   M <- as.integer(M)
+  seed <- offset_bmfrm_seed(seed, 0L)
+  refit_seed <- offset_bmfrm_seed(refit_seed, 0L)
+
+  overrides <- list(...)
+  if (length(overrides) > 0L) {
+    if (is.null(names(overrides)) || any(!nzchar(names(overrides)))) {
+      stop("Additional refit arguments in '...' must be named")
+    }
+    locked_bmfrm <- intersect(
+      names(overrides),
+      c("formula", "data", "K", "priors", "stan_file", "family",
+        "threshold_facet", "hierarchical", "save_csvs", "save_gq", "obs_id")
+    )
+    if (length(locked_bmfrm) > 0L) {
+      stop("Cannot override locked model/data specification argument(s) in cv_bmfrm(): ",
+           paste(locked_bmfrm, collapse = ", "))
+    }
+    reserved_dots <- intersect(
+      names(overrides),
+      c("seed", "parallel_chains", "output_dir", "iter_sampling", "iter_warmup", "save_warmup")
+    )
+    if (length(reserved_dots) > 0L) {
+      stop("Do not pass reserved cmdstanr argument(s) (",
+           paste(reserved_dots, collapse = ", "),
+           ") in '...'; use iter, warmup, chains, cores, cache_dir, seed, and refit_seed instead")
+    }
+  }
+  base_fit_args <- object$fit_args %||% list(
+    formula = spec$formula,
+    K = spec$K,
+    priors = object$priors,
+    stan_file = NULL,
+    family = spec$family,
+    threshold_facet = spec$threshold_facet,
+    hierarchical = spec$hierarchical,
+    save_gq = "minimal",
+    cache_dir = spec$cache_dir %||% "stan_cache",
+    cpp_options = list(),
+    iter = 2000L,
+    warmup = 1000L,
+    chains = 4L,
+    cores = getOption("mc.cores", 1L),
+    seed = seed,
+    sampler_args = list()
+  )
+  iter_cv <- overrides$iter %||% base_fit_args$iter %||% 2000L
+  if (!is.numeric(iter_cv) || length(iter_cv) != 1L || !is.finite(iter_cv) ||
+      iter_cv != floor(iter_cv) || iter_cv < 2L) {
+    stop("iter must be a finite integer >= 2")
+  }
+  warmup_cv <- if (!is.null(overrides$warmup)) {
+    overrides$warmup
+  } else if (!is.null(overrides$iter)) {
+    floor(iter_cv / 2)
+  } else {
+    base_fit_args$warmup %||% floor(iter_cv / 2)
+  }
+  if (!is.numeric(warmup_cv) || length(warmup_cv) != 1L || !is.finite(warmup_cv) ||
+      warmup_cv != floor(warmup_cv) || warmup_cv < 0L || warmup_cv >= iter_cv) {
+    stop("warmup must be a non-negative integer strictly less than iter")
+  }
+  chains_cv <- overrides$chains %||% base_fit_args$chains %||% 4L
+  if (!is.numeric(chains_cv) || length(chains_cv) != 1L || !is.finite(chains_cv) ||
+      chains_cv != floor(chains_cv) || chains_cv < 1L) {
+    stop("chains must be a positive integer")
+  }
+  cores_cv <- overrides$cores %||% base_fit_args$cores %||% getOption("mc.cores", 1L)
+  if (is.null(cores_cv) || (length(cores_cv) == 1L && is.na(cores_cv) && !("cores" %in% names(overrides)))) {
+    cores_cv <- 1L
+  }
+  if (!is.numeric(cores_cv) || length(cores_cv) != 1L || !is.finite(cores_cv) ||
+      cores_cv != floor(cores_cv) || cores_cv < 1L) {
+    stop("cores must be a positive integer")
+  }
+  refit_mode_cv <- match.arg(overrides$refit %||% "on_change", c("on_change", "never", "always"))
+  cache_dir_cv <- overrides$cache_dir %||% base_fit_args$cache_dir %||% spec$cache_dir %||% "stan_cache"
+  if (!is.character(cache_dir_cv) || length(cache_dir_cv) != 1L || is.na(cache_dir_cv) || !nzchar(cache_dir_cv)) {
+    stop("cache_dir must be a non-empty character path")
+  }
 
   # 1. Resolve target facet and validate full model hierarchy for unseen levels
   target_facet <- switch(
@@ -966,6 +1301,16 @@ cv_bmfrm <- function(object,
     }
     all_unseen_facets <- union(all_unseen_facets, names(unseen_k))
 
+    if (!is.null(target_facet)) {
+      tr_t <- levels(train_df[[target_facet]])
+      te_t <- unique(as.character(test_df[[target_facet]]))
+      overlap_t <- intersect(tr_t, te_t)
+      if (length(overlap_t)) {
+        stop("Fold ", k, " has overlapping '", target_facet, "' levels between train and test: ",
+             paste(utils::head(overlap_t, 5L), collapse = ", "))
+      }
+    }
+
     if (isTRUE(strict_target)) {
       if (is.null(target_facet)) {
         if (length(unseen_k)) {
@@ -978,13 +1323,6 @@ cv_bmfrm <- function(object,
           )
         }
       } else {
-        tr_t <- levels(train_df[[target_facet]])
-        te_t <- unique(as.character(test_df[[target_facet]]))
-        overlap_t <- intersect(tr_t, te_t)
-        if (length(overlap_t)) {
-          stop("Fold ", k, " has overlapping '", target_facet, "' levels between train and test: ",
-               paste(utils::head(overlap_t, 5L), collapse = ", "))
-        }
         collateral <- setdiff(names(unseen_k), target_facet)
         if (length(collateral)) {
           details <- paste(vapply(collateral, function(f) {
@@ -1012,6 +1350,11 @@ cv_bmfrm <- function(object,
         ") unseen in training, which is not supported in v1 heterogeneous-category PCM ",
         "(even when strict_target = FALSE), because their rubric category count and step distribution are undefined."
       )
+    }
+
+    # Validate full model hierarchy for every unseen facet before running any refits
+    for (uf in names(unseen_k)) {
+      validate_cv_hierarchy(spec, uf)
     }
 
     # Check training facet sizes (1-level degeneracy for interactions)
@@ -1050,29 +1393,17 @@ cv_bmfrm <- function(object,
   }
 
   # 4. Locked refit specification (never re-infer K or alter priors/sampler settings)
-  base_fit_args <- object$fit_args %||% list(
-    formula = spec$formula,
-    K = spec$K,
-    priors = object$priors,
-    stan_file = NULL,
-    family = spec$family,
-    threshold_facet = spec$threshold_facet,
-    hierarchical = spec$hierarchical,
-    save_gq = "minimal",
-    cache_dir = spec$cache_dir %||% "stan_cache",
-    cpp_options = list(),
-    iter = 2000L,
-    warmup = 1000L,
-    chains = 4L,
-    cores = getOption("mc.cores", 1L),
-    seed = seed,
-    sampler_args = list()
-  )
-  overrides <- list(...)
+  base_fit_args$iter <- as.integer(iter_cv)
+  base_fit_args$warmup <- as.integer(warmup_cv)
+  base_fit_args$chains <- as.integer(chains_cv)
+  base_fit_args$cores <- as.integer(cores_cv)
+  base_fit_args$cache_dir <- cache_dir_cv
   compiled_cv_model <- NULL
   default_refit_fn <- function(train_df, fold, spec, fit_args) {
     fold_spec <- spec
-    fold_spec$save_gq <- "minimal"
+    if (!isTRUE(fold_spec$custom_stan)) {
+      fold_spec$save_gq <- "minimal"
+    }
     if (!is.null(spec$K_by_level) && !is.null(spec$threshold_facet)) {
       tr_tf <- levels(train_df[[spec$threshold_facet]])
       fold_spec$K_by_level <- spec$K_by_level[tr_tf]
@@ -1081,10 +1412,18 @@ cv_bmfrm <- function(object,
       fold_spec$K <- if (fold_spec$K_heterogeneous) fold_spec$K_by_level else as.integer(fold_spec$K_by_level[1L])
     }
     fold_spec <- resolve_bmfrm_spec(fold_spec, object$priors)
-    stan_code <- if (is.null(fit_args$stan_file)) {
-      build_stan_code(fold_spec, object$priors, save_gq = "minimal")
+    stan_code <- if (isTRUE(fold_spec$custom_stan)) {
+      if (!is.null(fit_args$stan_file) && file.exists(fit_args$stan_file)) {
+        paste(readLines(fit_args$stan_file, warn = FALSE), collapse = "\n")
+      } else if (!is.null(object$stan_code) && is.character(object$stan_code) && nzchar(object$stan_code)) {
+        object$stan_code
+      } else {
+        stop("Custom Stan code is unavailable for CV refit (missing both stan_file on disk and object$stan_code)")
+      }
+    } else if (!is.null(fit_args$stan_file)) {
+      paste(readLines(fit_args$stan_file, warn = FALSE), collapse = "\n")
     } else {
-      paste(readLines(fit_args$stan_file), collapse = "\n")
+      build_stan_code(fold_spec, object$priors, save_gq = "minimal")
     }
     fold_spec$eval_contract <- resolve_eval_contract(fold_spec, stan_code)
 
@@ -1092,8 +1431,8 @@ cv_bmfrm <- function(object,
     if (is.null(compiled_cv_model)) {
       compiled_cv_model <<- compile_bmfrm(
         stan_code = stan_code,
-        model_name = fold_spec$model_name,
-        cache_dir = fit_args$cache_dir %||% "stan_cache",
+        model_name = overrides$model_name %||% fold_spec$model_name,
+        cache_dir = cache_dir_cv,
         cpp_options = overrides$cpp_options %||% fit_args$cpp_options %||% list()
       )
     }
@@ -1101,26 +1440,47 @@ cv_bmfrm <- function(object,
     data_info_k <- prepare_data_bmfrm(fold_spec, train_df, priors = object$priors)
     base_refit_seed <- if (!is.null(refit_seed)) refit_seed else seed
     fold_seed <- if (!is.null(base_refit_seed)) {
-      as.integer(base_refit_seed + fold * 1000L)
+      offset_bmfrm_seed(base_refit_seed, fold * 1000L)
     } else if (!is.null(fit_args$seed)) {
-      as.integer(fit_args$seed + fold * 1000L)
+      offset_bmfrm_seed(fit_args$seed, fold * 1000L)
     } else {
       NULL
     }
-    iter_k <- overrides$iter %||% fit_args$iter %||% 2000L
-    warmup_k <- overrides$warmup %||% fit_args$warmup %||% floor(iter_k / 2)
-    chains_k <- overrides$chains %||% fit_args$chains %||% 4L
-    cores_k <- overrides$cores %||% fit_args$cores %||% getOption("mc.cores", 1L)
-    refit_mode <- overrides$refit %||% "on_change"
-    fold_cache_dir <- file.path(fit_args$cache_dir %||% "stan_cache", "cv_folds")
-    fold_rds <- file.path(
+    iter_k <- as.integer(iter_cv)
+    warmup_k <- as.integer(warmup_cv)
+    chains_k <- as.integer(chains_cv)
+    cores_k <- as.integer(cores_cv)
+    refit_mode <- refit_mode_cv
+    fold_cache_dir <- file.path(cache_dir_cv, "cv_folds")
+    base_fold_rds <- file.path(
       fold_cache_dir,
-      paste0(fold_spec$model_name, "_fold", fold, "_", compiled_cv_model$hash, ".rds")
+      paste0(overrides$model_name %||% fold_spec$model_name, "_fold", fold, "_", compiled_cv_model$hash, ".rds")
     )
 
     sampler_args <- fit_args$sampler_args %||% list()
-    reserved_ov <- c("cpp_options", "iter", "warmup", "chains", "cores", "refit")
+    reserved_ov <- c(
+      "cpp_options", "iter", "warmup", "chains", "cores", "refit",
+      "cache_dir", "design_check", "model_name"
+    )
     for (nm in setdiff(names(overrides), reserved_ov)) sampler_args[[nm]] <- overrides[[nm]]
+
+    extra_sampling_k <- c(
+      list(
+        iter_sampling = iter_k - warmup_k,
+        iter_warmup = warmup_k,
+        save_warmup = FALSE
+      ),
+      sampler_args
+    )
+    fold_rds <- resolve_fit_cache_file(
+      base_cache_file = base_fold_rds,
+      code = compiled_cv_model$model$code(),
+      data = data_info_k$stan_data,
+      seed = fold_seed,
+      chains = chains_k,
+      parallel_chains = min(chains_k, cores_k),
+      extra_sampling = extra_sampling_k
+    )
 
     fit_k <- do.call(
       fit_cmdstan_cached,
@@ -1132,12 +1492,9 @@ cv_bmfrm <- function(object,
           refit = refit_mode,
           seed = fold_seed,
           chains = chains_k,
-          parallel_chains = min(chains_k, cores_k),
-          iter_sampling = iter_k - warmup_k,
-          iter_warmup = warmup_k,
-          save_warmup = FALSE
+          parallel_chains = min(chains_k, cores_k)
         ),
-        sampler_args
+        extra_sampling_k
       )
     )
     out_k <- postprocess_bmfrm(
@@ -1231,19 +1588,58 @@ cv_bmfrm <- function(object,
     conv_k <- fold_fit$convergence
     conv_ok <- if (is.null(conv_k) || is.null(conv_k$converged)) NA else isTRUE(conv_k$converged)
 
-    fold_score_seed <- if (!is.null(seed)) as.integer(seed + k * 10007L) else NULL
+    fold_score_seed <- offset_bmfrm_seed(seed, k * 10007L)
+    score_err <- NULL
+    sc <- tryCatch({
+      if (is.null(target_facet)) {
+        if (length(fp$unseen_k) == 0L) {
+          score_rating_fold(fold_fit, fp$test_df, chunk_size = chunk_size)
+        } else {
+          score_general_unseen_fold(
+            fold_fit, fp$test_df, target_facet = NULL,
+            M = M, seed = fold_score_seed, chunk_size = chunk_size
+          )
+        }
+      } else {
+        if (length(setdiff(names(fp$unseen_k), target_facet)) == 0L) {
+          score_grouped_fold(
+            fold_fit, fp$test_df, target_facet = target_facet,
+            M = M, seed = fold_score_seed, chunk_size = chunk_size
+          )
+        } else {
+          score_general_unseen_fold(
+            fold_fit, fp$test_df, target_facet = target_facet,
+            M = M, seed = fold_score_seed, chunk_size = chunk_size
+          )
+        }
+      }
+    }, error = function(e) { score_err <<- conditionMessage(e); NULL })
+
+    if (is.null(sc)) {
+      fold_diag_rows[[k]] <- tibble::tibble(
+        fold = k, n_train = length(fp$train_idx), n_test = length(fp$test_idx),
+        n_groups = if (is.null(target_facet)) NA_integer_ else length(unique(as.character(fp$test_df[[target_facet]]))),
+        design_connected = isTRUE(dc_k$connected),
+        design_identifiable = isTRUE(dc_k$identifiable),
+        design_rank = dc_k$adjacent_logit_rank,
+        design_params = dc_k$adjacent_logit_parameters,
+        converged = conv_ok,
+        max_rhat = if (!is.null(conv_k$max_rhat)) conv_k$max_rhat else NA_real_,
+        min_ess_bulk = if (!is.null(conv_k$min_ess_bulk)) conv_k$min_ess_bulk else NA_real_,
+        n_divergent = if (!is.null(conv_k$n_divergent)) as.integer(conv_k$n_divergent) else NA_integer_,
+        elpd_pointwise = NA_real_, elpd_group = NA_real_,
+        min_mc_ess_m = NA_real_, status = paste0("scoring_failed: ", score_err)
+      )
+      next
+    }
+
     if (is.null(target_facet)) {
-      sc <- score_rating_fold(fold_fit, fp$test_df, chunk_size = chunk_size)
       lpd_pointwise[fp$test_idx] <- sc$lpd_pointwise
       mcse_pointwise[fp$test_idx] <- sc$mcse_pointwise
       fold_elpd_pt <- sum(sc$lpd_pointwise)
       fold_elpd_grp <- NA_real_
       fold_min_ess_m <- NA_real_
     } else {
-      sc <- score_grouped_fold(
-        fold_fit, fp$test_df, target_facet = target_facet,
-        M = M, seed = fold_score_seed, chunk_size = chunk_size
-      )
       lpd_pointwise[fp$test_idx] <- sc$lpd_pointwise
       mcse_pointwise[fp$test_idx] <- sc$mcse_pointwise
       gs <- sc$group_scores
@@ -1283,12 +1679,12 @@ cv_bmfrm <- function(object,
   }
 
   fold_diag <- dplyr::bind_rows(fold_diag_rows)
-  any_refit_failed <- any(grepl("^refit_failed:", fold_diag$status))
+  any_refit_failed <- any(grepl("^(refit_failed|scoring_failed):", fold_diag$status))
   all_converged <- !any_refit_failed && all(isTRUE_vec(fold_diag$converged))
   all_identifiable <- all(fold_diag$design_identifiable)
 
   if (any_refit_failed) {
-    warning("One or more CV folds failed refitting; aggregate ELPD set to NA (failed folds are never silently excluded).", call. = FALSE)
+    warning("One or more CV folds failed refitting or scoring; aggregate ELPD set to NA (failed folds are never silently excluded).", call. = FALSE)
   }
   if (!any_refit_failed && !all_converged) {
     warning("One or more CV folds did not pass convergence checks; inspect $fold_diagnostics before comparing models.", call. = FALSE)
@@ -1297,10 +1693,15 @@ cv_bmfrm <- function(object,
     warning("One or more training folds were rank-deficient; inspect $fold_diagnostics.", call. = FALSE)
   }
 
+  collateral_unseen <- sort(setdiff(all_unseen_facets, target_facet))
   actual_target <- if (is.null(target_facet)) {
-    "new_rating_known_levels"
+    if (length(all_unseen_facets) == 0L) "new_rating_known_levels" else "new_rating_with_unseen_levels"
   } else {
-    paste0("new_", target_facet, "_known_other_facets")
+    if (length(collateral_unseen) == 0L) {
+      paste0("new_", target_facet, "_known_other_facets")
+    } else {
+      paste0("new_", target_facet, "_with_unseen_", paste(collateral_unseen, collapse = "_"))
+    }
   }
   known_f <- setdiff(spec$facets_main, all_unseen_facets)
   comp_key <- build_comparison_key(
@@ -1388,10 +1789,10 @@ cv_bmfrm <- function(object,
       all_folds_identifiable = all_identifiable,
       any_refit_failed = any_refit_failed,
       integration_diagnostics = list(
-        M = if (is.null(target_facet)) NA_integer_ else M,
+        M = if (is.null(target_facet) && length(all_unseen_facets) == 0L) NA_integer_ else M,
         n_draws_per_fold = n_draws_per_fold,
         seed = seed,
-        note = if (is.null(target_facet)) {
+        note = if (is.null(target_facet) && length(all_unseen_facets) == 0L) {
           "Rating-level CV evaluates conditional log-likelihood directly (no population marginalization)."
         } else {
           "Marginalized via M population draws per posterior draw d; D*M is NOT D*M independent posterior draws."
@@ -1511,8 +1912,8 @@ compare_bmfrm <- function(...,
       paste0("model", seq_along(dots))
     }
     if (is.null(nm)) nm <- fallback else nm[!nzchar(nm)] <- fallback[!nzchar(nm)]
-    names(dots) <- make.unique(nm)
   }
+  names(dots) <- make.unique(nm)
 
   for (i in seq_along(dots)) {
     if (!inherits(dots[[i]], c("bmfrm_loo", "bmfrm_cv")) || is.null(dots[[i]]$comparison_key)) {
@@ -1598,10 +1999,15 @@ compare_bmfrm <- function(...,
              "] for the same obs_id. Ensure both models use identically ordered rows or pass an explicit unique obs_id.")
       }
     }
-    if (!is.null(ref_key$extra_col_hashes_by_id) && !is.null(k$extra_col_hashes_by_id)) {
-      shared_extra <- intersect(names(ref_key$extra_col_hashes_by_id), names(k$extra_col_hashes_by_id))
+    all_ref_cols <- c(ref_key$facet_hashes_by_id, ref_key$extra_col_hashes_by_id)
+    all_k_cols <- c(k$facet_hashes_by_id, k$extra_col_hashes_by_id)
+    if (length(all_ref_cols) > 0L && length(all_k_cols) > 0L) {
+      checked_f <- if (!is.null(ref_key$facet_hashes_by_id) && !is.null(k$facet_hashes_by_id)) {
+        intersect(names(ref_key$facet_hashes_by_id), names(k$facet_hashes_by_id))
+      } else character(0)
+      shared_extra <- setdiff(intersect(names(all_ref_cols), names(all_k_cols)), checked_f)
       bad_extra <- shared_extra[!vapply(shared_extra, function(cn) {
-        identical(k$extra_col_hashes_by_id[[cn]], ref_key$extra_col_hashes_by_id[[cn]])
+        identical(all_k_cols[[cn]], all_ref_cols[[cn]])
       }, logical(1))]
       if (length(bad_extra) > 0L) {
         stop("Cannot compare '", ref_name, "' and '", oname,

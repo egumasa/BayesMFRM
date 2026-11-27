@@ -62,15 +62,17 @@ print.bmfrm_fit <- function(x, ...) {
     }
   } else {
     cat("  CHECK: Potential MCMC convergence issues detected\n")
-    cat("    Max R-hat:", round(x$convergence$max_rhat, 3), "\n")
+    if (!is.null(x$convergence$max_rhat) && is.finite(x$convergence$max_rhat)) {
+      cat("    Max R-hat:", round(x$convergence$max_rhat, 3), "\n")
+    }
     if (!is.null(x$convergence$min_ess_bulk) && is.finite(x$convergence$min_ess_bulk)) {
       cat("    Min ESS (bulk / tail):", round(x$convergence$min_ess_bulk, 1), "/",
-          round(x$convergence$min_ess_tail, 1), "\n")
+          if (!is.null(x$convergence$min_ess_tail) && is.finite(x$convergence$min_ess_tail)) round(x$convergence$min_ess_tail, 1) else NA, "\n")
     }
-    if (x$convergence$n_divergent > 0) {
+    if (isTRUE(x$convergence$n_divergent > 0)) {
       cat("    Divergent transitions:", x$convergence$n_divergent, "\n")
     }
-    if (!is.null(x$convergence$n_max_treedepth) && x$convergence$n_max_treedepth > 0) {
+    if (isTRUE(x$convergence$n_max_treedepth > 0)) {
       cat("    Max treedepth hits:", x$convergence$n_max_treedepth, "\n")
     }
     cat("    Resolve sampling issues before interpreting parameter estimates.\n")
@@ -90,7 +92,9 @@ print.bmfrm_fit <- function(x, ...) {
 #' @param ... unused
 #' @export
 summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975), ...) {
-  
+  if (!is.null(probs) && (!is.numeric(probs) || any(!is.finite(probs)) || any(probs < 0 | probs > 1))) {
+    stop("probs must be numeric probabilities in [0, 1]")
+  }
   if (is.null(facets)) {
     facets <- object$spec$facets_main
   }
@@ -128,70 +132,95 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
   }
 
   # MCMC diagnostics
+  fmt_conv <- function(v, digits = NULL) {
+    if (is.null(v) || length(v) == 0L || !is.numeric(v) || is.na(v)) return("NA")
+    if (!is.null(digits)) as.character(round(v, digits)) else as.character(v)
+  }
   cat("MCMC Diagnostics:\n")
   cat("  Chains:", object$fit$num_chains(), "\n")
   cat("  Total iterations:", object$fit$num_chains() * object$fit$metadata()$iter_sampling, "\n")
-  cat("  Max R-hat:", round(object$convergence$max_rhat, 3), "\n")
-  cat("  Min ESS (bulk):", object$convergence$min_ess_bulk, "\n")
-  cat("  Min ESS (tail):", object$convergence$min_ess_tail, "\n")
-  cat("  Min E-BFMI:", object$convergence$min_ebfmi, "\n")
-  cat("  Max mean MCSE:", object$convergence$max_mcse_mean, "\n")
-  cat("  Maximum-depth hits:", object$convergence$n_max_treedepth, "\n")
+  cat("  Max R-hat:", fmt_conv(object$convergence$max_rhat, 3), "\n")
+  cat("  Min ESS (bulk):", fmt_conv(object$convergence$min_ess_bulk), "\n")
+  cat("  Min ESS (tail):", fmt_conv(object$convergence$min_ess_tail), "\n")
+  cat("  Min E-BFMI:", fmt_conv(object$convergence$min_ebfmi), "\n")
+  cat("  Max mean MCSE:", fmt_conv(object$convergence$max_mcse_mean), "\n")
+  cat("  Maximum-depth hits:", fmt_conv(object$convergence$n_max_treedepth), "\n")
   
-  if (object$convergence$n_divergent > 0) {
+  if (isTRUE(object$convergence$n_divergent > 0)) {
     cat("  Divergent transitions:", object$convergence$n_divergent, "\n")
   }
   
-  if (!object$convergence$converged) {
+  if (!isTRUE(object$convergence$converged)) {
     cat("  Warning: Potential convergence issues detected!\n")
   }
   cat("\n")
   
   # Threshold parameters
   cat("Centered step deviations (tau):\n")
-  tau_summary <- object$fit$summary("tau", "mean", ~stats::quantile(.x, probs = range(probs)))
-  tau_tf <- object$spec$threshold_facet
-  tau_tf_labels <- if (!is.null(tau_tf)) object$data_info$facet_labels[[tau_tf]] else NULL
-  tau_start_vec <- object$data_info$stan_data$tau_start
-  tau_len_vec <- object$data_info$stan_data$tau_len
-  if (isTRUE(object$spec$K_heterogeneous) &&
-      (is.null(tau_start_vec) || is.null(tau_len_vec)) &&
-      !is.null(tau_tf_labels)) {
-    k_map_s <- object$data_info$K_by_level %||% object$spec$K_by_level
-    if (!is.null(k_map_s)) {
-      tau_len_vec <- as.integer(unname(k_map_s[tau_tf_labels]) - 1L)
-      tau_start_vec <- as.integer(c(1L, utils::head(cumsum(tau_len_vec), -1L) + 1L))
-    }
+  tau_probs <- if (length(probs) == 0L) c(0.025, 0.975) else sort(unique(range(probs)))
+  tau_summary <- if (!isTRUE(object$spec$custom_stan) || fit_has_variable(object$fit, "tau")) {
+    tryCatch(
+      object$fit$summary("tau", "mean", ~stats::quantile(.x, probs = tau_probs)),
+      error = function(e) if (isTRUE(object$spec$custom_stan)) NULL else stop(e)
+    )
+  } else {
+    NULL
   }
-  for (i in seq_len(nrow(tau_summary))) {
-    label <- tau_summary$variable[i]
-    if (identical(object$spec$family, "pcm")) {
-      idx <- as.integer(strsplit(gsub("^tau\\[|\\]$", "", label), ",")[[1L]])
-      if (length(idx) == 1L && !is.null(tau_start_vec) && !is.null(tau_len_vec) && !is.null(tau_tf_labels)) {
-        p <- idx[1L]
-        lv_i <- which(p >= tau_start_vec & p < (tau_start_vec + tau_len_vec))
-        if (length(lv_i) == 1L) {
-          step_m <- p - tau_start_vec[lv_i] + 1L
-          label <- paste0(label, " (", tau_tf, "=", tau_tf_labels[lv_i], ", step=", step_m, ")")
-        }
-      } else if (length(idx) >= 2L && !is.null(tau_tf_labels)) {
-        label <- paste0(label, " (", tau_tf, "=", tau_tf_labels[idx[1L]], ", step=", idx[2L], ")")
+  if (is.null(tau_summary)) {
+    cat("  (Parameter 'tau' not found in custom Stan model)\n\n")
+  } else {
+    tau_tf <- object$spec$threshold_facet
+    tau_tf_labels <- if (!is.null(tau_tf)) object$data_info$facet_labels[[tau_tf]] else NULL
+    tau_start_vec <- object$data_info$stan_data$tau_start
+    tau_len_vec <- object$data_info$stan_data$tau_len
+    if (isTRUE(object$spec$K_heterogeneous) &&
+        (is.null(tau_start_vec) || is.null(tau_len_vec)) &&
+        !is.null(tau_tf_labels)) {
+      k_map_s <- object$data_info$K_by_level %||% object$spec$K_by_level
+      if (!is.null(k_map_s)) {
+        tau_len_vec <- as.integer(unname(k_map_s[tau_tf_labels]) - 1L)
+        tau_start_vec <- as.integer(c(1L, utils::head(cumsum(tau_len_vec), -1L) + 1L))
       }
     }
-    cat(sprintf("  %s: %6.2f [%6.2f, %6.2f]\n",
-                label,
-                tau_summary$mean[i],
-                tau_summary[[3L]][i],
-                tau_summary[[ncol(tau_summary)]][i]))
+    for (i in seq_len(nrow(tau_summary))) {
+      label <- tau_summary$variable[i]
+      if (identical(object$spec$family, "pcm")) {
+        idx <- as.integer(strsplit(gsub("^tau\\[|\\]$", "", label), ",")[[1L]])
+        if (length(idx) == 1L && !is.null(tau_start_vec) && !is.null(tau_len_vec) && !is.null(tau_tf_labels)) {
+          p <- idx[1L]
+          lv_i <- which(p >= tau_start_vec & p < (tau_start_vec + tau_len_vec))
+          if (length(lv_i) == 1L) {
+            step_m <- p - tau_start_vec[lv_i] + 1L
+            label <- paste0(label, " (", tau_tf, "=", tau_tf_labels[lv_i], ", step=", step_m, ")")
+          }
+        } else if (length(idx) >= 2L && !is.null(tau_tf_labels)) {
+          label <- paste0(label, " (", tau_tf, "=", tau_tf_labels[idx[1L]], ", step=", idx[2L], ")")
+        }
+      }
+      lo_col <- min(3L, ncol(tau_summary))
+      hi_col <- ncol(tau_summary)
+      cat(sprintf("  %s: %6.2f [%6.2f, %6.2f]\n",
+                  label,
+                  tau_summary$mean[i],
+                  tau_summary[[lo_col]][i],
+                  tau_summary[[hi_col]][i]))
+    }
+    cat("\n")
   }
-  cat("\n")
   
   # Facet summaries
   for (facet in facets) {
     cat(paste0(toupper(substring(facet, 1, 1)), substring(facet, 2)), " Parameters:\n")
-    facet_summ <- facet_summary(object, facet, probs = probs)
-    print(facet_summ, row.names = FALSE)
-    cat("\n")
+    facet_summ <- tryCatch(
+      facet_summary(object, facet, probs = probs),
+      error = function(e) if (isTRUE(object$spec$custom_stan)) NULL else stop(e)
+    )
+    if (is.null(facet_summ)) {
+      cat("  (Parameter for facet '", facet, "' not found in custom Stan model)\n\n", sep = "")
+    } else {
+      print(facet_summ, row.names = FALSE)
+      cat("\n")
+    }
   }
   
   # Bias summaries if present
@@ -199,13 +228,22 @@ summary.bmfrm_fit <- function(object, facets = NULL, probs = c(0.025, 0.5, 0.975
     cat("Bias Effects:\n")
     for (bias_facet in object$spec$facets_bias) {
       cat("  ", bias_facet, ":\n")
-      bias_summ <- summarise_bias(object, bias_facet)
-      n_flagged <- sum(bias_summ$flag_bias %in% c("positive_bias", "negative_bias"))
-      cat("    ", n_flagged, " bias effects flagged (out of ", nrow(bias_summ), ")\n")
-      cat("    ", sum(bias_summ$flag_bias == "not_likelihood_identified"), " effects lack likelihood identification\n")
-      cat("    Numerical decision stability: ", sum(bias_summ$decision_stable %in% TRUE),
-          " stable, ", sum(bias_summ$decision_stable %in% FALSE), " boundary-sensitive, ",
-          sum(is.na(bias_summ$decision_stable)), " unavailable\n", sep = "")
+      bias_summ <- tryCatch(
+        summarise_bias(object, bias_facet),
+        error = function(e) if (isTRUE(object$spec$custom_stan)) NULL else stop(e)
+      )
+      if (is.null(bias_summ)) {
+        cat("    (Parameter for interaction '", bias_facet,
+            "' not found in custom Stan model; use summarise_bias_ir(object$fit) for legacy 'bias' parameters)\n",
+            sep = "")
+      } else {
+        n_flagged <- sum(bias_summ$flag_bias %in% c("positive_bias", "negative_bias"))
+        cat("    ", n_flagged, " bias effects flagged (out of ", nrow(bias_summ), ")\n")
+        cat("    ", sum(bias_summ$flag_bias == "not_likelihood_identified"), " effects lack likelihood identification\n")
+        cat("    Numerical decision stability: ", sum(bias_summ$decision_stable %in% TRUE),
+            " stable, ", sum(bias_summ$decision_stable %in% FALSE), " boundary-sensitive, ",
+            sum(is.na(bias_summ$decision_stable)), " unavailable\n", sep = "")
+      }
     }
     cat("    Use summarise_bias(fit) for details\n\n")
   }
@@ -222,6 +260,15 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
 
   # Column names in stan_data have "_id" suffix (e.g., "person_id", "rater_id")
   facet_cols_stan <- paste0(object$spec$facets_main, "_id")
+  res_reserved <- c(
+    "n", "x", "mu_hat", "sigma2_hat", "resid", "weight", "z", "model",
+    "mu_draws", "sigma2_draws"
+  )
+  resolve_res_facet_col <- function(nm, taken = character()) {
+    cand <- if (nm %in% res_reserved) paste0("facet_", nm) else nm
+    while (cand %in% taken || cand %in% res_reserved) cand <- paste0("facet_", cand)
+    cand
+  }
 
   if (fit_has_variable(object$fit, "mu") && fit_has_variable(object$fit, "sigma2")) {
     res_df <- extract_residuals(
@@ -231,15 +278,24 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
       save_draws = save_draws,
       model_name = object$spec$model_name
     )
-    # Rename columns from "_id" suffix back to original names
+    # Restore facet labels by column index BEFORE renaming so facets named "x",
+    # "weight", "z", or "resid" never clobber observed scores or create duplicate names.
+    out_facet_cols <- character(length(object$spec$facets_main))
     for (i in seq_along(object$spec$facets_main)) {
       orig_name <- object$spec$facets_main[i]
       stan_name <- facet_cols_stan[i]
-      if (stan_name %in% names(res_df)) {
-        names(res_df)[names(res_df) == stan_name] <- orig_name
+      col_pos <- match(stan_name, names(res_df))
+      target_name <- resolve_res_facet_col(orig_name, setdiff(names(res_df)[-col_pos], res_reserved))
+      out_facet_cols[i] <- target_name
+      if (!is.na(col_pos)) {
+        flab <- object$data_info$facet_labels[[orig_name]]
+        if (!is.null(flab) && is.numeric(res_df[[col_pos]])) {
+          res_df[[col_pos]] <- flab[as.integer(res_df[[col_pos]])]
+        }
+        names(res_df)[col_pos] <- target_name
       }
     }
-    attr(res_df, "facet_cols") <- object$spec$facets_main
+    attr(res_df, "facet_cols") <- out_facet_cols
     return(res_df)
   }
 
@@ -253,34 +309,39 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
   if (!save_draws) {
     st <- stream_bmfrm_residuals(object)
     mu_hat <- st$mu_hat
-    sig_hat <- st$sigma2_hat
+    sig_hat <- pmax(st$sigma2_hat, 1e-12)
     N <- length(mu_hat)
     q <- NULL
   } else {
     q <- compute_bmfrm_quantities(object)
     N <- ncol(q$mu)
     mu_hat <- unname(colMeans(q$mu))
-    sig_hat <- unname(colMeans(q$sigma2))
+    sig_hat <- pmax(unname(colMeans(q$sigma2)), 1e-12)
   }
-  x <- object$data_info$stan_data$X
-  res_df <- tibble::tibble(n = seq_len(N), x = x)
-  for (f in object$spec$facets_main) {
-    res_df[[f]] <- object$data_info$stan_data[[paste0(f, "_id")]]
+  x_obs <- object$data_info$stan_data$X
+  resid_vec <- x_obs - mu_hat
+  z_vec <- resid_vec / sqrt(sig_hat)
+  res_df <- tibble::tibble(n = seq_len(N), x = x_obs)
+  out_facet_cols <- character(length(object$spec$facets_main))
+  for (i in seq_along(object$spec$facets_main)) {
+    f <- object$spec$facets_main[i]
+    idx_f <- object$data_info$stan_data[[paste0(f, "_id")]]
+    flab <- object$data_info$facet_labels[[f]]
+    target_name <- resolve_res_facet_col(f, names(res_df))
+    out_facet_cols[i] <- target_name
+    res_df[[target_name]] <- if (!is.null(flab)) flab[as.integer(idx_f)] else idx_f
   }
-  res_df <- res_df %>%
-    dplyr::mutate(
-      mu_hat = mu_hat,
-      sigma2_hat = sig_hat,
-      resid = x - mu_hat,
-      weight = sigma2_hat,
-      z = resid / sqrt(sigma2_hat),
-      model = object$spec$model_name
-    )
+  res_df$mu_hat <- mu_hat
+  res_df$sigma2_hat <- sig_hat
+  res_df$resid <- resid_vec
+  res_df$weight <- sig_hat
+  res_df$z <- z_vec
+  res_df$model <- object$spec$model_name %||% "model"
   if (save_draws) {
     res_df$mu_draws <- lapply(seq_len(N), function(j) as.numeric(q$mu[, j]))
     res_df$sigma2_draws <- lapply(seq_len(N), function(j) as.numeric(q$sigma2[, j]))
   }
-  attr(res_df, "facet_cols") <- object$spec$facets_main
+  attr(res_df, "facet_cols") <- out_facet_cols
   res_df
 }
 
@@ -342,18 +403,32 @@ pp_check.bmfrm_fit <- function(object, type = c("bars", "stat", "all"), ndraws =
   }
 }
 
-#' Get Stan code from bmfrm_fit object
-#' @param object bmfrm_fit object
-#' @param ... unused
+#' Get Stan code from a fitted model object
+#' @param object A fitted model object (e.g., `bmfrm_fit`).
+#' @param ... Unused.
+#' @export
+stancode <- function(object, ...) {
+  UseMethod("stancode")
+}
+
+#' @rdname stancode
+#' @export stancode.bmfrm_fit
 #' @export
 stancode.bmfrm_fit <- function(object, ...) {
   cat(object$stan_code)
   invisible(object$stan_code)
 }
 
-#' Get Stan data from bmfrm_fit object
-#' @param object bmfrm_fit object
-#' @param ... unused
+#' Get Stan data from a fitted model object
+#' @param object A fitted model object (e.g., `bmfrm_fit`).
+#' @param ... Unused.
+#' @export
+standata <- function(object, ...) {
+  UseMethod("standata")
+}
+
+#' @rdname standata
+#' @export standata.bmfrm_fit
 #' @export
 standata.bmfrm_fit <- function(object, ...) {
   object$data_info$stan_data
@@ -371,26 +446,45 @@ facet_summary <- function(object, facet, probs = c(0.025, 0.5, 0.975), ...) {
 
 #' @export
 facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975), ...) {
-  
+  if (!is.null(probs) && (!is.numeric(probs) || any(!is.finite(probs)) || any(probs < 0 | probs > 1))) {
+    stop("probs must be numeric probabilities in [0, 1]")
+  }
+  probs <- unique(as.numeric(probs))
+
   # Check facet exists
   if (!facet %in% object$spec$facets_main) {
     stop("Facet '", facet, "' not found in model. Available facets: ", 
          paste(object$spec$facets_main, collapse = ", "))
   }
   
-  # Map facet name to parameter name
-  if (facet == "person") {
+  # Map facet name to Stan parameter name (including verified bundled models such as item -> beta)
+  contract <- get_eval_contract(object)
+  if (!is.null(contract$param_map) && facet %in% names(contract$param_map)) {
+    param_name <- unname(contract$param_map[[facet]])
+  } else if (facet == "person") {
     param_name <- "theta"
   } else {
     param_name <- facet
   }
   
   # Extract parameter summary
-  param_summary <- object$fit$summary(param_name, "mean", "sd",
-                                     ~stats::quantile(.x, probs = probs))
+  param_summary <- if (length(probs) > 0L) {
+    object$fit$summary(param_name, "mean", "sd", ~stats::quantile(.x, probs = probs))
+  } else {
+    object$fit$summary(param_name, "mean", "sd")
+  }
+  if ("variable" %in% names(param_summary) && nrow(param_summary) > 1L &&
+      all(grepl("\\[\\d+\\]$", param_summary$variable))) {
+    p_idx <- as.integer(stringr::str_extract(param_summary$variable, "(?<=\\[)\\d+(?=\\])"))
+    param_summary <- param_summary[order(p_idx), , drop = FALSE]
+  }
   
   # Get original labels
   labels <- object$data_info$facet_labels[[facet]]
+  if (nrow(param_summary) != length(labels)) {
+    stop("Parameter '", param_name, "' has ", nrow(param_summary),
+         " entries, expected ", length(labels), " for facet '", facet, "'")
+  }
   
   # Build result
   result <- tibble::tibble(
@@ -400,8 +494,8 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
   )
   
   # Add parameter summaries
-  result$mean <- param_summary$mean
-  result$sd <- param_summary$sd
+  result$mean <- unname(param_summary$mean)
+  result$sd <- unname(param_summary$sd)
   
   # Add quantiles with exact non-colliding names (e.g., q2.5, q50, q97.5)
   fmt_q <- function(p) {
@@ -481,7 +575,12 @@ facet_summary.bmfrm_fit <- function(object, facet, probs = c(0.025, 0.5, 0.975),
 #' @param seed Optional integer RNG seed for reproducible new-level sampling,
 #'   `ndraws` subsampling, and `type = "predict"` replicated draws.
 #' @param chunk_size Optional observation chunk size for memory-bounded
-#'   streaming evaluation.
+#'   streaming evaluation. Multi-chunk unseen constrained interaction centering
+#'   offsets (`D * 8` bytes each) are cached up to `n_concurrent_offsets * D * 8`
+#'   bounded by a 64 MiB cap and freed immediately after their final chunk
+#'   (single-chunk levels retain 0 bytes; workloads exceeding the cap
+#'   deterministically recompute uncached offsets per chunk to preserve the
+#'   memory bound).
 #' @param max_cells Maximum total numeric entries allowed when `summary = FALSE`
 #'   (default `5e7`, ~400 MB) to prevent accidental memory exhaustion on large
 #'   `D x N x K` probability arrays.
@@ -631,13 +730,33 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
   use_default_adjust <- is.null(adjust_facets)
   stan_adjusted <- stan_mu_fair_adjusted_facets(object)
   use_reference <- isTRUE(standardize) || !is.null(reference_grid) || !is.null(reference_weights)
-  resolved_adjust <- resolve_adjust_facets(
+  generic_adjust <- resolve_adjust_facets(
     object$spec,
     adjust_facets = adjust_facets,
     warn_if_empty = !(has_stan_mu_fair && use_default_adjust &&
                       !use_reference &&
-                      length(setdiff(object$spec$facets_main, "person")) <= 1L)
+                      length(setdiff(object$spec$facets_main, "person")) <= 1L) &&
+                    !(isTRUE(object$spec$custom_stan) && use_default_adjust && !is.null(stan_adjusted))
   )
+  if (isTRUE(object$spec$custom_stan) && use_default_adjust && !is.null(stan_adjusted)) {
+    resolved_adjust <- intersect(stan_adjusted, setdiff(object$spec$facets_main, "person"))
+    if (use_reference && !setequal(resolved_adjust, generic_adjust)) {
+      message("Using custom Stan built-in mu_fair (adjusts: ",
+              paste(resolved_adjust, collapse = ", "), ").")
+    }
+  } else {
+    resolved_adjust <- generic_adjust
+  }
+
+  fs_row_reserved <- c("mu_fair", "mu_fair_sd", "likelihood_identified", "identification_basis")
+  preserve_colliding_facets <- function(df_in, facet_names) {
+    for (fn in intersect(facet_names, intersect(names(df_in), fs_row_reserved))) {
+      alt <- paste0("facet_", fn)
+      while (alt %in% names(df_in) || alt %in% fs_row_reserved) alt <- paste0("facet_", alt)
+      df_in[[alt]] <- df_in[[fn]]
+    }
+    df_in
+  }
 
   is_hetero_pcm <- isTRUE(object$spec$K_heterogeneous)
   K_by_level_meta <- object$data_info$K_by_level %||% object$spec$K_by_level
@@ -742,39 +861,42 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       out_grid <- reference_grid[rep(seq_len(n_ref), times = P), , drop = FALSE]
       out_grid$person <- rep(labels, each = n_ref)
       if (".row" %in% names(out_grid)) out_grid$.row <- NULL
-      if (has_explicit_weights) out_grid$weight <- rep(ref_w, times = P)
       rownames(out_grid) <- NULL
-      # Evaluate row-level identifiability per (person, reference row) rather than copying summary identifiability
+      # Evaluate row-level identifiability BEFORE adding weight/output columns so
+      # facets named "weight", "mu_fair_sd", etc. are never overwritten beforehand.
       id_rows <- check_fair_score_identifiability(object, out_grid, resolved_adjust)
       warn_identifiability(id_rows)
+      out_grid <- preserve_colliding_facets(out_grid, keep_facets)
+      if (has_explicit_weights) {
+        w_col <- if ("weight" %in% keep_facets) "reference_weight" else "weight"
+        out_grid[[w_col]] <- rep(ref_w, times = P)
+      }
       out_grid$mu_fair <- st$mu_fair
       out_grid$mu_fair_sd <- st$mu_fair_sd
       out_grid$likelihood_identified <- id_rows$likelihood_identified
       out_grid$identification_basis <- id_rows$identification_basis
       res_row <- tibble::as_tibble(out_grid)
-      if (has_explicit_weights || is_hetero_pcm) {
-        ref_grid_meta <- reference_grid
-        if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
-        rm_list <- list(
-          adjust_facets = resolved_adjust,
-          standardized = TRUE,
-          summary = FALSE,
-          score_unit = "native_row_expected_score",
-          K_heterogeneous = is_hetero_pcm,
-          K_by_level = K_by_level_meta,
-          reference_grid = ref_grid_meta,
-          reference_weights = ref_w
+      ref_grid_meta <- reference_grid
+      if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
+      rm_list <- list(
+        adjust_facets = resolved_adjust,
+        standardized = TRUE,
+        summary = FALSE,
+        score_unit = "native_row_expected_score",
+        K_heterogeneous = is_hetero_pcm,
+        K_by_level = K_by_level_meta,
+        reference_grid = ref_grid_meta,
+        reference_weights = ref_w
+      )
+      if (is_hetero_pcm) {
+        rm_list$comparability_note <- paste0(
+          "Heterogeneous category counts across '", object$spec$threshold_facet,
+          "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+          object$spec$threshold_facet, " level (not rescaled to 0-1); downstream aggregation across ",
+          "levels should use the common reference grid and reference_weights."
         )
-        if (is_hetero_pcm) {
-          rm_list$comparability_note <- paste0(
-            "Heterogeneous category counts across '", object$spec$threshold_facet,
-            "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
-            object$spec$threshold_facet, " level (not rescaled to 0-1); downstream aggregation across ",
-            "levels should use the common reference grid and reference_weights."
-          )
-        }
-        attr(res_row, "reference_meta") <- rm_list
       }
+      attr(res_row, "reference_meta") <- rm_list
       return(res_row)
     }
 
@@ -880,29 +1002,28 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       }
       attr(res, "draws") <- draw_list
     }
-    if (isTRUE(return_draws) || has_explicit_weights || is_hetero_pcm) {
-      ref_grid_meta <- reference_grid
-      if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
-      rm_list <- list(
-        adjust_facets = resolved_adjust,
-        standardized = TRUE,
-        score_unit = "native_weighted_mean",
-        K_heterogeneous = is_hetero_pcm,
-        K_by_level = K_by_level_meta,
-        reference_grid = ref_grid_meta,
-        reference_weights = ref_w,
-        draw_ids = draw_meta$draw_ids,
-        draw_info = draw_meta$draw_info
+    ref_grid_meta <- reference_grid
+    if (".row" %in% names(ref_grid_meta)) ref_grid_meta$.row <- NULL
+    rm_list <- list(
+      adjust_facets = resolved_adjust,
+      standardized = TRUE,
+      summary = TRUE,
+      score_unit = "native_weighted_mean",
+      K_heterogeneous = is_hetero_pcm,
+      K_by_level = K_by_level_meta,
+      reference_grid = ref_grid_meta,
+      reference_weights = ref_w,
+      draw_ids = draw_meta$draw_ids,
+      draw_info = draw_meta$draw_info
+    )
+    if (is_hetero_pcm) {
+      rm_list$comparability_note <- paste0(
+        "Heterogeneous category counts across '", object$spec$threshold_facet,
+        "': scores are weighted means in native rubric units on the common reference configuration ",
+        "(not rescaled to 0-1)."
       )
-      if (is_hetero_pcm) {
-        rm_list$comparability_note <- paste0(
-          "Heterogeneous category counts across '", object$spec$threshold_facet,
-          "': scores are weighted means in native rubric units on the common reference configuration ",
-          "(not rescaled to 0-1)."
-        )
-      }
-      attr(res, "reference_meta") <- rm_list
     }
+    attr(res, "reference_meta") <- rm_list
     return(res)
   }
 
@@ -920,7 +1041,7 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     if (use_default_adjust && has_stan_mu_fair) {
       effective_adjust <- if (!is.null(stan_adjusted)) stan_adjusted else resolved_adjust
       can_use_stan <- TRUE
-      if (!is.null(stan_adjusted) && !setequal(stan_adjusted, resolved_adjust)) {
+      if (!is.null(stan_adjusted) && !setequal(stan_adjusted, generic_adjust)) {
         message("Using custom Stan built-in mu_fair (adjusts: ",
                 paste(stan_adjusted, collapse = ", "), ").")
       } else if (identical(contract$source, "custom_unverified")) {
@@ -953,30 +1074,32 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     index <- as.integer(sub(".*\\[([0-9]+)\\]", "\\1", colnames(draws)))
     draws <- draws[, order(index), drop = FALSE]
     if (ncol(draws) != nrow(obs_data)) stop("mu_fair draws do not match fitted observations")
-    obs_data$mu_fair <- colMeans(draws)
-    obs_data$mu_fair_sd <- apply(draws, 2L, stats::sd)
-    obs_data$likelihood_identified <- id_obs$likelihood_identified
-    obs_data$identification_basis <- id_obs$identification_basis
+    obs_out <- preserve_colliding_facets(obs_data, object$spec$facets_main)
+    obs_out$mu_fair <- colMeans(draws)
+    obs_out$mu_fair_sd <- apply(draws, 2L, stats::sd)
+    obs_out$likelihood_identified <- id_obs$likelihood_identified
+    obs_out$identification_basis <- id_obs$identification_basis
     if (!summary) {
+      rm_row_stan <- list(
+        adjust_facets = effective_adjust,
+        standardized = FALSE,
+        summary = FALSE,
+        score_unit = "native_row_expected_score",
+        K_heterogeneous = is_hetero_pcm,
+        K_by_level = K_by_level_meta,
+        reference_grid = NULL,
+        reference_weights = NULL
+      )
       if (is_hetero_pcm) {
-        attr(obs_data, "reference_meta") <- list(
-          adjust_facets = effective_adjust,
-          standardized = FALSE,
-          summary = FALSE,
-          score_unit = "native_row_expected_score",
-          K_heterogeneous = TRUE,
-          K_by_level = K_by_level_meta,
-          reference_grid = NULL,
-          reference_weights = NULL,
-          comparability_note = paste0(
-            "Heterogeneous category counts across '", object$spec$threshold_facet,
-            "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
-            object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
-            "aggregation depends on each examinee's assigned levels."
-          )
+        rm_row_stan$comparability_note <- paste0(
+          "Heterogeneous category counts across '", object$spec$threshold_facet,
+          "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+          object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
+          "aggregation depends on each examinee's assigned levels."
         )
       }
-      return(obs_data)
+      attr(obs_out, "reference_meta") <- rm_row_stan
+      return(obs_out)
     }
 
     mu_draws_stan <- NULL
@@ -1058,28 +1181,27 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
       }
       attr(res, "draws") <- draw_list
     }
-    if (isTRUE(return_draws) || is_hetero_pcm) {
-      draw_meta_stan <- extract_draw_index_info(object$fit, D)
-      rm_list <- list(
-        adjust_facets = effective_adjust,
-        standardized = FALSE,
-        score_unit = "native_weighted_mean",
-        K_heterogeneous = is_hetero_pcm,
-        K_by_level = K_by_level_meta,
-        reference_grid = NULL,
-        reference_weights = NULL,
-        draw_ids = draw_meta_stan$draw_ids,
-        draw_info = draw_meta_stan$draw_info
+    draw_meta_stan <- extract_draw_index_info(object$fit, D)
+    rm_list <- list(
+      adjust_facets = effective_adjust,
+      standardized = FALSE,
+      summary = TRUE,
+      score_unit = "native_weighted_mean",
+      K_heterogeneous = is_hetero_pcm,
+      K_by_level = K_by_level_meta,
+      reference_grid = NULL,
+      reference_weights = NULL,
+      draw_ids = draw_meta_stan$draw_ids,
+      draw_info = draw_meta_stan$draw_info
+    )
+    if (is_hetero_pcm) {
+      rm_list$comparability_note <- paste0(
+        "Heterogeneous category counts across '", object$spec$threshold_facet,
+        "': unstandardized averages depend on each examinee's assigned levels; ",
+        "use standardize = TRUE or reference_grid for cross-examinee comparisons."
       )
-      if (is_hetero_pcm) {
-        rm_list$comparability_note <- paste0(
-          "Heterogeneous category counts across '", object$spec$threshold_facet,
-          "': unstandardized averages depend on each examinee's assigned levels; ",
-          "use standardize = TRUE or reference_grid for cross-examinee comparisons."
-        )
-      }
-      attr(res, "reference_meta") <- rm_list
     }
+    attr(res, "reference_meta") <- rm_list
     return(res)
   }
 
@@ -1099,29 +1221,31 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     summary = summary, chunk_size = chunk_size
   )
   if (!summary) {
-    obs_data$mu_fair <- st$mu_fair
-    obs_data$mu_fair_sd <- st$mu_fair_sd
-    obs_data$likelihood_identified <- id_obs$likelihood_identified
-    obs_data$identification_basis <- id_obs$identification_basis
+    obs_out <- preserve_colliding_facets(obs_data, object$spec$facets_main)
+    obs_out$mu_fair <- st$mu_fair
+    obs_out$mu_fair_sd <- st$mu_fair_sd
+    obs_out$likelihood_identified <- id_obs$likelihood_identified
+    obs_out$identification_basis <- id_obs$identification_basis
+    rm_row_stream <- list(
+      adjust_facets = resolved_adjust,
+      standardized = FALSE,
+      summary = FALSE,
+      score_unit = "native_row_expected_score",
+      K_heterogeneous = is_hetero_pcm,
+      K_by_level = K_by_level_meta,
+      reference_grid = NULL,
+      reference_weights = NULL
+    )
     if (is_hetero_pcm) {
-      attr(obs_data, "reference_meta") <- list(
-        adjust_facets = resolved_adjust,
-        standardized = FALSE,
-        summary = FALSE,
-        score_unit = "native_row_expected_score",
-        K_heterogeneous = TRUE,
-        K_by_level = K_by_level_meta,
-        reference_grid = NULL,
-        reference_weights = NULL,
-        comparability_note = paste0(
-          "Heterogeneous category counts across '", object$spec$threshold_facet,
-          "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
-          object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
-          "aggregation depends on each examinee's assigned levels."
-        )
+      rm_row_stream$comparability_note <- paste0(
+        "Heterogeneous category counts across '", object$spec$threshold_facet,
+        "': each row's mu_fair is an expected score in the native rubric unit (1..K_j) of its ",
+        object$spec$threshold_facet, " level (not rescaled to 0-1); unstandardized person-level ",
+        "aggregation depends on each examinee's assigned levels."
       )
     }
-    return(obs_data)
+    attr(obs_out, "reference_meta") <- rm_row_stream
+    return(obs_out)
   }
 
   actual_st <- if (isTRUE(decompose)) {
@@ -1188,28 +1312,27 @@ fair_scores.bmfrm_fit <- function(object, summary = TRUE, adjust_facets = NULL,
     }
     attr(res, "draws") <- draw_list
   }
-  if (isTRUE(return_draws) || is_hetero_pcm) {
-    draw_meta_stream <- extract_draw_index_info(object$fit, nrow(st$sum_mu))
-    rm_list <- list(
-      adjust_facets = resolved_adjust,
-      standardized = FALSE,
-      score_unit = "native_weighted_mean",
-      K_heterogeneous = is_hetero_pcm,
-      K_by_level = K_by_level_meta,
-      reference_grid = NULL,
-      reference_weights = NULL,
-      draw_ids = draw_meta_stream$draw_ids,
-      draw_info = draw_meta_stream$draw_info
+  draw_meta_stream <- extract_draw_index_info(object$fit, nrow(st$sum_mu))
+  rm_list <- list(
+    adjust_facets = resolved_adjust,
+    standardized = FALSE,
+    summary = TRUE,
+    score_unit = "native_weighted_mean",
+    K_heterogeneous = is_hetero_pcm,
+    K_by_level = K_by_level_meta,
+    reference_grid = NULL,
+    reference_weights = NULL,
+    draw_ids = draw_meta_stream$draw_ids,
+    draw_info = draw_meta_stream$draw_info
+  )
+  if (is_hetero_pcm) {
+    rm_list$comparability_note <- paste0(
+      "Heterogeneous category counts across '", object$spec$threshold_facet,
+      "': unstandardized averages depend on each examinee's assigned levels; ",
+      "use standardize = TRUE or reference_grid for cross-examinee comparisons."
     )
-    if (is_hetero_pcm) {
-      rm_list$comparability_note <- paste0(
-        "Heterogeneous category counts across '", object$spec$threshold_facet,
-        "': unstandardized averages depend on each examinee's assigned levels; ",
-        "use standardize = TRUE or reference_grid for cross-examinee comparisons."
-      )
-    }
-    attr(res, "reference_meta") <- rm_list
   }
+  attr(res, "reference_meta") <- rm_list
   res
 }
 

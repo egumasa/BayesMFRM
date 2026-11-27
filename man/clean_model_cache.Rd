@@ -4,7 +4,12 @@
 \alias{clean_model_cache}
 \title{Clean old compiled models from cache}
 \usage{
-clean_model_cache(cache_dir, max_age_days = 30, dry_run = FALSE)
+clean_model_cache(
+  cache_dir,
+  max_age_days = 30,
+  dry_run = FALSE,
+  include_csv = FALSE
+)
 }
 \arguments{
 \item{cache_dir}{cache directory}
@@ -12,6 +17,12 @@ clean_model_cache(cache_dir, max_age_days = 30, dry_run = FALSE)
 \item{max_age_days}{maximum age in days before cleaning}
 
 \item{dry_run}{if TRUE, just show what would be deleted}
+
+\item{include_csv}{if TRUE, also delete expired chain CSV files under
+\verb{cache_dir/csv/} and \verb{cache_dir/cv_folds/csv/} that are not referenced by a
+non-expired cache \code{.rds} in \code{cache_dir}. Defaults to \code{FALSE} so fitted
+\code{bmfrm_fit} objects saved outside \code{cache_dir} or held in memory retain
+their underlying CmdStan CSV outputs.}
 }
 \value{
 character vector of files that were (or would be) deleted

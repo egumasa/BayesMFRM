@@ -31,10 +31,12 @@ heterogeneous-category PCM.}
 
 \item{seed}{Optional seed, restored on exit.}
 
-\item{hierarchical}{Names of facets with hierarchical distributions; currently
-"person" and two-way interaction names are implemented. Person uses classes
-mean and sd with facet = "person"; interactions use class sd with their
-term name. The default character(0) retains fixed-scale priors.}
+\item{hierarchical}{Names of facets or terms with hierarchical distributions:
+\code{"person"} (classes \code{"mean"} and \code{"sd"} with \code{facet = "person"}), centered
+main facets (e.g., \code{"rater"}, \code{"item"} with \code{class = "sd"}), two-way
+interaction terms (e.g., \code{"item:rater"} with \code{class = "sd"}), and \code{"tau"}
+for uniform hierarchical PCM step sharing. The default \code{character(0)}
+retains fixed-scale priors.}
 
 \item{family}{"rsm" for common steps or "pcm" for steps within threshold_facet.}
 

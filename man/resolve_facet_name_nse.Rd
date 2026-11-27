@@ -4,7 +4,7 @@
 \alias{resolve_facet_name_nse}
 \title{Resolve a facet column argument passed either as a bare name or a string}
 \usage{
-resolve_facet_name_nse(facet_quo, col_names = character())
+resolve_facet_name_nse(facet_quo, col_names = character(), facet_cols = NULL)
 }
 \description{
 Resolve a facet column argument passed either as a bare name or a string

@@ -114,8 +114,44 @@ bmfrm <- function(
   if (!is.null(stan_file) && !is.null(priors)) {
     stop("priors cannot be supplied with stan_file; specify priors inside the Stan file")
   }
+  if (!is.null(stan_file) && identical(save_gq, "minimal")) {
+    stop("save_gq = 'minimal' requires generated Stan code; custom stan_file models define their own generated quantities")
+  }
   # Prevent R partially matching the removed development argument to model_name.
   if ("model" %in% names(sys.call())) stop("The development model argument was removed; use hierarchical and priors")
+
+  if (!is.numeric(iter) || length(iter) != 1L || !is.finite(iter) || iter != floor(iter) || iter < 2L) {
+    stop("iter must be a finite integer >= 2")
+  }
+  if (!is.numeric(warmup) || length(warmup) != 1L || !is.finite(warmup) || warmup != floor(warmup) ||
+      warmup < 0L || warmup >= iter) {
+    stop("warmup must be a non-negative integer strictly less than iter")
+  }
+  if (!is.numeric(chains) || length(chains) != 1L || !is.finite(chains) || chains != floor(chains) || chains < 1L) {
+    stop("chains must be a positive integer")
+  }
+  if (is.null(cores) || (length(cores) == 1L && is.na(cores) && !("cores" %in% names(sys.call())))) {
+    cores <- 1L
+  }
+  if (!is.numeric(cores) || length(cores) != 1L || !is.finite(cores) || cores != floor(cores) || cores < 1L) {
+    stop("cores must be a positive integer")
+  }
+  dots <- list(...)
+  if (length(dots) > 0L) {
+    if (is.null(names(dots)) || any(!nzchar(names(dots)))) {
+      stop("Additional sampling arguments in '...' must be named")
+    }
+    reserved_dots <- intersect(
+      names(dots),
+      c("data", "seed", "chains", "parallel_chains", "output_dir",
+        "iter_sampling", "iter_warmup", "save_warmup")
+    )
+    if (length(reserved_dots) > 0L) {
+      stop("Do not pass reserved cmdstanr argument(s) (",
+           paste(reserved_dots, collapse = ", "),
+           ") in '...'; use bmfrm()'s iter, warmup, chains, cores, and seed arguments instead")
+    }
+  }
   
   # Check cmdstan availability
   if (!check_cmdstan()) {
@@ -179,12 +215,25 @@ bmfrm <- function(
     cpp_options = cpp_options
   )
   
-  # 6. Fit using existing fit_cmdstan_cached()
+  # 6. Fit using signature-specific fit_cmdstan_cached() path (prevents cache clobbering across priors/data/seeds)
   message("Fitting model...")
+  fit_code <- if (!is.null(comp$model) && is.function(comp$model$code)) comp$model$code() else stan_code
+  fit_cache_file <- resolve_fit_cache_file(
+    base_cache_file = comp$cache_file,
+    code = fit_code,
+    data = data_info$stan_data,
+    seed = seed,
+    chains = chains,
+    parallel_chains = min(chains, cores),
+    extra_sampling = c(
+      list(iter_sampling = iter - warmup, iter_warmup = warmup, save_warmup = FALSE),
+      dots
+    )
+  )
   fit <- fit_cmdstan_cached(
     model = comp$model,
     data = data_info$stan_data,
-    file = comp$cache_file,
+    file = fit_cache_file,
     refit = refit,
     seed = seed,
     chains = chains,

@@ -89,14 +89,16 @@ test_that("bmfrm() works with hardcoded model (integration)", {
     scenario = sample(1:2, 100, replace = TRUE)
   )
 
-  # Test with hardcoded model
-  # Suppress ESS warnings (expected with minimal iterations)
+  # Test with hardcoded model in isolated temp cache_dir
+  tmp_cache <- tempfile("bmfrm_hc_cache_")
+  on.exit(unlink(tmp_cache, recursive = TRUE), add = TRUE)
   fit <- suppressWarnings(
     bmfrm(
       score ~ person + item + rater + scenario,
       data = test_data,
       K = 6,
       stan_file = bmfrm_model("four-facet/person-item-rater-scenario-main")$path,
+      cache_dir = tmp_cache,
       chains = 1,
       iter = 100,
       warmup = 50

@@ -133,6 +133,7 @@ bundled_stan_model_registry <- function() {
       family = "rsm",
       facets_main = c("person", "rater"),
       facets_bias = character(0),
+      param_map = c(person = "theta", rater = "rater"),
       r_recompute = TRUE,
       stan_mu_fair_adjust = "rater",
       supported_ops = c("residuals", "facet_fit", "fair_scores", "standardized_fair_scores", "pp_check", "predict", "loo")
@@ -141,6 +142,7 @@ bundled_stan_model_registry <- function() {
       family = "rsm",
       facets_main = c("person", "rater", "scenario"),
       facets_bias = character(0),
+      param_map = c(person = "theta", rater = "rater", scenario = "scenario"),
       r_recompute = TRUE,
       stan_mu_fair_adjust = c("rater", "scenario"),
       supported_ops = c("residuals", "facet_fit", "fair_scores", "standardized_fair_scores", "pp_check", "predict", "loo")
@@ -149,6 +151,7 @@ bundled_stan_model_registry <- function() {
       family = "rsm",
       facets_main = c("person", "item", "rater", "scenario"),
       facets_bias = character(0),
+      param_map = c(person = "theta", item = "beta", rater = "rater", scenario = "scenario"),
       r_recompute = FALSE,
       stan_mu_fair_adjust = c("rater", "scenario"),
       supported_ops = c("stan_gq_only")

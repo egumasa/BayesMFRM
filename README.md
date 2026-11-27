@@ -4,7 +4,7 @@
 [![Experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 <!-- badges: end -->
 
-**BayesMFRM** (v0.1.0.9005, experimental) is an R package for Bayesian Many-Facet Rasch Models (MFRM) using Stan (`cmdstanr`). It supports Rating Scale Models (RSM), Partial Credit Models (PCM), hierarchical facets/steps, two-way interaction (bias) analysis with local shrinkage, structural design-identifiability checks, prior predictive checks, unified posterior prediction, target-aware model comparison (PSIS-LOO and K-fold CV), and scalable FACETS-style diagnostics.
+**BayesMFRM** (v0.1.0.9007, experimental) is an R package for Bayesian Many-Facet Rasch Models (MFRM) using Stan (`cmdstanr`). It supports Rating Scale Models (RSM), Partial Credit Models (PCM), hierarchical facets/steps, two-way interaction (bias) analysis with local shrinkage, structural design-identifiability checks, prior predictive checks, unified posterior prediction, target-aware model comparison (PSIS-LOO and K-fold CV), and scalable FACETS-style diagnostics.
 
 > For a full step-by-step tutorial (research question -> model choices -> design check -> prior predictive check -> fitting -> diagnostics -> sensitivity analysis -> manuscript reporting), read the installed vignette:
 > ```r

@@ -31,13 +31,13 @@ extract_residuals <- function(
   mu_df <- mu_summ %>%
     dplyr::transmute(
       n      = get_index(variable),
-      mu_hat = mean
+      mu_hat = unname(mean)
     )
   
   sig_df <- sig_summ %>%
     dplyr::transmute(
       n          = get_index(variable),
-      sigma2_hat = mean
+      sigma2_hat = unname(mean)
     )
   
   # ───────────────────────────────────────────────────────────────
@@ -46,8 +46,16 @@ extract_residuals <- function(
   N <- length(stan_data$X)
   
   if (is.null(facet_cols)) {
-    lens <- vapply(stan_data, length, integer(1))
-    facet_cols <- names(stan_data)[lens == N & names(stan_data) != "X"]
+    is_1d_len_N <- vapply(stan_data, function(v) {
+      is.null(dim(v)) && (is.atomic(v) || is.factor(v)) && length(v) == N
+    }, logical(1))
+    cand <- setdiff(
+      names(stan_data)[is_1d_len_N],
+      c("X", "K_level", "tau_start", "tau_len",
+        "tau_free_start", "tau_free_len", "tau_raw_start", "tau_raw_len")
+    )
+    id_cand <- cand[grepl("_id$", cand)]
+    facet_cols <- if (length(id_cand) > 0L) id_cand else cand
   }
   
   # ───────────────────────────────────────────────────────────────
@@ -65,14 +73,21 @@ extract_residuals <- function(
   # ───────────────────────────────────────────────────────────────
   # 4. Add point summaries
   # ───────────────────────────────────────────────────────────────
+  model_label <- if (is.null(model_name) || !length(model_name) ||
+                     is.na(model_name[1L]) || !nzchar(as.character(model_name[1L]))) {
+    "model"
+  } else {
+    as.character(model_name[1L])
+  }
   out <- obs_df %>%
     dplyr::left_join(mu_df,  by = "n") %>%
     dplyr::left_join(sig_df, by = "n") %>%
     dplyr::mutate(
+      sigma2_hat = pmax(sigma2_hat, 1e-12),
       resid  = x - mu_hat,
       weight = sigma2_hat,
       z      = resid / sqrt(sigma2_hat),
-      model  = model_name
+      model  = model_label
     )
   
   # ───────────────────────────────────────────────────────────────
@@ -100,27 +115,43 @@ extract_residuals <- function(
 
 #' Resolve a facet column argument passed either as a bare name or a string
 #' @keywords internal
-resolve_facet_name_nse <- function(facet_quo, col_names = character()) {
+resolve_facet_name_nse <- function(facet_quo, col_names = character(), facet_cols = NULL) {
+  non_facet_cols <- c(
+    "n", "x", "mu_hat", "sigma2_hat", "resid", "weight", "z", "model",
+    "mu_draws", "sigma2_draws"
+  )
+  cand_facet_cols <- if (!is.null(facet_cols) && length(facet_cols) > 0L) {
+    facet_cols
+  } else {
+    setdiff(col_names, non_facet_cols)
+  }
+  map_prefixed <- function(nm) {
+    if (!(nm %in% cand_facet_cols) && paste0("facet_", nm) %in% cand_facet_cols) {
+      paste0("facet_", nm)
+    } else {
+      nm
+    }
+  }
   expr <- rlang::quo_get_expr(facet_quo)
   if (rlang::is_string(expr)) {
-    return(expr)
+    return(map_prefixed(expr))
   }
   if (rlang::is_symbol(expr)) {
     sym_name <- rlang::as_name(expr)
-    if (sym_name %in% col_names) {
+    if (sym_name %in% cand_facet_cols) {
       return(sym_name)
     }
     val <- tryCatch(rlang::eval_tidy(facet_quo), error = function(e) NULL)
     if (is.character(val) && length(val) == 1L && !is.na(val)) {
-      return(val)
+      return(map_prefixed(val))
     }
-    return(sym_name)
+    return(map_prefixed(sym_name))
   }
   val <- rlang::eval_tidy(facet_quo)
   if (is.character(val) && length(val) == 1L && !is.na(val)) {
-    return(val)
+    return(map_prefixed(val))
   }
-  rlang::as_name(facet_quo)
+  map_prefixed(rlang::as_name(facet_quo))
 }
 
 #' Compute infit and outfit mean square for any facet
@@ -133,9 +164,10 @@ resolve_facet_name_nse <- function(facet_quo, col_names = character()) {
 #' @export
 facet_infit_outfit <- function(res_df, facet) {
   # Capture before evaluation so both bare column names (rater) and strings ("rater") work
-  facet_name <- resolve_facet_name_nse(rlang::enquo(facet), names(res_df))
+  facet_name <- resolve_facet_name_nse(rlang::enquo(facet), names(res_df), attr(res_df, "facet_cols"))
   facet_sym <- rlang::sym(facet_name)
-  
+  if (!("model" %in% names(res_df))) res_df$model <- "model"
+
   res_df %>%
     dplyr::group_by(!!facet_sym, model) %>%
     dplyr::summarise(
@@ -164,7 +196,12 @@ add_fit_cri_bayes <- function(fit_stats,
                               res_df,
                               facet,
                               prob = 0.95) {
-  facet_name <- resolve_facet_name_nse(rlang::enquo(facet), names(res_df))
+  if (!all(c("mu_draws", "sigma2_draws") %in% names(res_df)) ||
+      !is.list(res_df$mu_draws) || !is.list(res_df$sigma2_draws)) {
+    stop("res_df must contain 'mu_draws' and 'sigma2_draws' list-columns; ",
+         "call residuals(fit, save_draws = TRUE) or extract_residuals(..., save_draws = TRUE)")
+  }
+  facet_name <- resolve_facet_name_nse(rlang::enquo(facet), names(res_df), attr(res_df, "facet_cols"))
 
   prob_lo <- (1 - prob) / 2
   prob_hi <- 1 - prob_lo
@@ -181,7 +218,7 @@ add_fit_cri_bayes <- function(fit_stats,
         idx <- which(sub_df[[facet_name]] == f_val)
 
         mu_mat  <- do.call(cbind, sub_df$mu_draws[idx])
-        sig_mat <- do.call(cbind, sub_df$sigma2_draws[idx])
+        sig_mat <- pmax(do.call(cbind, sub_df$sigma2_draws[idx]), 1e-12)
 
         D <- nrow(mu_mat)
         n_obs <- length(idx)
@@ -234,8 +271,7 @@ facet_fit_from_matrices <- function(x, facet_id, mu_mat, sig_mat,
   prob_hi <- 1 - prob_lo
   D <- nrow(mu_mat)
   mu_hat <- colMeans(mu_mat)
-  sig_hat <- colMeans(sig_mat)
-  kurt_hat <- if (!is.null(kurt_mat)) colMeans(kurt_mat) else NULL
+  sig_hat <- pmax(colMeans(sig_mat), 1e-12)
 
   levels_obs <- sort(unique(facet_id))
   rows <- lapply(levels_obs, function(f_val) {
@@ -243,7 +279,7 @@ facet_fit_from_matrices <- function(x, facet_id, mu_mat, sig_mat,
     n_obs <- length(idx)
     x_sub <- x[idx]
     mu_sub <- mu_mat[, idx, drop = FALSE]
-    sig_sub <- sig_mat[, idx, drop = FALSE]
+    sig_sub <- pmax(sig_mat[, idx, drop = FALSE], 1e-12)
 
     # Plug-in mean squares
     z2_plug <- (x_sub - mu_hat[idx])^2 / sig_hat[idx]
@@ -334,7 +370,17 @@ add_zstd <- function(fit_stats) {
 #' @export
 facet_infit_outfit_all <- function(res_df) {
   facet_cols <- attr(res_df, "facet_cols")
-  
+  if (is.null(facet_cols) || !length(facet_cols)) {
+    non_facet_cols <- c(
+      "n", "x", "mu_hat", "sigma2_hat", "resid", "weight", "z", "model",
+      "mu_draws", "sigma2_draws"
+    )
+    facet_cols <- setdiff(names(res_df), non_facet_cols)
+  }
+  if (!length(facet_cols)) {
+    stop("No facet columns found in res_df; supply a residual table with facet columns or 'facet_cols' attribute")
+  }
+
   purrr::map_dfr(
     facet_cols,
     ~ facet_infit_outfit(res_df, .x) %>%

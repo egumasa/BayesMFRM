@@ -55,6 +55,7 @@ resolve_eval_contract <- function(spec, stan_code = NULL) {
       return(list(
         source = "bundled_verified",
         model_id = matched$model_id,
+        param_map = matched$param_map,
         r_recompute = isTRUE(matched$r_recompute),
         stan_mu_fair_adjust = matched$stan_mu_fair_adjust,
         supported_ops = matched$supported_ops,
@@ -86,7 +87,16 @@ get_eval_contract <- function(object) {
     is_custom <- isTRUE(object$spec$custom_stan)
     consistent <- (!is_custom && identical(ec$source, "generated")) ||
       (is_custom && !identical(ec$source, "generated"))
-    if (consistent) return(ec)
+    if (consistent) {
+      if (identical(ec$source, "bundled_verified") && is.null(ec$param_map)) {
+        reg <- if (!is.null(ec$model_id)) bundled_stan_model_registry()[[ec$model_id]] else NULL
+        if (is.null(reg) && !is.null(object$stan_code)) {
+          reg <- match_bundled_stan_model(object$stan_code)
+        }
+        if (!is.null(reg$param_map)) ec$param_map <- reg$param_map
+      }
+      return(ec)
+    }
   }
   resolve_eval_contract(object$spec, object$stan_code)
 }
@@ -1564,7 +1574,7 @@ prepare_eval_plan <- function(object, newdata,
     n1_new <- length(new_levels[[f1]])
     n2_new <- length(new_levels[[f2]])
 
-    if (identical(sample_new_levels, "zero") || n1_known <= 1L || n2_known <= 1L) {
+    if (identical(sample_new_levels, "zero")) {
       bias_new[[term]] <- list(
         mode = "zero", f1 = f1, f2 = f2,
         n1_known = n1_known, n2_known = n2_known
@@ -1604,6 +1614,42 @@ prepare_eval_plan <- function(object, newdata,
       both_new_seeds <- sample.int(.Machine$integer.max, length(uniq_keys), replace = TRUE)
     }
 
+    col_scope <- vector("list", n2_new)
+    col_last_row <- integer(n2_new)
+    if (n2_new > 0L && n1_known > 1L) {
+      kn_rows <- which(i1 <= n1_known & i2 > n2_known)
+      if (length(kn_rows)) {
+        u2_all <- i2[kn_rows] - n2_known
+        sp_i1 <- split.default(i1[kn_rows], u2_all)
+        for (nm_u in names(sp_i1)) {
+          col_scope[[as.integer(nm_u)]] <- sort(unique(sp_i1[[nm_u]]))
+        }
+        for (k_i in seq_along(kn_rows)) {
+          u_i <- u2_all[k_i]
+          r_i <- kn_rows[k_i]
+          if (r_i > col_last_row[u_i]) col_last_row[u_i] <- r_i
+        }
+      }
+    }
+
+    row_scope <- vector("list", n1_new)
+    row_last_row <- integer(n1_new)
+    if (n1_new > 0L && n2_known > 1L) {
+      nk_rows <- which(i1 > n1_known & i2 <= n2_known)
+      if (length(nk_rows)) {
+        u1_all <- i1[nk_rows] - n1_known
+        sp_i2 <- split.default(i2[nk_rows], u1_all)
+        for (nm_u in names(sp_i2)) {
+          row_scope[[as.integer(nm_u)]] <- sort(unique(sp_i2[[nm_u]]))
+        }
+        for (k_i in seq_along(nk_rows)) {
+          u_i <- u1_all[k_i]
+          r_i <- nk_rows[k_i]
+          if (r_i > row_last_row[u_i]) row_last_row[u_i] <- r_i
+        }
+      }
+    }
+
     bias_new[[term]] <- list(
       mode = b_mode,
       scale = b_scale,
@@ -1611,14 +1657,20 @@ prepare_eval_plan <- function(object, newdata,
       n1_known = n1_known, n2_known = n2_known,
       sd = sd_b,
       c2 = c2_b,
-      B1 = if (identical(b_mode, "gaussian_basis")) rsm_prior_basis(n1_known, b_scale) else NULL,
-      B2 = if (identical(b_mode, "gaussian_basis")) rsm_prior_basis(n2_known, b_scale) else NULL,
-      col_seeds = if (n2_new > 0L) sample.int(.Machine$integer.max, n2_new, replace = TRUE) else integer(0),
-      row_seeds = if (n1_new > 0L) sample.int(.Machine$integer.max, n1_new, replace = TRUE) else integer(0),
+      col_seeds = if (n2_new > 0L && n1_known > 1L) sample.int(.Machine$integer.max, n2_new, replace = TRUE) else integer(0),
+      col_scope = col_scope,
+      col_last_row = col_last_row,
+      row_seeds = if (n1_new > 0L && n2_known > 1L) sample.int(.Machine$integer.max, n1_new, replace = TRUE) else integer(0),
+      row_scope = row_scope,
+      row_last_row = row_last_row,
       both_new_map = both_new_map,
       both_new_seeds = both_new_seeds
     )
   }
+
+  n_conc_init <- if (length(bias_new) > 0L && !identical(sample_new_levels, "zero")) {
+    count_concurrent_interaction_slices(ids, bias_new, seq_len(nrow(newdata)), 1L)
+  } else 0L
 
   list(
     params = params,
@@ -1627,8 +1679,199 @@ prepare_eval_plan <- function(object, newdata,
     main_new = main_new,
     tau_new = tau_new,
     bias_new = bias_new,
-    sample_new_levels = sample_new_levels
+    sample_new_levels = sample_new_levels,
+    offset_cache = if (length(bias_new) > 0L && !identical(sample_new_levels, "zero")) {
+      new_interaction_offset_cache(D, 1L, n_concurrent_offsets = n_conc_init)
+    } else NULL
   )
+}
+
+#' Mix a per-entity 32-bit seed with an optional Monte Carlo iteration salt
+#' @keywords internal
+mix_bmfrm_seed <- function(base_seed, salt = NULL) {
+  if (is.null(salt)) return(base_seed)
+  as.integer(((as.numeric(base_seed) * 1048583 + as.numeric(salt)) %% 2147483647) + 1)
+}
+
+#' Count peak simultaneously live constrained interaction slices across chunks
+#' @keywords internal
+count_concurrent_interaction_slices <- function(ids, bias_new, rows_seq, cs) {
+  n_seq <- length(rows_seq)
+  cs <- as.integer(max(1L, cs))
+  n_chunks <- as.integer((n_seq + cs - 1L) %/% cs)
+  if (n_chunks <= 1L || length(bias_new) == 0L) return(0L)
+
+  diff_active <- integer(n_chunks + 2L)
+  add_axis_spans <- function(u_vec, pos_in_seq, n_u) {
+    if (n_u <= 0L || length(pos_in_seq) <= 1L) return(invisible(NULL))
+    ch_vec <- (pos_in_seq - 1L) %/% cs + 1L
+    first_ch <- integer(n_u)
+    last_ch <- integer(n_u)
+    for (idx in seq_along(u_vec)) {
+      u <- u_vec[idx]
+      ch <- ch_vec[idx]
+      if (first_ch[u] == 0L) first_ch[u] <- ch
+      if (ch > last_ch[u]) last_ch[u] <- ch
+    }
+    multi <- which(first_ch > 0L & last_ch > first_ch)
+    for (u in multi) {
+      diff_active[first_ch[u]] <<- diff_active[first_ch[u]] + 1L
+      diff_active[last_ch[u] + 1L] <<- diff_active[last_ch[u] + 1L] - 1L
+    }
+    invisible(NULL)
+  }
+
+  for (term in names(bias_new)) {
+    bn <- bias_new[[term]]
+    if (identical(bn$mode, "zero")) next
+    i1 <- ids[[bn$f1]][rows_seq]
+    i2 <- ids[[bn$f2]][rows_seq]
+    if (bn$n1_known > 1L && length(bn$col_seeds) > 0L) {
+      kn <- which(i1 <= bn$n1_known & i2 > bn$n2_known)
+      if (length(kn) > 1L) {
+        add_axis_spans(i2[kn] - bn$n2_known, kn, length(bn$col_seeds))
+      }
+    }
+    if (bn$n2_known > 1L && length(bn$row_seeds) > 0L) {
+      nk <- which(i1 > bn$n1_known & i2 <= bn$n2_known)
+      if (length(nk) > 1L) {
+        add_axis_spans(i1[nk] - bn$n1_known, nk, length(bn$row_seeds))
+      }
+    }
+  }
+
+  as.integer(max(0L, cumsum(diff_active)))
+}
+
+#' Create a byte-bounded cache for length-D interaction centering offsets
+#'
+#' Sizes the default byte budget from the estimated simultaneously live offsets
+#' (`n_concurrent_offsets * D * 8`, e.g., `M * n_active_slices * D * 8` in CV)
+#' and current chunk footprint, capped at `hard_max_bytes` (default 64 MiB).
+#' When demand exceeds `max_bytes`, cached entries remain pinned until their
+#' final chunk and remaining offsets are deterministically recomputed per chunk.
+#' @keywords internal
+new_interaction_offset_cache <- function(D, eff_chunk_size = 1L,
+                                         n_concurrent_offsets = 0L,
+                                         max_bytes = NULL,
+                                         hard_max_bytes = 64 * 1024^2) {
+  if (is.null(max_bytes)) {
+    entry_bytes <- as.numeric(D) * 8
+    est_bytes <- as.numeric(max(0, n_concurrent_offsets)) * entry_bytes
+    chunk_bytes <- 16 * as.numeric(D) * as.numeric(max(1L, eff_chunk_size)) * 8
+    target <- max(1024^2, chunk_bytes, est_bytes)
+    max_bytes <- min(as.numeric(hard_max_bytes), target)
+  }
+  env <- new.env(hash = TRUE, parent = emptyenv())
+  env$data <- new.env(hash = TRUE, parent = emptyenv())
+  env$bytes <- 0
+  env$max_bytes <- as.numeric(max_bytes)
+  env
+}
+
+#' Generate one raw length-D interaction column inside an active RNG guard
+#' @keywords internal
+draw_raw_interaction_col_unseeded <- function(D, n_known, b_info, col_seed) {
+  set.seed(col_seed)
+  b_mode <- b_info$mode
+  sd_b <- b_info$sd
+  s_axis <- if (identical(b_info$scale, "marginal")) sqrt(n_known / (n_known - 1L)) else 1
+  if (identical(b_mode, "shrinkage_student_t")) {
+    lam <- 1 / stats::rgamma(D, shape = 1.5, rate = 0.5)
+    (sqrt(lam) * stats::rnorm(D)) * (s_axis * sd_b)
+  } else if (identical(b_mode, "shrinkage_horseshoe")) {
+    lam_raw <- abs(stats::rcauchy(D, location = 0, scale = 1))
+    sig2 <- sd_b * sd_b
+    c2 <- b_info$c2
+    lam_tilde <- sqrt((c2 * (lam_raw * lam_raw)) / (c2 + sig2 * (lam_raw * lam_raw)))
+    (lam_tilde * stats::rnorm(D)) * sd_b
+  } else {
+    stats::rnorm(D) * (s_axis * sd_b)
+  }
+}
+
+#' Compute length-D sum-to-zero centering offset and requested chunk columns
+#' @keywords internal
+compute_interaction_center_unseeded <- function(D, n_known, b_info, slice_seed,
+                                                scope_cols, u_c = integer(0)) {
+  is_gauss <- !identical(b_info$mode, "shrinkage_student_t") &&
+    !identical(b_info$mode, "shrinkage_horseshoe")
+  iter_cols <- if (is_gauss) scope_cols else seq_len(n_known)
+  k_iter <- length(iter_cols)
+  sum_raw <- numeric(D)
+  k_c <- length(u_c)
+  raw_c <- if (k_c > 0L) matrix(0, nrow = D, ncol = k_c) else NULL
+  c_map <- if (k_c > 0L) match(iter_cols, u_c, nomatch = 0L) else integer(k_iter)
+
+  for (idx in seq_len(k_iter)) {
+    ell <- iter_cols[idx]
+    v <- draw_raw_interaction_col_unseeded(
+      D, n_known, b_info, mix_bmfrm_seed(slice_seed, ell)
+    )
+    sum_raw <- sum_raw + v
+    pos_c <- c_map[idx]
+    if (pos_c > 0L) raw_c[, pos_c] <- v
+  }
+
+  alpha <- if (is_gauss && k_iter < n_known) {
+    1 - sqrt((n_known - k_iter) / n_known)
+  } else {
+    1
+  }
+  list(center = (alpha / k_iter) * sum_raw, raw_c = raw_c)
+}
+
+#' Evaluate constrained 1D interaction values for only the columns used in a chunk
+#' @keywords internal
+eval_constrained_interaction_chunk <- function(D, n_known, b_info, slice_seed,
+                                               chunk_k_idx, scope_cols,
+                                               need_after_chunk = FALSE,
+                                               cache_key = NULL,
+                                               offset_cache = NULL) {
+  nc <- length(chunk_k_idx)
+  if (n_known <= 1L || nc == 0L) {
+    return(matrix(0, nrow = D, ncol = nc))
+  }
+  u_c <- unique(chunk_k_idx)
+  k_c <- length(u_c)
+  entry_bytes <- as.numeric(D) * 8
+
+  has_hit <- !is.null(offset_cache) && !is.null(cache_key) &&
+    exists(cache_key, envir = offset_cache$data, inherits = FALSE)
+
+  if (has_hit) {
+    center_d <- offset_cache$data[[cache_key]]
+    if (!isTRUE(need_after_chunk)) {
+      rm(list = cache_key, envir = offset_cache$data)
+      offset_cache$bytes <- max(0, offset_cache$bytes - entry_bytes)
+    }
+    raw_c <- with_bmfrm_seed(1L, {
+      out_c <- matrix(0, nrow = D, ncol = k_c)
+      for (j in seq_len(k_c)) {
+        out_c[, j] <- draw_raw_interaction_col_unseeded(
+          D, n_known, b_info, mix_bmfrm_seed(slice_seed, u_c[j])
+        )
+      }
+      out_c
+    })
+    sub_mat <- raw_c - center_d
+    return(sub_mat[, match(chunk_k_idx, u_c), drop = FALSE])
+  }
+
+  res <- with_bmfrm_seed(1L, {
+    compute_interaction_center_unseeded(
+      D = D, n_known = n_known, b_info = b_info,
+      slice_seed = slice_seed, scope_cols = scope_cols, u_c = u_c
+    )
+  })
+  if (isTRUE(need_after_chunk) && !is.null(offset_cache) && !is.null(cache_key)) {
+    if (offset_cache$bytes + entry_bytes <= offset_cache$max_bytes) {
+      offset_cache$data[[cache_key]] <- res$center
+      offset_cache$bytes <- offset_cache$bytes + entry_bytes
+    }
+  }
+  sub_mat <- res$raw_c - res$center
+  sub_mat[, match(chunk_k_idx, u_c), drop = FALSE]
 }
 
 #' Evaluate a single observation chunk using chunk-scoped new-level generation
@@ -1639,7 +1882,10 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
                                        compute_probs = FALSE,
                                        compute_kurtosis = FALSE,
                                        compute_log_lik = FALSE,
-                                       compute_y_rep = FALSE) {
+                                       compute_y_rep = FALSE,
+                                       seed_salt = NULL,
+                                       offset_cache = plan$offset_cache,
+                                       bias_scope_override = NULL) {
   params <- plan$params
   ids <- plan$ids
   D <- params$D
@@ -1660,7 +1906,8 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
     if (length(u_pos) && !identical(p_new_info$mode, "zero")) {
       u_local <- p_id[u_pos] - n_k
       for (m in unique(u_local)) {
-        v <- with_bmfrm_seed(p_new_info$seeds[m], p_new_info$mu + p_new_info$sd * stats::rnorm(D))
+        s_m <- mix_bmfrm_seed(p_new_info$seeds[m], seed_salt)
+        v <- with_bmfrm_seed(s_m, p_new_info$mu + p_new_info$sd * stats::rnorm(D))
         eta[, u_pos[u_local == m]] <- v
       }
     }
@@ -1682,7 +1929,8 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
       if (length(u_pos) && !identical(f_new_info$mode, "zero")) {
         u_local <- f_id[u_pos] - n_k
         for (m in unique(u_local)) {
-          v <- with_bmfrm_seed(f_new_info$seeds[m], f_new_info$sd * stats::rnorm(D))
+          s_m <- mix_bmfrm_seed(f_new_info$seeds[m], seed_salt)
+          v <- with_bmfrm_seed(s_m, f_new_info$sd * stats::rnorm(D))
           pos_m <- u_pos[u_local == m]
           eta[, pos_m] <- eta[, pos_m, drop = FALSE] - v
         }
@@ -1708,24 +1956,47 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
         eta[, kk] <- eta[, kk, drop = FALSE] + b$draws[, cell_idx, drop = FALSE]
       }
       if (!identical(b_info$mode, "zero")) {
-        # Known f1 x New f2: sum-to-zero along known f1
+        max_row_c <- max(rows)
+        ov <- if (!is.null(bias_scope_override)) bias_scope_override[[term]] else NULL
+        c_scope_list <- if (!is.null(ov)) ov$col_scope else b_info$col_scope
+        c_last_vec <- if (!is.null(ov)) ov$col_last_row else b_info$col_last_row
+        r_scope_list <- if (!is.null(ov)) ov$row_scope else b_info$row_scope
+        r_last_vec <- if (!is.null(ov)) ov$row_last_row else b_info$row_last_row
+
+        # Known f1 x New f2: sum-to-zero along known f1 (identically 0 when n1 <= 1L)
         kn <- which(i1 <= n1 & i2 > n2)
-        if (length(kn)) {
+        if (n1 > 1L && length(kn)) {
           u2 <- i2[kn] - n2
           for (m2 in unique(u2)) {
-            slice <- draw_constrained_interaction_slice(D, n1, b_info, b_info$B1, b_info$col_seeds[m2])
+            s_c <- mix_bmfrm_seed(b_info$col_seeds[m2], seed_salt)
             pos <- kn[u2 == m2]
-            eta[, pos] <- eta[, pos, drop = FALSE] + slice[, i1[pos], drop = FALSE]
+            sc_m2 <- c_scope_list[[m2]]
+            if (is.null(sc_m2)) sc_m2 <- sort(unique(i1[pos]))
+            eta[, pos] <- eta[, pos, drop = FALSE] + eval_constrained_interaction_chunk(
+              D = D, n_known = n1, b_info = b_info, slice_seed = s_c,
+              chunk_k_idx = i1[pos], scope_cols = sc_m2,
+              need_after_chunk = (c_last_vec[m2] > max_row_c),
+              cache_key = paste0(term, ":c:", s_c),
+              offset_cache = offset_cache
+            )
           }
         }
-        # New f1 x Known f2: sum-to-zero along known f2
+        # New f1 x Known f2: sum-to-zero along known f2 (identically 0 when n2 <= 1L)
         nk <- which(i1 > n1 & i2 <= n2)
-        if (length(nk)) {
+        if (n2 > 1L && length(nk)) {
           u1 <- i1[nk] - n1
           for (m1 in unique(u1)) {
-            slice <- draw_constrained_interaction_slice(D, n2, b_info, b_info$B2, b_info$row_seeds[m1])
+            s_r <- mix_bmfrm_seed(b_info$row_seeds[m1], seed_salt)
             pos <- nk[u1 == m1]
-            eta[, pos] <- eta[, pos, drop = FALSE] + slice[, i2[pos], drop = FALSE]
+            sc_m1 <- r_scope_list[[m1]]
+            if (is.null(sc_m1)) sc_m1 <- sort(unique(i2[pos]))
+            eta[, pos] <- eta[, pos, drop = FALSE] + eval_constrained_interaction_chunk(
+              D = D, n_known = n2, b_info = b_info, slice_seed = s_r,
+              chunk_k_idx = i2[pos], scope_cols = sc_m1,
+              need_after_chunk = (r_last_vec[m1] > max_row_c),
+              cache_key = paste0(term, ":r:", s_r),
+              offset_cache = offset_cache
+            )
           }
         }
         # New f1 x New f2: unconstrained population cell
@@ -1733,7 +2004,8 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
         if (length(nn)) {
           p_map <- b_info$both_new_map[rows[nn]]
           for (pm in unique(p_map)) {
-            v <- draw_unconstrained_interaction_cell(D, b_info, b_info$both_new_seeds[pm])
+            s_nn <- mix_bmfrm_seed(b_info$both_new_seeds[pm], seed_salt)
+            v <- draw_unconstrained_interaction_cell(D, b_info, s_nn)
             pos <- nn[p_map == pm]
             eta[, pos] <- eta[, pos, drop = FALSE] + v
           }
@@ -1781,7 +2053,8 @@ eval_bmfrm_chunk_from_plan <- function(plan, rows, resp_chunk = NULL,
         }
       } else {
         for (m in unique(u_local)) {
-          tau_m <- with_bmfrm_seed(tn$seeds[m], {
+          s_t <- mix_bmfrm_seed(tn$seeds[m], seed_salt)
+          tau_m <- with_bmfrm_seed(s_t, {
             if (K > 2L) {
               z_dev <- matrix(stats::rnorm(D * (K - 2L)), nrow = D, ncol = K - 2L)
               tn$tau_common + (z_dev %*% t(tn$B_dev)) * tn$sd
@@ -1971,6 +2244,12 @@ stream_bmfrm_predictions <- function(object,
       D * if (identical(type, "probs")) K else 1L, N, chunk_size
     )
     starts <- seq.int(1L, N, by = eff_cs)
+    n_conc_p <- if (length(starts) > 1L && length(plan$bias_new) > 0L && !identical(sample_new_levels, "zero")) {
+      count_concurrent_interaction_slices(plan$ids, plan$bias_new, seq_len(N), eff_cs)
+    } else 0L
+    plan$offset_cache <- if (n_conc_p > 0L) {
+      new_interaction_offset_cache(D, eff_cs, n_concurrent_offsets = n_conc_p)
+    } else NULL
 
     if (!isTRUE(summary)) {
       if (identical(type, "probs")) {

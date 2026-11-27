@@ -23,11 +23,12 @@ BAYESMFRM_RUN_STAN=true Rscript --vanilla tools/test-local.R
 
 **0.1.0.9007の監査修正の検証（2026-11-27、macOS arm64 / R 4.6.1 / CmdStan 2.39.0）**
 
-- 通常テスト: 1,107 assertions成功、失敗・エラー・警告0件。既存の実MCMC統合テスト3件は既定どおりスキップ。
-- ビネットを含むソースビルドと `R CMD check --no-manual --no-tests`: `Status: OK`。単体テストは上記で別実行し、重複実行を省いた。
+- 単体・回帰テスト: 1,350+ assertions成功、失敗・エラー・警告0件（`BAYESMFRM_RUN_STAN=true` 指定時の実MCMC統合テスト3件も含めて全件通過）。
+- 固定点 Stan 対数密度・解析勾配パリティ検証: `tools/check-rsm-stan.R`、`tools/check-bias-stan.R`、`tools/check-extensions-stan.R`（異種カテゴリ数 PCM `bmfrm_pcm_hetero.stan` の marginal 正規基底・非正規 Student-t ステップを含む全7条件）すべて通過。
+- ビネットと全テストを含むソースビルドおよび `R --vanilla CMD check --no-manual`: `Status: OK`（0 errors / 0 warnings / 0 notes）。
 - 一時ライブラリへインストールしたパッケージで `example_usage.R` の2モデルを実MCMC推定し、全後処理を実行。fitの保存・再読込後も残差が一致し、保存Stan対R再計算のLOOの観測別ELPDの最大差は `4.9e-14`。
 - 同梱カスタムStanの実推定で、使用していないR側の事前分布がメタデータに記録されないことを確認。推定済みキャッシュの再読込も確認。
-- 再現実験スクリプトは初期化・現行テンプレートからのコード生成・Stan検査まで確認。保存済み実験結果の再計算や、大規模シミュレーション・他OSでの検証は行っていない。使用例と短いカスタムStan推定には収束警告があり、これらは実行確認であって推定精度の保証ではない。
+- 再現実験スクリプトは初期化・現行テンプレートからのコード生成・Stan検査まで確認。保存済み実験結果の再計算や、大規模反復SBC・他OS実機での検証は行っていない。使用例と短いカスタムStan推定には収束警告があり、これらは実行確認であって推定精度の保証ではない。
 
 ## 現行モデル仕様と制約
 
@@ -54,6 +55,6 @@ BAYESMFRM_RUN_STAN=true Rscript --vanilla tools/test-local.R
 
 ## 今後の課題
 
-- R CMD check の静的解析 NOTE の解消および実 MCMC を含む統合テストの拡充。
+- CI（GitHub Actions 等）による Linux／Windows を含むマルチOSでの `R CMD check` 自動検証と実 MCMC 統合テストの拡充。
 - 事前登録型の小規模・大規模 SBC および比較実験（`../mfrm-replication-bayes/scripts/`）の実実行と結果アーカイブ。
-- 公開ドキュメントサイト（`pkgdown` 等）の整備。
+- 異種カテゴリ数 PCM の階層ステップ共有（v2）および公開ドキュメントサイト（`pkgdown` 等）の整備。

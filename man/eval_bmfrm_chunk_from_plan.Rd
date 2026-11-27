@@ -13,7 +13,10 @@ eval_bmfrm_chunk_from_plan(
   compute_probs = FALSE,
   compute_kurtosis = FALSE,
   compute_log_lik = FALSE,
-  compute_y_rep = FALSE
+  compute_y_rep = FALSE,
+  seed_salt = NULL,
+  offset_cache = plan$offset_cache,
+  bias_scope_override = NULL
 )
 }
 \description{

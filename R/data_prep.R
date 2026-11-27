@@ -299,52 +299,105 @@ get_facet_labels <- function(data_info, facet) {
 #' @return list of diagnostic information
 #' @export
 check_data_suitability <- function(data, response, facets) {
+  if (!is.data.frame(data) || nrow(data) == 0L) {
+    stop("data must be a non-empty data.frame")
+  }
+  if (!is.character(response) || length(response) != 1L || is.na(response) ||
+      !(response %in% names(data))) {
+    stop("Response column '", response, "' not found in data")
+  }
+  if (!is.character(facets) || length(facets) == 0L || anyNA(facets)) {
+    stop("facets must be a non-empty character vector of column names")
+  }
+  missing_cols <- setdiff(facets, names(data))
+  if (length(missing_cols) > 0L) {
+    stop("Facet column(s) not found in data: ", paste(missing_cols, collapse = ", "))
+  }
+
   results <- list()
-  
-  # Basic data info
+  resp_vec <- data[[response]]
+  non_na_resp <- !is.na(resp_vec)
+  unsuitable <- FALSE
+  warnings <- character(0)
+
+  # Basic data info and response validity checks
   results$n_obs <- nrow(data)
-  results$response_range <- range(data[[response]], na.rm = TRUE)
-  results$missing_response <- sum(is.na(data[[response]]))
+  results$missing_response <- sum(!non_na_resp)
+  if (!is.numeric(resp_vec)) {
+    unsuitable <- TRUE
+    results$response_range <- c(NA_real_, NA_real_)
+    warnings <- c(warnings, paste0("Response '", response, "' must be numeric integer category scores (>= 1)"))
+  } else if (!any(non_na_resp)) {
+    unsuitable <- TRUE
+    results$response_range <- c(NA_real_, NA_real_)
+    warnings <- c(warnings, paste0("Response '", response, "' has no non-missing observations"))
+  } else {
+    obs_r <- resp_vec[non_na_resp]
+    fin_r <- obs_r[is.finite(obs_r)]
+    results$response_range <- if (length(fin_r) > 0L) range(fin_r) else c(NA_real_, NA_real_)
+    if (any(!is.finite(obs_r))) {
+      unsuitable <- TRUE
+      warnings <- c(warnings, paste0("Response '", response, "' contains non-finite values (Inf/-Inf/NaN)"))
+    }
+    if (length(fin_r) > 0L && any(fin_r != floor(fin_r))) {
+      unsuitable <- TRUE
+      warnings <- c(warnings, paste0("Response '", response, "' contains non-integer values; scores must be integers 1..K"))
+    }
+    if (length(fin_r) > 0L && any(fin_r < 1)) {
+      unsuitable <- TRUE
+      warnings <- c(warnings, paste0("Response '", response, "' contains values < 1; category scores must start at 1"))
+    }
+  }
+  if (results$missing_response > 0) {
+    warnings <- c(warnings, paste("Missing responses:", results$missing_response))
+  }
   
-  # Facet information
+  # Facet information (exclude NA from level count; keep declared factor levels consistent with table())
   facet_info <- list()
   for (facet in facets) {
+    v <- data[[facet]]
+    lv <- if (is.factor(v)) levels(v) else unique(v[!is.na(v)])
+    n_lv <- length(lv)
+    tab <- if (n_lv > 0L) table(factor(v[!is.na(v)], levels = lv)) else integer(0)
     facet_info[[facet]] <- list(
-      n_levels = length(unique(data[[facet]])),
-      missing = sum(is.na(data[[facet]])),
-      min_obs_per_level = min(table(data[[facet]]))
+      n_levels = n_lv,
+      missing = sum(is.na(v)),
+      min_obs_per_level = if (length(tab) > 0L) as.integer(min(tab)) else 0L
     )
   }
   results$facet_info <- facet_info
   
-  # Design matrix sparsity
-  design_complete <- prod(vapply(facets, function(f) length(unique(data[[f]])), integer(1)))
-  design_observed <- nrow(unique(data[facets]))
-  results$design_sparsity <- 1 - (design_observed / design_complete)
-  
-  # Warnings
-  warnings <- character(0)
-  if (results$missing_response > 0) {
-    warnings <- c(warnings, paste("Missing responses:", results$missing_response))
-  }
+  # Design matrix sparsity (evaluated on non-missing facet & response rows)
+  design_complete <- prod(vapply(facet_info, function(fi) as.numeric(fi$n_levels), numeric(1)))
+  valid_rows <- stats::complete.cases(data[facets]) & non_na_resp
+  if (!any(valid_rows)) unsuitable <- TRUE
+  design_observed <- if (any(valid_rows)) nrow(unique(data[valid_rows, facets, drop = FALSE])) else 0L
+  results$design_sparsity <- if (design_complete > 0) 1 - (design_observed / design_complete) else NA_real_
   
   for (facet in facets) {
     if (facet_info[[facet]]$missing > 0) {
       warnings <- c(warnings, paste("Missing values in", facet, ":", facet_info[[facet]]$missing))
     }
-    if (facet_info[[facet]]$min_obs_per_level < 3) {
+    if (facet_info[[facet]]$n_levels == 0L) {
+      unsuitable <- TRUE
+      warnings <- c(warnings, paste("Facet", facet, "has no valid levels"))
+    } else if (facet_info[[facet]]$min_obs_per_level < 3) {
       warnings <- c(warnings, paste("Some", facet, "levels have very few observations"))
     }
   }
   
-  if (results$design_sparsity > 0.8) {
+  if (is.na(results$design_sparsity)) {
+    warnings <- c(warnings, "Design sparsity cannot be computed because at least one facet has no valid levels")
+  } else if (results$design_sparsity > 0.8) {
     warnings <- c(warnings, "Very sparse design - many facet combinations unobserved")
   }
   
   results$warnings <- warnings
   
   # Overall recommendation
-  if (length(warnings) == 0) {
+  if (unsuitable) {
+    results$recommendation <- "Data is not suitable for MFRM - resolve invalid or missing data before fitting"
+  } else if (length(warnings) == 0) {
     results$recommendation <- "Data looks suitable for MFRM analysis"
   } else if (length(warnings) <= 2) {
     results$recommendation <- "Data mostly suitable, but check warnings"

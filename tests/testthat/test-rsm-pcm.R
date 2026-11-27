@@ -189,12 +189,15 @@ test_that("bmfrm() works with RSM family (integration)", {
     rater = sample(1:3, 100, replace = TRUE)
   )
 
+  tmp_cache <- tempfile("bmfrm_rsm_cache_")
+  on.exit(unlink(tmp_cache, recursive = TRUE), add = TRUE)
   fit <- suppressWarnings(
     bmfrm(
       score ~ person + item + rater,
       data = test_data,
       K = 6,
       family = "rsm",
+      cache_dir = tmp_cache,
       chains = 1,
       iter = 100,
       warmup = 50
@@ -217,6 +220,8 @@ test_that("bmfrm() works with PCM family (integration)", {
     rater = sample(1:3, 100, replace = TRUE)
   )
 
+  tmp_cache <- tempfile("bmfrm_pcm_cache_")
+  on.exit(unlink(tmp_cache, recursive = TRUE), add = TRUE)
   fit <- suppressWarnings(
     bmfrm(
       score ~ person + item + rater,
@@ -224,6 +229,7 @@ test_that("bmfrm() works with PCM family (integration)", {
       K = 6,
       family = "pcm",
       threshold_facet = "item",
+      cache_dir = tmp_cache,
       chains = 1,
       iter = 100,
       warmup = 50

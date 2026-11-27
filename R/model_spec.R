@@ -30,8 +30,8 @@ is_normal_prior_literal <- function(spec) {
   !is.null(x) && x$distribution == "normal" && length(x$args) == 2L && x$args[2L] > 0
 }
 
-validate_facet_names <- function(facets_main) {
-  facets <- setdiff(facets_main, "person")
+is_reserved_stan_identifier <- function(ids) {
+  if (!length(ids)) return(logical(0))
   reserved <- c(
     "theta", "tau", "tau_common", "tau_dev", "mu_theta", "sigma_theta",
     "N", "K", "X", "log_lik", "y_rep", "mu", "sigma2", "mu_fair",
@@ -60,11 +60,16 @@ validate_facet_names <- function(facets_main) {
     "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "xor", "xor_eq",
     # Local identifiers in the generated model, including ragged PCM blocks.
     "threshold", "n", "k", "i", "j", "mj", "rj", "dj", "s", "rs", "fs", "raw_j", "Kj", "t_start",
-    "centered", "raw_eff", "lam_tilde"
+    "tau_step", "centered", "raw_eff", "lam_tilde"
   )
-  if (any(facets %in% reserved) ||
-      any(grepl("__$|_raw$|_id$|_n$|^(B_|J_|K_|N_tau_|tau_|mean_|fixed_sd_|scale_factor_|prior_sd_|ability_|estimate_|sigma_|lambda_|c2_)", facets)) ||
-      any(!grepl("^[A-Za-z][A-Za-z0-9_]*$", facets))) {
+  (ids %in% reserved) |
+    grepl("__$|_raw$|_id$|_n$|^(B_|J_|K_|N_tau_|tau_|mean_|fixed_sd_|scale_factor_|prior_sd_|ability_|estimate_|sigma_|lambda_|c2_)", ids) |
+    !grepl("^[A-Za-z][A-Za-z0-9_]*$", ids)
+}
+
+validate_facet_names <- function(facets_main) {
+  facets <- setdiff(facets_main, "person")
+  if (any(is_reserved_stan_identifier(facets))) {
     stop("Facet names must be nonreserved Stan identifiers")
   }
   invisible(TRUE)
@@ -533,8 +538,8 @@ model_diagnostic_variables <- function(spec, data_info) {
     if (model$ability$mode == "hierarchical" && model$ability$sd$estimated) "log_sigma_theta_raw"
   )
 
-  # Hierarchical main facet SDs (only when facet has >1 level)
-  for (f in active_facets) {
+  # Hierarchical main facet SDs (included even when J_f == 1 because unseen-level prediction uses sigma_f)
+  for (f in all_other) {
     fs <- model$facet_specs[[f]]
     if (fs$mode == "hierarchical_sd" && fs$sd$estimated) {
       variable <- c(variable, paste0("sigma_", f))
@@ -561,9 +566,9 @@ model_diagnostic_variables <- function(spec, data_info) {
       if (b$mode %in% c("shrinkage_horseshoe", "shrinkage_student_t")) {
         raw <- c(raw, paste0("lambda_", b$name))
       }
-      if (b$mode == "shrinkage_horseshoe") {
-        raw <- c(raw, paste0("c2_", b$name))
-      }
+    }
+    if (b$mode == "shrinkage_horseshoe") {
+      raw <- c(raw, paste0("c2_", b$name))
     }
     if (b$hierarchical && b$sd$estimated) {
       variable <- c(variable, paste0("sigma_", b$name))
@@ -595,9 +600,8 @@ validate_interaction_terms <- function(facets, terms) {
   if (anyDuplicated(interaction_key(terms))) stop("Duplicate interaction term")
   names <- gsub(":", "", terms)
   generated <- c(facets, names, paste0("sigma_", names))
-  if (anyDuplicated(generated) || any(!grepl("^[A-Za-z][A-Za-z0-9_]*$", generated)) ||
-      any(names %in% c("theta", "tau", "tau_common", "tau_dev", "mu_theta", "sigma_theta",
-                       "mu", "mu_fair", "sigma2", "log_lik", "y_rep"))) {
+  if (anyDuplicated(generated) || any(is_reserved_stan_identifier(names)) ||
+      any(!grepl("^[A-Za-z][A-Za-z0-9_]*$", generated))) {
     stop("Facet and interaction names collide or are invalid Stan identifiers")
   }
   invisible(TRUE)

@@ -40,9 +40,10 @@ check_design_bmfrm <- function(formula, data, K, family = "rsm",
   if (length(tol) != 1L || !is.finite(tol) || tol <= 0) stop("tol must be positive")
   if (length(max_cells) != 1L || !is.finite(max_cells) || max_cells <= 0) stop("max_cells must be positive")
   response <- bmfrm_response_name(formula)
-  terms <- attr(stats::terms(formula), "term.labels")
-  interactions <- terms[grepl(":", terms, fixed = TRUE)]
+  terms <- attr(bmfrm_terms(formula, data = data), "term.labels")
+  interactions <- gsub("[()]", "", terms[grepl(":", terms, fixed = TRUE)])
   facets <- terms[!grepl(":", terms, fixed = TRUE)]
+  validate_facet_names(facets)
   validate_interaction_terms(facets, interactions)
   if (any(!facets %in% names(data)) || !"person" %in% facets) {
     stop("Design checking requires person and named main facet columns")

@@ -184,8 +184,10 @@ summarise_bias_ir <- function(fit,
   bias_summ <- bias_summ %>%
     dplyr::select(item, rater, i, r,
            bias_mean, bias_sd, lower_95, upper_95,
-           prob_pos, prob_neg, flag_bias) %>%
-    dplyr::arrange(item, rater)
+           prob_pos, prob_neg, flag_bias)
+  ord_i <- if (is.null(item_labels)) bias_summ$i else bias_summ$item
+  ord_r <- if (is.null(rater_labels)) bias_summ$r else bias_summ$rater
+  bias_summ <- bias_summ[order(ord_i, ord_r), , drop = FALSE]
 
   if (diagnostics) {
     convergence <- tryCatch(check_convergence(fit), error = function(e) NULL)

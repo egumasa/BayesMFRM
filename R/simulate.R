@@ -20,10 +20,12 @@
 #'   labels. Hierarchical interactions also require sigma_<interaction_name>.
 #' @param nsim Number of simulated datasets.
 #' @param seed Optional seed, restored on exit.
-#' @param hierarchical Names of facets with hierarchical distributions; currently
-#'   "person" and two-way interaction names are implemented. Person uses classes
-#'   mean and sd with facet = "person"; interactions use class sd with their
-#'   term name. The default character(0) retains fixed-scale priors.
+#' @param hierarchical Names of facets or terms with hierarchical distributions:
+#'   `"person"` (classes `"mean"` and `"sd"` with `facet = "person"`), centered
+#'   main facets (e.g., `"rater"`, `"item"` with `class = "sd"`), two-way
+#'   interaction terms (e.g., `"item:rater"` with `class = "sd"`), and `"tau"`
+#'   for uniform hierarchical PCM step sharing. The default `character(0)`
+#'   retains fixed-scale priors.
 #' @param family "rsm" for common steps or "pcm" for steps within threshold_facet.
 #' @param threshold_facet Required for PCM. Its step deviations sum to zero within
 #'   each level. For uniform `K`, fixed `tau` must be a levels-by-(K-1) matrix;

@@ -39,8 +39,31 @@ run_ppc <- function(fit, y_obs, ndraws = 200, seed = 123, group = NULL, y_rep = 
     bayesplot::ppc_stat_grouped(y = y_obs, yrep = yrep_subset, group = group, stat = "mean")
   
   message("Plotting PPC variance distribution...")
-  p3 <- if (is.null(group)) bayesplot::ppc_stat(y = y_obs, yrep = yrep_subset, stat = stats::var) else
-    bayesplot::ppc_stat_grouped(y = y_obs, yrep = yrep_subset, group = group, stat = stats::var)
+  if (is.null(group)) {
+    p3 <- bayesplot::ppc_stat(y = y_obs, yrep = yrep_subset, stat = stats::var)
+  } else {
+    g_tab <- table(as.character(group))
+    valid_g <- names(g_tab)[g_tab >= 2L]
+    if (length(valid_g) == 0L) {
+      message("Skipping grouped variance PPC: all groups have < 2 observations.")
+      p3 <- NULL
+    } else {
+      if (length(valid_g) < length(g_tab)) {
+        message("Omitting ", length(g_tab) - length(valid_g),
+                " singleton group(s) (< 2 observations) from variance PPC.")
+        keep_idx <- as.character(group) %in% valid_g
+        g_sub <- if (is.factor(group)) droplevels(group[keep_idx]) else group[keep_idx]
+        p3 <- bayesplot::ppc_stat_grouped(
+          y = y_obs[keep_idx],
+          yrep = yrep_subset[, keep_idx, drop = FALSE],
+          group = g_sub,
+          stat = stats::var
+        )
+      } else {
+        p3 <- bayesplot::ppc_stat_grouped(y = y_obs, yrep = yrep_subset, group = group, stat = stats::var)
+      }
+    }
+  }
   
   # --- 4. Return ggplot objects for flexible usage ---
   return(list(
