@@ -1,7 +1,9 @@
-#' Use a fitted model with posterior and tidybayes
+#' Use a fitted model with posterior, tidybayes and bayestestR
 #'
 #' Extract joint draws from the underlying CmdStan fit with their original
 #' chain and iteration identifiers. Use the facet labels to interpret indices.
+#' Pass the fit to `tidybayes::spread_draws()` for long-format draws, or pass
+#' the selected draws to bayestestR for parameter-wise summaries.
 #'
 #' @param x A fitted `bmfrm_fit`.
 #' @param ... Arguments to the CmdStan fit's `$draws()` method. For example,
@@ -20,6 +22,12 @@
 #'     by_rater <- tidybayes::spread_draws(draws, rater[r])
 #'     by_rater$label <- get_facet_labels(fit$data_info, "rater")[by_rater$r]
 #'     head(by_rater) # One severity estimate per draw and rater
+#'   }
+#'   if (requireNamespace("bayestestR", quietly = TRUE)) {
+#'     effects <- posterior::as_draws(fit, variables = "itemrater")
+#'     bayestestR::p_direction(effects)
+#'     bayestestR::rope(effects, range = c(-0.3, 0.3), ci = 1)
+#'     # For Structure scored by B, 67.3% of draws are within 0.3 logits of zero.
 #'   }
 #' }
 #' }

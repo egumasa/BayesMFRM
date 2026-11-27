@@ -63,7 +63,7 @@ priors_diffuse <- c(
   prior("normal(0, 3.0)", "tau", scale = "marginal")
 )
 summarise_prior_ppc <- function(priors_obj, seed) {
-  pp <- prior_predict_bmfrm(
+  pp <- pp_bmfrm(
     score ~ person + item + rater, design = ratings, K = K,
     hierarchical = c("person", "rater"), priors = priors_obj,
     ndraws = 300L, seed = seed

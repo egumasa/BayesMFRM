@@ -253,7 +253,7 @@ c.bmfrm_prior <- function(..., recursive = FALSE) {
 #' and category step thresholds `tau` receive weakly-informative `normal(0, 2)`
 #' so wide multi-category rubrics (e.g. `K = 6` spanning +/-3 logits) are not
 #' overly compressed. Inspect induced response distributions before fitting via
-#' [prior_predict_bmfrm()].
+#' [pp_bmfrm()].
 #'
 #' @param facets_main vector of main facet names
 #' @param facets_bias vector of bias facet names

@@ -34,5 +34,5 @@ facets receive \code{normal(0, 1)}, two-way interactions receive \code{normal(0,
 and category step thresholds \code{tau} receive weakly-informative \code{normal(0, 2)}
 so wide multi-category rubrics (e.g. \code{K = 6} spanning +/-3 logits) are not
 overly compressed. Inspect induced response distributions before fitting via
-\code{\link[=prior_predict_bmfrm]{prior_predict_bmfrm()}}.
+\code{\link[=pp_bmfrm]{pp_bmfrm()}}.
 }

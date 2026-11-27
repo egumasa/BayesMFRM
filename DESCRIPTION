@@ -41,6 +41,7 @@ Suggests:
     roxygen2,
     renv,
     corrplot,
+    bayestestR,
     mirt,
     priorsense,
     tidybayes,

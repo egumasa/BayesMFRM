@@ -267,19 +267,26 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
 }
 
 #' Generate prior predictive ratings on a planned RSM/PCM design
+#'
+#' `pp_bmfrm()` is short for `prior_predict_bmfrm()`. Both draw model parameters
+#' from their priors and simulate ratings before fitting. After fitting, use
+#' `bayesplot::pp_check(fit)` to compare posterior predictive ratings with the
+#' observed scores.
 #' @inheritParams simulate_bmfrm
 #' @param ndraws Number of prior predictive datasets.
 #' @return A bmfrm_simulation. Each row of `y_rep` is a complete rating study
 #'   simulated under the priors on the supplied design.
 #' @examples
 #' data(bmfrm_example)
-#' pp <- prior_predict_bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
-#'                           K = 4, ndraws = 40, seed = 48)
+#' pp <- pp_bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
+#'                K = 4, ndraws = 40, seed = 48)
 #' extreme <- rowMeans(pp$y_rep == 1 | pp$y_rep == 4)
 #' graphics::hist(extreme, xlim = c(0, 1), main = "Prior predictive ratings",
 #'                xlab = "Fraction at the lowest or highest score")
 #' # Each simulated study contributes one fraction. Would these extremes be
 #' # plausible for this rubric and rating design?
+#' # If scores are available for those same rows, compare category counts.
+#' bayesplot::ppc_bars(y = bmfrm_example$ratings$score, yrep = pp$y_rep)
 #' @export
 prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L, seed = NULL,
                                hierarchical = person_facet, family = c("rsm", "pcm"),
@@ -292,6 +299,10 @@ prior_predict_bmfrm <- function(formula, design, K, priors = NULL, ndraws = 200L
       family = match.arg(family), threshold_facet = threshold_facet, person_facet = person_facet)
   }
 }
+
+#' @rdname prior_predict_bmfrm
+#' @export
+pp_bmfrm <- prior_predict_bmfrm
 
 with_bmfrm_seed <- function(seed, code) {
   if (is.null(seed)) return(force(code))

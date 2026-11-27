@@ -105,6 +105,7 @@ numbers of ratings per examinee.
 | Question | R interface |
 | --- | --- |
 | How does rater severity vary across posterior draws? | `posterior::as_draws(fit, variables = "rater")` retains the chains and iterations. Use `tidybayes::spread_draws(fit, rater[r])` for one row per draw and rater. |
+| Is a criterion-by-rater effect large enough to matter? | Give `posterior::as_draws(fit, variables = "itemrater")` to `bayestestR::p_direction()` for sign certainty or `bayestestR::rope(..., range = c(-0.3, 0.3), ci = 1)` for the mass within a chosen logit margin. [View the labeled tidybayes distributions](man/figures/writing-interaction-rope.png). |
 | How sensitive are the conclusions to interaction shrinkage? | The optional **priorsense** example scales the interaction prior and rating likelihood separately. It reports changes in bias, rater severity and information, with Pareto diagnostics. [View the sensitivity curves](man/figures/writing-power-sensitivity.png). |
 | Where is this particular rating plan informative? | `as_mirt(fit, plan, draw = 1L)` gives an optional **mirt** item bank. Use `mirt::testinfo()` for the plan or `mirt::probtrace()` on an individual rating. |
 | Does the model reproduce the ratings or predict held-out ratings? | `bayesplot::pp_check(fit)` draws replicated ratings. `loo::loo(fit)` estimates leave-one-rating-out predictive accuracy. |
@@ -145,6 +146,7 @@ design <- check_design_bmfrm(score ~ person + item + rater, plan, K = 6)
 print(design)
 
 # 3. Prior predictive check: verify priors imply plausible category proportions (1..6)
+# pp_bmfrm() is short for prior_predict_bmfrm(). After fitting, use bayesplot::pp_check(fit).
 priors_rsm <- c(
   prior("normal(0, 0.5)", "mean", facet = "person"),
   prior("lognormal(-0.5, 0.3)", "sd", facet = "person"),
@@ -152,7 +154,7 @@ priors_rsm <- c(
   prior("normal(0, 0.5)", "facet", facet = "rater", scale = "marginal"),
   prior("normal(0, 1.2)", "tau", scale = "marginal")
 )
-ppc_prior <- prior_predict_bmfrm(
+ppc_prior <- pp_bmfrm(
   score ~ person + item + rater, design = plan, K = 6,
   priors = priors_rsm, ndraws = 100, seed = 43
 )

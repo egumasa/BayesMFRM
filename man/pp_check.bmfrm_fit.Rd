@@ -29,3 +29,6 @@
 \description{
 Posterior predictive check method for bmfrm_fit objects
 }
+\seealso{
+\code{\link[=pp_bmfrm]{pp_bmfrm()}} for prior predictive simulation on a planned design.
+}

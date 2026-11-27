@@ -17,7 +17,7 @@ knitr::opts_chunk$set(
 This vignette walks through a complete Bayesian Many-Facet Rasch Model (MFRM) workflow on a realistic performance-assessment design (analytic writing or speaking rubric scoring):
 
 1. **Choosing model options** (`K`, `family`, `person_facet`, `adjust_facets`, `hierarchical`, `scale`, `local_shrinkage`, `flag_method`, `delta`) and understanding what each assumes.
-2. **Pre-estimation checks**: structural design identifiability (`check_design_bmfrm()`) and prior predictive checks (`prior_predict_bmfrm()`).
+2. **Pre-estimation checks**: structural design identifiability (`check_design_bmfrm()`) and prior predictive checks (`pp_bmfrm()`).
 3. **Fitting & reading diagnostics in priority order**, with **real precomputed CmdStan outputs** for `print()`, `summary()`, `facet_fit()`, `fair_scores()`, and `summarise_bias()`.
 4. **Sensitivity analysis** across shrinkage priors and **manuscript reporting templates** (Methods and Results).
 
@@ -158,7 +158,7 @@ replicated range for fit. For a draw-matched comparison use `ppp`, the posterior
 predictive probability that replicated fit exceeds realized fit, with half
 weight for ties.
 
-### Use the same fit in posterior, tidybayes and mirt
+### Use the same fit in posterior, tidybayes, bayestestR and mirt
 
 To retain chain and iteration identifiers for convergence summaries, select
 the rater parameters. A positive severity means the rater tends to award lower
@@ -171,6 +171,55 @@ posterior::summarise_draws(severity)
 by_rater <- tidybayes::spread_draws(severity, rater[r])
 by_rater$label <- get_facet_labels(fit$data_info, "rater")[by_rater$r]
 ```
+
+For an interaction, two questions matter. How certain are we of its direction?
+How often is it small enough to treat as negligible? In this writing study we
+use ±0.3 logits as the practical margin. A positive interaction means that the
+rater tends to award higher scores on that criterion than the main effects predict.
+
+```{r writing-interaction-draws, eval=FALSE}
+cells <- tidybayes::spread_draws(fit, itemrater[i, r])
+cells$criterion <- get_facet_labels(fit$data_info, "item")[cells$i]
+cells$rater <- get_facet_labels(fit$data_info, "rater")[cells$r]
+cell_summary <- cells %>%
+  dplyr::group_by(criterion, rater) %>%
+  dplyr::summarise(
+    median_logit = median(itemrater),
+    pd = bayestestR::p_direction(itemrater)$pd,
+    within_margin = bayestestR::rope(itemrater, range = c(-0.3, 0.3), ci = 1)$ROPE_Percentage,
+    above_margin = mean(itemrater > 0.3), .groups = "drop")
+subset(cell_summary, rater == "B")
+```
+
+For B scoring Structure, 92.75% of draws have a positive interaction, while
+67.30% lie inside the practical margin and 32.68% exceed +0.3 logits.
+`pd` gives the probability of the more frequent sign. The median identifies
+that sign. Setting `ci = 1` computes the fraction inside the region of practical
+equivalence (ROPE) across **all** draws. To screen all nine cells jointly
+under Bayesian FDR, use `summarise_bias(fit, "item:rater", delta = 0.3)`.
+
+```{r writing-interaction-plot, eval=FALSE}
+ggplot2::ggplot(subset(cells, rater == "B"), ggplot2::aes(x = itemrater, y = criterion)) +
+  ggplot2::annotate("rect", xmin = -0.3, xmax = 0.3, ymin = -Inf, ymax = Inf,
+                    fill = "#E6F0EB") +
+  ggplot2::geom_vline(xintercept = 0, colour = "grey50", linetype = "dotted") +
+  tidybayes::stat_halfeye(.width = 0.95, fill = "#548598") +
+  ggplot2::labs(title = "How does rater B score each writing criterion?",
+                subtitle = "The shaded band marks the practical margin of ±0.3 logits.",
+                x = "Criterion-by-rater interaction (logits)", y = NULL,
+                caption = "Dots show posterior medians. Lines show 95% equal-tailed intervals.") +
+  ggplot2::theme_minimal(base_size = 12)
+```
+
+```{r writing-interaction-figure, echo=FALSE, out.width="100%", fig.alt="Interaction distributions for rater B. Content lies below the practical margin and Evidence above it, while most of the Structure distribution lies inside it."}
+knitr::include_graphics(system.file("help", "figures", "writing-interaction-rope.png",
+                                    package = "BayesMFRM"))
+```
+
+For a sensitivity comparison, apply the same summaries to each refit, using
+the same facet labels and margin. When using power-scaled draws, summaries
+must incorporate the importance weights. The ordinary fractions above use
+equally weighted draws from a fitted model.
 
 To examine where adding rater B increases precision, build a four-rating
 bank. Each writer receives two criterion ratings from A and two from B.
@@ -284,7 +333,11 @@ In `plan_confounded`, `connected = TRUE` yet `identifiable = FALSE` (`nullity = 
 
 ## 4. Step 2: Prior Predictive Checks on the Rating Scale
 
-Because adjacent-category logit SDs interact nonlinearly with category count `K`, inspect induced score distributions with `prior_predict_bmfrm()` before fitting:
+`pp_bmfrm()` is short for `prior_predict_bmfrm()`. It simulates ratings from the
+priors on your planned design. After fitting, `bayesplot::pp_check(fit)`
+compares posterior predictive ratings with the observations. Because
+adjacent-category logit SDs interact nonlinearly with the category count
+`K`, inspect the induced score distribution before fitting:
 
 ```{r prior-predictive}
 # A. Weakly-informative moderate priors (calibrated for a 6-point rubric)
@@ -305,10 +358,10 @@ priors_wide <- c(
   prior("normal(0, 3.0)", "tau", scale = "marginal")
 )
 
-pp_mod  <- prior_predict_bmfrm(score ~ person + item + rater, plan, K = 6,
-                               priors = priors_moderate, ndraws = 100, seed = 101)
-pp_wide <- prior_predict_bmfrm(score ~ person + item + rater, plan, K = 6,
-                               priors = priors_wide, ndraws = 100, seed = 101)
+pp_mod  <- pp_bmfrm(score ~ person + item + rater, plan, K = 6,
+                    priors = priors_moderate, ndraws = 100, seed = 101)
+pp_wide <- pp_bmfrm(score ~ person + item + rater, plan, K = 6,
+                    priors = priors_wide, ndraws = 100, seed = 101)
 
 cat_prop <- function(y) round(prop.table(table(factor(y, levels = 1:6))), 3)
 rbind(
@@ -651,7 +704,7 @@ families and check each fit's convergence.
 
 ### Methods Template
 
-> Analytic ratings ($P = 24$ examinees, $I = 4$ criteria, $R = 4$ raters, $N = 192$ observations on an explicit $K = 6$ category rubric) were analyzed with a Bayesian Many-Facet Rasch Rating Scale Model in `BayesMFRM` (v0.1.0.9008) via CmdStan. Adjacent-category log-odds were modeled as $\eta_{pir} - \tau_k = \theta_p - \beta_i - \gamma_r (+ B_{ir}) - \tau_k$, with examinee abilities partially pooled ($\theta_p \sim \mathcal{N}(\mu_\theta, \sigma_\theta^2)$) and sum-to-zero constraints imposed on criteria, raters, step deviations, and two-way interactions. Prior to estimation, algebraic likelihood identifiability was verified (`check_design_bmfrm()`) and prior predictive simulations (`prior_predict_bmfrm()`) confirmed plausible category coverage without extreme-category pileup. Posterior sampling used 4 Markov chains (1,000 warmup + 1,000 sampling iterations per chain, `adapt_delta = 0.95`–`0.99`), requiring $\hat{R} < 1.01$, bulk and tail ESS $\ge 400$, zero divergent transitions, and E-BFMI $\ge 0.3$. Facet fit was evaluated via Sinharay (2006) posterior predictive $p$-values (`facet_fit()`), and rater-by-criterion bias was screened at practical threshold $\delta = 0.30$ logits under Bayesian false discovery rate control ($\text{BFDR} \le 0.05$) across isotropic Gaussian and heavy-tailed Student-t shrinkage priors.
+> Analytic ratings ($P = 24$ examinees, $I = 4$ criteria, $R = 4$ raters, $N = 192$ observations on an explicit $K = 6$ category rubric) were analyzed with a Bayesian Many-Facet Rasch Rating Scale Model in `BayesMFRM` (v0.1.0.9008) via CmdStan. Adjacent-category log-odds were modeled as $\eta_{pir} - \tau_k = \theta_p - \beta_i - \gamma_r (+ B_{ir}) - \tau_k$, with examinee abilities partially pooled ($\theta_p \sim \mathcal{N}(\mu_\theta, \sigma_\theta^2)$) and sum-to-zero constraints imposed on criteria, raters, step deviations, and two-way interactions. Prior to estimation, algebraic likelihood identifiability was verified (`check_design_bmfrm()`) and prior predictive simulations (`pp_bmfrm()`) confirmed plausible category coverage without extreme-category pileup. Posterior sampling used 4 Markov chains (1,000 warmup + 1,000 sampling iterations per chain, `adapt_delta = 0.95`–`0.99`), requiring $\hat{R} < 1.01$, bulk and tail ESS $\ge 400$, zero divergent transitions, and E-BFMI $\ge 0.3$. Facet fit was evaluated via Sinharay (2006) posterior predictive $p$-values (`facet_fit()`), and rater-by-criterion bias was screened at practical threshold $\delta = 0.30$ logits under Bayesian false discovery rate control ($\text{BFDR} \le 0.05$) across isotropic Gaussian and heavy-tailed Student-t shrinkage priors.
 
 ### Results Template
 

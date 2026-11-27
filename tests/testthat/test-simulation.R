@@ -19,8 +19,9 @@ test_that("simulated scores obey known probabilities and restore seeded RNG stat
 })
 
 test_that("prior generation applies centering and retains the induced prior variance", {
+  expect_identical(pp_bmfrm, prior_predict_bmfrm)
   d <- expand.grid(person = 1:2, item = 1:4, rater = 1:3)
-  x <- prior_predict_bmfrm(score ~ person + item + rater, d, 6, ndraws = 1500, seed = 1)
+  x <- pp_bmfrm(score ~ person + item + rater, d, 6, ndraws = 1500, seed = 1)
   expect_true(all(vapply(x$parameters, function(p) abs(sum(p$item)) < 1e-10 && abs(sum(p$rater)) < 1e-10 && abs(sum(p$tau)) < 1e-10, logical(1))))
   item1 <- vapply(x$parameters, function(p) p$item[1L], numeric(1))
   expect_equal(stats::var(item1), 1 - 1/4, tolerance = .12)

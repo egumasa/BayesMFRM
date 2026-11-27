@@ -2,9 +2,23 @@
 % Please edit documentation in R/simulate.R
 \name{prior_predict_bmfrm}
 \alias{prior_predict_bmfrm}
+\alias{pp_bmfrm}
 \title{Generate prior predictive ratings on a planned RSM/PCM design}
 \usage{
 prior_predict_bmfrm(
+  formula,
+  design,
+  K,
+  priors = NULL,
+  ndraws = 200L,
+  seed = NULL,
+  hierarchical = person_facet,
+  family = c("rsm", "pcm"),
+  threshold_facet = NULL,
+  person_facet = "person"
+)
+
+pp_bmfrm(
   formula,
   design,
   K,
@@ -55,15 +69,20 @@ A bmfrm_simulation. Each row of \code{y_rep} is a complete rating study
 simulated under the priors on the supplied design.
 }
 \description{
-Generate prior predictive ratings on a planned RSM/PCM design
+\code{pp_bmfrm()} is short for \code{prior_predict_bmfrm()}. Both draw model parameters
+from their priors and simulate ratings before fitting. After fitting, use
+\code{bayesplot::pp_check(fit)} to compare posterior predictive ratings with the
+observed scores.
 }
 \examples{
 data(bmfrm_example)
-pp <- prior_predict_bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
-                          K = 4, ndraws = 40, seed = 48)
+pp <- pp_bmfrm(score ~ person + item + rater, bmfrm_example$ratings,
+               K = 4, ndraws = 40, seed = 48)
 extreme <- rowMeans(pp$y_rep == 1 | pp$y_rep == 4)
 graphics::hist(extreme, xlim = c(0, 1), main = "Prior predictive ratings",
                xlab = "Fraction at the lowest or highest score")
 # Each simulated study contributes one fraction. Would these extremes be
 # plausible for this rubric and rating design?
+# If scores are available for those same rows, compare category counts.
+bayesplot::ppc_bars(y = bmfrm_example$ratings$score, yrep = pp$y_rep)
 }

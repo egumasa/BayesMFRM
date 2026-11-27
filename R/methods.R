@@ -349,6 +349,7 @@ residuals.bmfrm_fit <- function(object, save_draws = FALSE, ...) {
 }
 
 #' Posterior predictive check method for bmfrm_fit objects
+#' @seealso [pp_bmfrm()] for prior predictive simulation on a planned design.
 #' @param object bmfrm_fit object
 #' @param group Optional column name in the cleaned data for conditional PPC.
 #' @param type type of PPC ("bars", "stat", or "all")

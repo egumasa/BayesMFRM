@@ -2,6 +2,8 @@
 
 ## 0.1.0.9008 (Development)
 
+- Added `pp_bmfrm()` as a short name for `prior_predict_bmfrm()`. The writing vignette shows how to visualize criterion-by-rater draws with tidybayes and quantify their direction and practical equivalence with bayestestR.
+
 - Interaction flags now require a rating and confirmed likelihood identification with either screening rule. An observed cell with an unchecked design has `flag_bias = "identification_unchecked"` and `bfdr = NA`. Cells without ratings are always labeled `"unobserved_cell"`.
 - In `summarise_bias()`, `decision_stable` and `decision_status` refer to the selected rule. Under BFDR, set-level stability is unassessed. Code using the former fields for single-cell Monte Carlo precision should read `prob_threshold_stable` and `prob_threshold_status`.
 - Added a worked simulated rating study, runnable help examples and `plot_bias()` for interaction means, credible intervals, practical thresholds and screening decisions.
