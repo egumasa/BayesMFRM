@@ -2,6 +2,10 @@
 
 ## 0.1.0.9008 (Development)
 
+- Added `rater_agreement()` and `plot_rater_agreement()` to compare observed
+  exact agreement with model expectations and draw-matched predictive intervals
+  on jointly scored performances. The writing example includes the results.
+
 - Added `facet_separation()` for EAP or conventional Rasch separation, strata
   and reliability, and `facet_contrasts()` for within-draw main-effect
   differences. The writing vignette illustrates both with three raters.

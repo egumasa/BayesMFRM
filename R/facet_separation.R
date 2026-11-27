@@ -57,7 +57,8 @@ facet_observation_counts <- function(object, facet) {
 #'   [Number of person or item strata](https://www.rasch.org/rmt/rmt163f.htm).
 #'   See also the [FACETS Table 7 manual](https://www.winsteps.com/facetman64/table7summarystatistics.htm)
 #'   and [mirt empirical reliability](https://philchalmers.github.io/mirt/reference/empirical_rxx.html).
-#' @seealso [facet_fit()], [facet_summary()], [plot_pathway_map()]
+#' @seealso [rater_agreement()] for identical scores on shared performances,
+#'   [facet_fit()], [facet_summary()], [plot_pathway_map()]
 #' @examples
 #' data(bmfrm_example)
 #' facet_separation(bmfrm_example$rater, "rater")

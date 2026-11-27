@@ -208,6 +208,43 @@ Comparisons with FACETS require matching the eligible levels, SEs and
 sample-variance convention. [FACETS Table 7](https://www.winsteps.com/facetman64/table7summarystatistics.htm)
 also reports inter-rater agreement separately.
 
+### Do raters give identical scores on the same work?
+
+For each writer and criterion, count one comparison for every pair who scored
+that work. Three raters yield three comparisons. The number of opportunities
+therefore depends on who shared assignments. The pooled rate gives each
+opportunity equal weight. The table and figure run directly from the bundled
+writing study.
+
+```{r writing-agreement, fig.width=7, fig.height=4.1, fig.alt="Observed exact agreement for three rater pairs and overall. Each observed point is within its posterior predictive interval."}
+a <- bmfrm_example$agreement
+a[, c("rater1", "rater2", "scope", "n_opportunities", "n_exact", "observed", "expected")]
+plot_rater_agreement(a)
+```
+
+A and C gave identical scores on 13 of 44 shared performances (29.5%).
+Although these raters had the clearest overall severity difference, the model
+expected them to agree on 32.3% of those assignments. B and C agreed on 11 of
+50 (22.0%) against 32.7% expected. The three pairs scored different sets of
+performances, so ordering their raw agreement rates alone says little about
+which raters could substitute for each other.
+
+Across all pairs, the observed 22.9% is near the lower end of the 95%
+predictive interval (21.4% to 37.9%). The line shows how much the observed
+rate might vary if the same assignments were rated again under the model.
+The diamond is the mean expected rate. This check uses the fitted writers and
+raters, and the intervals are pointwise.
+
+To reproduce the calculation, use `rater_agreement(fit, seed = 123)`.
+Each posterior draw yields a category distribution for each rating. Under
+conditional independence, multiplying the two raters' probabilities for each
+category and summing gives their chance of exact agreement. The predictive
+interval also accounts for discrete rating variation. When three raters score
+one performance, the replicate score for each rater is reused in both pairs
+involving that rater. If a writer produces several performances under the
+same modeled conditions, supply their shared identifier, for example
+`occasion = "essay_id"`, to align scores on the same performance.
+
 ### Use the same fit in posterior, tidybayes, bayestestR and mirt
 
 To retain chain and iteration identifiers for convergence summaries, select

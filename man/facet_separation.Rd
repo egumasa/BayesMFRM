@@ -67,5 +67,6 @@ See also the \href{https://www.winsteps.com/facetman64/table7summarystatistics.h
 and \href{https://philchalmers.github.io/mirt/reference/empirical_rxx.html}{mirt empirical reliability}.
 }
 \seealso{
+\code{\link[=rater_agreement]{rater_agreement()}} for identical scores on shared performances,
 \code{\link[=facet_fit]{facet_fit()}}, \code{\link[=facet_summary]{facet_summary()}}, \code{\link[=plot_pathway_map]{plot_pathway_map()}}
 }

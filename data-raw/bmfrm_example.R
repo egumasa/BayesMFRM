@@ -22,7 +22,8 @@ bmfrm_example <- list(ratings = ratings,
                       bias = summarise_bias(fit, "item:rater", delta = 0.3),
                       fair = fair_scores(fit, standardize = TRUE),
                       rater_fit = facet_fit(fit, "rater"),
-                      rater = facet_summary(fit, "rater"))
+                      rater = facet_summary(fit, "rater"),
+                      agreement = rater_agreement(fit))
 save(bmfrm_example, file = "data/bmfrm_example.rda", version = 2, compress = "gzip")
 
 # Regenerate the figures used in the README and installed vignette from this fit.
@@ -31,6 +32,7 @@ at_A <- data.frame(item = items, rater = "A")
 figures <- list("category-curves" = plot_category_curves(fit, on_content),
                 "category-contrast" = plot_category_contrast(fit, on_content, margin_pp = 5),
                 "wright-map" = plot_wright_map(fit, at_A),
+                "rater-agreement" = plot_rater_agreement(bmfrm_example$agreement),
                 "pathway-map" = plot_pathway_map(fit, "rater"))
 for (name in names(figures)) {
   ggplot2::ggsave(file.path("man/figures", paste0("writing-", name, ".png")),

@@ -903,3 +903,23 @@ test_that("mirt uses the selected draw, profile order and each rating's rubric",
   expect_error(as_mirt(obj, plan, c(1L, 2L)), "one posterior draw")
   for (bad in list(0, 1.5, NA, 121L)) expect_error(as_mirt(obj, plan, bad), "between 1 and 120")
 })
+
+test_that("rater agreement respects the observed item-specific PCM rubric", {
+  fit <- make_mock_hetero_pcm_fit(include_bias = TRUE)
+  x <- rater_agreement(fit)
+  d <- fit$data_info$data_clean
+  p <- predict(fit, type = "probs", summary = FALSE)
+  first <- which(d$rater == "R1")
+  second <- which(d$rater == "R2")
+  expect_identical(d$person[first], d$person[second])
+  expect_identical(d$item[first], d$item[second])
+  k <- fit$data_info$K_by_level[as.character(d$item[first])]
+  expected <- vapply(seq_along(first), function(i) {
+    valid <- seq_len(k[i])
+    mean(rowSums(p[, first[i], valid] * p[, second[i], valid]))
+  }, numeric(1L))
+  ab <- x[x$scope == "pair" & x$rater1 == "R1" & x$rater2 == "R2", ]
+  expect_equal(ab$expected, mean(expected))
+  expect_equal(ab$n_opportunities, length(first))
+  expect_error(rater_agreement(fit, "item"), "same number of rubric categories")
+})

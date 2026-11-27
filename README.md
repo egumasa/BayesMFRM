@@ -100,6 +100,22 @@ severity. Criterion-specific differences can also reflect interactions.
 
 ![Paired differences in rater severity. Only the interval for C minus A lies entirely above zero.](man/figures/writing-rater-contrasts.png)
 
+### How often do the raters give the same score?
+
+Across 140 pairwise comparisons on the same writer and criterion, the raters
+gave identical scores 32 times (22.9%). The fitted model expected 29.3% on
+these assignments. Repeating the ratings under the model gave a 95%
+predictive interval of 21.4% to 37.9%. Use the bundled table and plot
+without fitting the model:
+
+```r
+data(bmfrm_example)
+plot_rater_agreement(bmfrm_example$agreement)
+# For your own fitted data: rater_agreement(fit, facet = "rater")
+```
+
+![Observed exact agreement, model expectations and 95 percent predictive intervals for each rater pair and overall.](man/figures/writing-rater-agreement.png)
+
 ### How much does an additional rating contribute?
 
 Each row of a plan represents one rating of the same examinee. Compare two
