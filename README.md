@@ -105,6 +105,7 @@ numbers of ratings per examinee.
 | Question | R interface |
 | --- | --- |
 | How does rater severity vary across posterior draws? | `posterior::as_draws(fit, variables = "rater")` retains the chains and iterations. Use `tidybayes::spread_draws(fit, rater[r])` for one row per draw and rater. |
+| How sensitive are the conclusions to interaction shrinkage? | The optional **priorsense** example scales the interaction prior and rating likelihood separately. It reports changes in bias, rater severity and information, with Pareto diagnostics. [View the sensitivity curves](man/figures/writing-power-sensitivity.png). |
 | Where is this particular rating plan informative? | `as_mirt(fit, plan, draw = 1L)` gives an optional **mirt** item bank. Use `mirt::testinfo()` for the plan or `mirt::probtrace()` on an individual rating. |
 | Does the model reproduce the ratings or predict held-out ratings? | `bayesplot::pp_check(fit)` draws replicated ratings. `loo::loo(fit)` estimates leave-one-rating-out predictive accuracy. |
 | How can I customize the maps? | The native figures return **ggplot2** objects. The vignette shows how to supply person measures and adjacent thresholds to **WrightMap**. |
@@ -113,6 +114,11 @@ The mirt bank preserves the selected draw's logit scale, including the rater,
 criterion and their fitted interaction. Each row of `plan` becomes one item.
 For a posterior mean and credible interval over calibrations, use
 `test_information(fit, plan)`. See `?as_mirt` for a runnable example.
+
+To reproduce the power-scaling analysis, run
+`source(system.file("examples", "powerscale-writing.R", package = "BayesMFRM"))`
+after loading BayesMFRM and installing priorsense. Section 7 of the vignette
+also shows how to refit the same ratings using a different prior.
 
 ## Quick Start (Self-Contained & Runnable)
 

@@ -15,6 +15,8 @@
 
 - Fitted models now support `posterior::as_draws()` and tidybayes extraction. `as_mirt()` exports a planned set of ratings at a chosen posterior draw for category traces and test information in mirt.
 
+- Added a runnable priorsense example for the four-category writing assessment, including separate perturbations of the interaction prior and rating likelihood and a direct Gaussian-prior refit in the vignette.
+
 ### Breaking Default & API Improvements
 - **Hierarchical ability by default**: `bmfrm()`, `parse_bmfrm_formula()`, `get_default_priors()`, and `simulate_bmfrm()` now default to `hierarchical = person_facet` (partial pooling of examinee abilities with posterior uncertainty in the population mean and SD). Pass `hierarchical = character(0)` (or supply `prior(..., class = "theta")`) for unpooled fixed-scale priors.
 - **Compact CSV outputs by default**: `save_gq` now defaults to `"minimal"`, omitting observation-level Stan `generated quantities` and streaming residuals, fit statistics, fair scores, PSIS-LOO, and PPC on demand in R.

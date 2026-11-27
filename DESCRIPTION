@@ -42,6 +42,7 @@ Suggests:
     renv,
     corrplot,
     mirt,
+    priorsense,
     tidybayes,
     knitr,
     rmarkdown

@@ -547,6 +547,11 @@ bias_iso <- summarise_bias(fit_iso, "item:rater", delta = 0.3)
 bias_st  <- summarise_bias(fit_st,  "item:rater", delta = 0.3)
 head(bias_iso[, c("item", "rater", "n_observations", "bias_mean", "ci_lower",
                   "ci_upper", "prob_gt_delta", "bfdr", "flag_bias", "prob_threshold_stable")], 6)
+
+fields <- c("level1", "level2", "bias_mean", "prob_gt_delta", "prob_lt_neg_delta", "flag_bias")
+comparison <- merge(bias_iso[fields], bias_st[fields], by = c("level1", "level2"),
+                    suffixes = c("_gaussian", "_student"))
+subset(comparison, flag_bias_gaussian != flag_bias_student)
 ```
 
 Verbatim `head(bias_iso, 6)` output on our null-interaction dataset (correctly finding `no_clear_bias` with high `bfdr` across all cells):
@@ -567,6 +572,81 @@ Read `flag_bias` with `flag_method`, the cell count and its likelihood identific
 
 ---
 
+### Local power-scaling sensitivity with priorsense
+
+How much do the study conclusions depend on shrinking criterion-by-rater
+interactions towards zero? Return to the four-category writing example (36
+writers, 216 ratings). Its interaction prior is Gaussian with fixed raw scale
+0.5. The runnable example uses the four independent coordinates of the
+double-centered interaction. Treating the nine fitted cell effects as
+independent would change the prior being assessed.
+
+With the optional **priorsense** package installed, run:
+
+```{r writing-power-code, eval=FALSE}
+source(system.file("examples", "powerscale-writing.R", package = "BayesMFRM"))
+```
+
+For each posterior draw, the example evaluates the selected log prior and the
+sum of the log probabilities of the 216 observed scores. It raises **one**
+factor to a positive power $\alpha$ at a time. The log importance ratio is
+$(\alpha-1)$ times that factor's log density. The other factors retain their
+original weights. A power of 1 recovers the fitted model. For this fixed
+Gaussian prior, increasing the power reduces its SD to
+$0.5/\sqrt{\alpha}$. When scaling the likelihood, all the original priors stay
+in place. The Stan sampler's `lp__` includes the likelihood and may include
+change-of-variable terms. A different hierarchy or shrinkage prior requires
+its own log-density factor. [Method and interpretation](https://doi.org/10.1007/s11222-023-10366-5).
+
+```{r writing-power-figure, echo=FALSE, out.width="100%", fig.alt="As the interaction prior is strengthened, the mean Content by A interaction decreases and four-rating information at ability zero increases. Strengthening the likelihood moves those means in the opposite directions."}
+knitr::include_graphics(system.file("help", "figures", "writing-power-sensitivity.png",
+                                    package = "BayesMFRM"))
+```
+
+With prior powers 0.80, 1.00 and 1.25, the posterior mean interaction for
+Content scored by A was 1.205, 1.118 and 1.033 logits. A remained more
+generous on Content than predicted by the two main effects. Four-rating
+information for A and B scoring Content and Evidence at ability zero was
+2.321, 2.424 and 2.533. This result concerns the shape of the response curves
+at that ability under local independence. Both the rating plan and number
+of examinees were held fixed.
+
+Use `sensitivity` for the default local cumulative Jensen–Shannon distance
+diagnostic at powers 0.99 and 1.01. For the Content-by-A effect its prior
+and likelihood sensitivities were 0.367 and 0.415. Both exceed the
+priorsense screening threshold of 0.05. This prompts examination of the
+direction and practical size of the change. Use `scaled_means` to read the
+effects in logits or information units and inspect Pareto $k$. Across the
+displayed perturbations the largest $k$ was 0.49. Poor overlap at a proposed
+power calls for a direct refit before interpreting the estimate.
+
+For a direct check of the prior power 1.25, replace the interaction prior
+with its equivalent Gaussian on the same raw scale and sample fresh chains:
+
+```{r writing-power-refit, eval=FALSE}
+alternative <- fit$priors
+is_bias <- vapply(alternative, function(p) identical(p$class, "bias") &&
+                    identical(p$facet, "item:rater"), logical(1))
+alternative[[which(is_bias)]] <- prior(sprintf("normal(0, %.14f)", 0.5 / sqrt(1.25)),
+                                       "bias", facet = "item:rater")
+refit <- bmfrm(model, ratings, K = 4, priors = alternative, design_check = "error",
+               seed = 2410, chains = 4, cores = 2, iter = 2000, adapt_delta = 0.95,
+               cpp_options = list(PRECOMPILED_HEADERS = "false"))
+subset(summarise_bias(refit, "item:rater", delta = 0.3),
+       level1 == "Content" & level2 == "A", select = c(bias_mean, ci_lower, ci_upper))
+test_information(refit, plan, theta = 0)
+```
+
+The direct refit gave 1.045 logits for the interaction and 2.52 for information.
+The 0.013-logit gap from the reweighted interaction mean was about 2.9
+combined Monte Carlo standard errors (approximately 0.0043 logits). The
+two estimates support the same direction, with limited agreement in their
+last decimal places.
+For a decision near a practical cutoff, compare the exceedance probabilities,
+intervals and selected cells across the actual alternative priors. When
+switching from Gaussian to Student-t or horseshoe shrinkage, refit the chosen
+families and check each fit's convergence.
+
 ## 8. Manuscript Reporting Templates (Methods & Results)
 
 ### Methods Template
@@ -575,4 +655,4 @@ Read `flag_bias` with `flag_method`, the cell count and its likelihood identific
 
 ### Results Template
 
-> The bridged rating design was connected and structurally identifiable (conditional likelihood rank $34/34$). All MCMC diagnostics met pre-specified criteria ($\max \hat{R} = 1.003$, minimum bulk/tail ESS $= 1{,}813 / 2{,}380$, $0$ divergences, minimum E-BFMI $= 0.77$). Conditional posterior predictive checks (`bayesplot::pp_check()`) and rater-level posterior predictive fit statistics (`infit_ppp` $= 0.44\text{–}0.62$, `outfit_ppp` $= 0.42\text{–}0.68$) indicated satisfactory agreement between observed and replicated score distributions. Common-grid standardized fair scores (`fair_scores(..., standardize = TRUE)`) were likelihood-identified for all examinees, adjusting raw averages for rater severity differences ($\hat{\gamma}_r \in [-1.72, 0.65]$ logits). In the interaction analysis, $m$ observed cells satisfied $\text{BFDR} \le 0.05$ beyond $|\delta| = 0.30$ logits, with concordant conclusions across Gaussian and Student-t shrinkage priors.
+> The bridged rating design was connected and structurally identifiable (conditional likelihood rank $34/34$). All MCMC diagnostics met pre-specified criteria ($\max \hat{R} = 1.003$, minimum bulk/tail ESS $= 1{,}813 / 2{,}380$, $0$ divergences, minimum E-BFMI $= 0.77$). Conditional posterior predictive checks (`bayesplot::pp_check()`) and rater-level posterior predictive fit statistics (`infit_ppp` $= 0.44\text{–}0.62$, `outfit_ppp` $= 0.42\text{–}0.68$) indicated satisfactory agreement between observed and replicated score distributions. Common-grid standardized fair scores (`fair_scores(..., standardize = TRUE)`) were likelihood-identified for all examinees, adjusting raw averages for rater severity differences ($\hat{\gamma}_r \in [-1.72, 0.65]$ logits). In the interaction analysis, [number] observed cells under Gaussian shrinkage and [number] under Student-t shrinkage satisfied $\text{BFDR} \le 0.05$ beyond $|\delta| = 0.30$ logits. [Identify any cells whose decision changed and report their effect estimates and intervals under both priors.]
