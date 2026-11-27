@@ -30,6 +30,27 @@ Rscript --vanilla -e '
 '
 ```
 
+## Timing rating simulation and posterior agreement
+
+With `library(BayesMFRM)` or `pkgload::load_all(".")` and the writing example
+fit in memory, run `source("tools/benchmark-ratings.R")` followed by
+`benchmark_ratings(fit)`. It returns median elapsed seconds per call across
+nine batches of five calls after warm-up. The agreement calculation uses all
+posterior draws. The other three workloads each simulate 200 studies on the
+216 original rating assignments. Stan compilation and fitting take place
+before timing. Use the same fitted draws and seeds to compare revisions.
+
+On arm64 macOS with R 4.6.1, the timings below used separate R sessions for
+the two installed versions and alternated their execution order each round.
+The writing fit had 4,000 draws.
+
+| Workload | Before (`993cdfa`), ms | After, ms | Speedup |
+| --- | ---: | ---: | ---: |
+| Rater agreement | 97.0 | 76.2 | 1.27× |
+| Fixed-parameter RSM simulation | 47.2 | 3.0 | 15.73× |
+| Prior predictive RSM | 63.6 | 27.8 | 2.29× |
+| Prior predictive PCM with 2-, 4- and 6-category rubrics | 87.0 | 42.6 | 2.04× |
+
 ## Simulation & Calibration Benchmarks
 
 All benchmark scripts load the local checkout via `pkgload::load_all(".")` and compile Stan binaries inside temporary directories (`PRECOMPILED_HEADERS = "false"`) so the repository stays clean:

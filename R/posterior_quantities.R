@@ -798,7 +798,7 @@ eval_bmfrm_categories <- function(eta, K, tau_info, t_idx, resp_chunk = NULL,
   }
   get_cum_tau_k <- function(k) {
     if (tau_info$mode == "shared") {
-      matrix(tau_info$cum_tau[, k], nrow = D, ncol = nc)
+      tau_info$cum_tau[, k]
     } else if (!is.null(chunk_cum_tau_pcm)) {
       chunk_cum_tau_pcm[[k]]
     } else {
@@ -815,14 +815,17 @@ eval_bmfrm_categories <- function(eta, K, tau_info, t_idx, resp_chunk = NULL,
     }
   }
 
-  # Pass 2: denom, E[Y], E[Y^2] in one sweep without storing prob_list
+  # Keep category weights for the probability output so each exponential is evaluated once.
   e1 <- exp(-max_logit)
+  weights <- if (compute_probs) vector("list", K) else NULL
+  if (compute_probs) weights[[1L]] <- e1
   denom <- e1
   num_mu <- if (compute_mu || compute_kurtosis) e1 else NULL
   num_ex2 <- if (compute_variance) e1 else NULL
   if (K >= 2L) {
     for (k in 2:K) {
       ek <- exp((k - 1) * eta - get_cum_tau_k(k) - max_logit)
+      if (compute_probs) weights[[k]] <- ek
       denom <- denom + ek
       if (compute_mu || compute_kurtosis) num_mu <- num_mu + k * ek
       if (compute_variance) num_ex2 <- num_ex2 + (k * k) * ek
@@ -834,7 +837,6 @@ eval_bmfrm_categories <- function(eta, K, tau_info, t_idx, resp_chunk = NULL,
 
   # Pass 3 (only if probs, kurtosis, log_lik, or y_rep requested)
   if (compute_probs || compute_kurtosis || compute_log_lik || compute_y_rep) {
-    probs_arr <- if (compute_probs) array(NA_real_, dim = c(D, nc, K)) else NULL
     kurt <- if (compute_kurtosis) matrix(0, nrow = D, ncol = nc) else NULL
     ll <- if (compute_log_lik) matrix(NA_real_, nrow = D, ncol = nc) else NULL
     log_denom <- if (compute_log_lik) log(denom) + max_logit else NULL
@@ -843,10 +845,12 @@ eval_bmfrm_categories <- function(eta, K, tau_info, t_idx, resp_chunk = NULL,
     cum_p <- if (compute_y_rep) matrix(0, nrow = D, ncol = nc) else NULL
 
     for (k in seq_len(K)) {
-      lk <- if (k == 1L) matrix(0, nrow = D, ncol = nc) else (k - 1) * eta - get_cum_tau_k(k)
+      if (compute_log_lik || !compute_probs) {
+        lk <- if (k == 1L) matrix(0, nrow = D, ncol = nc) else (k - 1) * eta - get_cum_tau_k(k)
+      }
       if (compute_probs || compute_kurtosis || compute_y_rep) {
-        pk <- exp(lk - max_logit) / denom
-        if (compute_probs) probs_arr[, , k] <- pk
+        pk <- if (compute_probs) weights[[k]] / denom else exp(lk - max_logit) / denom
+        if (compute_probs) weights[[k]] <- pk
         if (compute_kurtosis) kurt <- kurt + ((k - mu)^4) * pk
         if (compute_y_rep && k < K) {
           cum_p <- cum_p + pk
@@ -860,7 +864,11 @@ eval_bmfrm_categories <- function(eta, K, tau_info, t_idx, resp_chunk = NULL,
         }
       }
     }
-    if (compute_probs) out$probs <- probs_arr
+    if (compute_probs) {
+      probabilities <- unlist(weights, use.names = FALSE)
+      dim(probabilities) <- c(D, nc, K)
+      out$probs <- probabilities
+    }
     if (compute_kurtosis) out$kurt <- kurt
     if (compute_log_lik) out$log_lik <- ll
     if (compute_y_rep) {

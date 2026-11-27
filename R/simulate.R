@@ -194,6 +194,28 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
   }
   prior_keys <- vapply(priors, prior_target_key, character(1), person_facet = pf, facets_bias = spec$facets_bias)
   main_keys <- c(ifelse(spec$facets_main == pf, "theta:", paste0("facet:", spec$facets_main)), "tau:")
+  rows <- seq_len(nrow(design))
+  by_rubric <- if (is_hetero) split(rows, ids[[spec$threshold_facet]]) else list(rows)
+  category_cutoffs <- function(pars) {
+    eta <- pars$theta[ids[[pf]]]
+    for (f in setdiff(spec$facets_main, pf)) eta <- eta - pars[[f]][ids[[f]]]
+    for (j in seq_along(bias_names)) {
+      f <- strsplit(spec$facets_bias[j], ":", fixed = TRUE)[[1L]]
+      eta <- eta + pars[[bias_names[j]]][cbind(ids[[f[1L]]], ids[[f[2L]]])]
+    }
+    lapply(by_rubric, function(loc) {
+      prob <- if (is_hetero) {
+        j <- ids[[spec$threshold_facet]][loc[1L]]
+        rsm_probabilities(eta[loc], pars$tau[[j]])
+      } else if (family == "pcm") {
+        pcm_probabilities(eta, pars$tau[ids[[spec$threshold_facet]], , drop = FALSE])
+      } else {
+        rsm_probabilities(eta, pars$tau)
+      }
+      matrixStats::rowCumsums(prob, cols = seq_len(ncol(prob) - 1L))
+    })
+  }
+  fixed_cutoffs <- if (!is.null(parameters)) category_cutoffs(parameters)
   sample_one <- function() {
     pars <- parameters
     if (is.null(pars) && !is.null(model)) {
@@ -229,29 +251,12 @@ simulate_bmfrm <- function(formula, design, K, priors = NULL, parameters = NULL,
         pars[[bias_names[j]]] <- unname(sweep(x, 2L, colMeans(x), "-"))
       }
     }
-    eta <- pars$theta[ids[[pf]]]
-    for (f in setdiff(spec$facets_main, pf)) eta <- eta - pars[[f]][ids[[f]]]
-    for (j in seq_along(bias_names)) {
-      f <- strsplit(spec$facets_bias[j], ":", fixed = TRUE)[[1L]]
-      eta <- eta + pars[[bias_names[j]]][cbind(ids[[f[1L]]], ids[[f[2L]]])]
-    }
-    if (is_hetero) {
-      tf_ids <- ids[[spec$threshold_facet]]
-      tf_lv <- labels[[spec$threshold_facet]]
-      u <- stats::runif(nrow(design))
-      y <- integer(nrow(design))
-      for (j in seq_along(tf_lv)) {
-        loc <- which(tf_ids == j)
-        if (!length(loc)) next
-        Kj <- as.integer(K_by_level[[tf_lv[j]]])
-        prob_j <- rsm_probabilities(eta[loc], pars$tau[[j]])
-        cum_j <- t(apply(prob_j, 1L, cumsum))
-        y[loc] <- 1L + rowSums(u[loc] > cum_j[, -Kj, drop = FALSE])
-      }
-    } else {
-      prob <- if (family == "pcm") pcm_probabilities(eta, pars$tau[ids[[spec$threshold_facet]], , drop = FALSE]) else rsm_probabilities(eta, pars$tau)
-      cum <- t(apply(prob, 1L, cumsum))
-      y <- 1L + rowSums(stats::runif(nrow(design)) > cum[, -K_max, drop = FALSE])
+    cutoffs <- fixed_cutoffs %||% category_cutoffs(pars)
+    u <- stats::runif(nrow(design))
+    y <- integer(nrow(design))
+    for (j in seq_along(by_rubric)) {
+      loc <- by_rubric[[j]]
+      y[loc] <- 1L + rowSums(u[loc] > cutoffs[[j]])
     }
     list(parameters = pars, y = as.integer(y))
   }
@@ -316,7 +321,7 @@ with_bmfrm_seed <- function(seed, code) {
 
 rsm_probabilities <- function(eta, tau) {
   logits <- sweep(outer(eta, 0:length(tau)), 2L, c(0, cumsum(tau)), "-")
-  z <- exp(logits - apply(logits, 1L, max))
+  z <- exp(logits - matrixStats::rowMaxs(logits))
   z / rowSums(z)
 }
 
@@ -324,7 +329,7 @@ pcm_probabilities <- function(eta, tau) {
   steps <- tau
   if (ncol(steps) > 1L) for (j in 2:ncol(steps)) steps[, j] <- steps[, j] + steps[, j - 1L]
   logits <- outer(eta, 0:ncol(steps)) - cbind(0, steps)
-  z <- exp(logits - apply(logits, 1L, max))
+  z <- exp(logits - matrixStats::rowMaxs(logits))
   z / rowSums(z)
 }
 

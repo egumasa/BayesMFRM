@@ -2,6 +2,11 @@
 
 ## 0.1.0.9008 (Development)
 
+- `simulate_bmfrm()` reuses category probabilities across replications with
+  fixed parameters. It and `pp_bmfrm()` compute cumulative probabilities by
+  rubric in matrix operations. Posterior category predictions for RSM and
+  uniform-category PCM reuse the category weights when returning probabilities.
+
 - Added `rater_agreement()` and `plot_rater_agreement()` to compare observed
   exact agreement with model expectations and draw-matched predictive intervals
   on jointly scored performances. The writing example includes the results.
